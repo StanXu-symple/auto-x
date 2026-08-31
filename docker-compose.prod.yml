@@ -1,0 +1,156 @@
+services:
+  migrate:
+    environment:
+      ENVIRONMENT: development
+      AUTO_CREATE_TABLES: "false"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE must be set}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER must be set}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
+    restart: "no"
+
+  mysql:
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE must be set}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER must be set}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set}
+      MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?MYSQL_EXPORTER_PASSWORD must be set}
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 2g
+        reservations:
+          memory: 512m
+
+  redis:
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-512mb}
+      - --maxmemory-policy
+      - noeviction
+      - --tcp-keepalive
+      - "60"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-512mb}
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768m
+        reservations:
+          memory: 192m
+
+  backend:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      STARTUP_STRICT: "true"
+      AUTO_CREATE_TABLES: "false"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE must be set}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER must be set}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME must be set}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:?X_BEARER_TOKEN must be set}
+      CORS_ORIGINS: '${CORS_ORIGINS:?CORS_ORIGINS must be set}'
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  worker:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      STARTUP_STRICT: "true"
+      AUTO_CREATE_TABLES: "false"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE must be set}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER must be set}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME must be set}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:?X_BEARER_TOKEN must be set}
+      CORS_ORIGINS: '${CORS_ORIGINS:?CORS_ORIGINS must be set}'
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  ai-worker:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      STARTUP_STRICT: "true"
+      AUTO_CREATE_TABLES: "false"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE must be set}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER must be set}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME must be set}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:?X_BEARER_TOKEN must be set}
+      CORS_ORIGINS: '${CORS_ORIGINS:?CORS_ORIGINS must be set}'
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 768m
+        reservations:
+          memory: 192m
+
+  frontend:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 192m
+        reservations:
+          memory: 48m
+
+  mysql-exporter:
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?MYSQL_EXPORTER_PASSWORD must be set}
+    restart: always
+
+  redis-exporter:
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    restart: always
+
+  node-exporter:
+    restart: always
+
+  prometheus:
+    restart: always
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?GRAFANA_ADMIN_USER must be set}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
+    restart: always

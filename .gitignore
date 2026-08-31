@@ -1,0 +1,38 @@
+# Runtime secrets
+.env
+.env.*
+!.env.example
+!.env.external.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Node / Vue
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs and local state
+*.log
+logs/
+backups/
+tmp/
+
+# Docker Compose local overrides
+docker-compose.override.yml

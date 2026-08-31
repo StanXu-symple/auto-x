@@ -1,0 +1,29 @@
+{
+  "name": "x-sentinel-console",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc -b && vite build",
+    "type-check": "vue-tsc -b",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vueuse/core": "^13.5.0",
+    "axios": "^1.11.0",
+    "element-plus": "^2.11.1",
+    "lucide-vue-next": "^0.541.0",
+    "pinia": "^3.0.3",
+    "vue": "^3.5.20",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "@types/node": "^22.15.30",
+    "@vue/tsconfig": "^0.8.1",
+    "typescript": "~5.8.3",
+    "vite": "^6.1.0",
+    "vue-tsc": "^2.2.12"
+  }
+}

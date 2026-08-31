@@ -1,0 +1,83 @@
+# Use this override when MySQL and Redis are managed outside Docker Compose.
+# Compose v2.24+ is required for the !reset tag.
+services:
+  migrate:
+    depends_on: !reset []
+    environment:
+      ENVIRONMENT: development
+      AUTO_CREATE_TABLES: "false"
+      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
+      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
+      REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD-}
+
+  backend:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      STARTUP_STRICT: "true"
+      AUTO_CREATE_TABLES: "false"
+      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
+      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
+      REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD-}
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  worker:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      STARTUP_STRICT: "true"
+      AUTO_CREATE_TABLES: "false"
+      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
+      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
+      REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD-}
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  ai-worker:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      STARTUP_STRICT: "true"
+      AUTO_CREATE_TABLES: "false"
+      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
+      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
+      REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD-}
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 768m
+        reservations:
+          memory: 192m
+
+  frontend:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 192m
+        reservations:
+          memory: 48m

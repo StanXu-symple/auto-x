@@ -1,0 +1,112 @@
+groups:
+  - name: x-sentinel-availability
+    rules:
+      - alert: XSentinelTargetDown
+        expr: up{job=~"x-sentinel-api|x-sentinel-worker|x-sentinel-ai-worker|x-sentinel-frontend|mysql|redis|node"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "X Sentinel target {{ $labels.job }} is unavailable"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for more than two minutes."
+
+      - alert: XSentinelWorkerHeartbeatStale
+        expr: (time() - max(x_sentinel_worker_heartbeat_timestamp_seconds) > 60) or (absent(x_sentinel_worker_heartbeat_timestamp_seconds) == 1)
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "X Sentinel polling worker heartbeat is stale"
+          description: "The worker heartbeat is missing or older than 60 seconds."
+
+      - alert: XSentinelAIWorkerHeartbeatStale
+        expr: (time() - max(x_sentinel_ai_worker_heartbeat_timestamp_seconds) > 60) or (absent(x_sentinel_ai_worker_heartbeat_timestamp_seconds) == 1)
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "X Sentinel AI worker heartbeat is stale"
+          description: "The AI worker heartbeat is missing or older than 60 seconds."
+
+      - alert: XSentinelPollingFailureRateHigh
+        expr: sum(rate(x_sentinel_poll_runs_total{status=~"error|failed|identity_conflict|lock_lost"}[10m])) / clamp_min(sum(rate(x_sentinel_poll_runs_total[10m])), 0.001) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 20% of polling runs are failing"
+          description: "Investigate the X API token, rate limits, network access and worker logs."
+
+      - alert: XSentinelPollingQueueBacklog
+        expr: x_sentinel_poll_queue_due > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Polling queue has more than 100 due users"
+          description: "Increase worker capacity or polling intervals if this backlog persists."
+
+      - alert: XSentinelAIQueueBacklog
+        expr: x_sentinel_ai_queue_due > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI generation queue has more than 100 due jobs"
+          description: "Check AI provider availability, ai-worker logs and configured concurrency."
+
+      - alert: XSentinelAIFailureRateHigh
+        expr: sum(rate(x_sentinel_ai_jobs_total{status=~"failed|retry_wait|lock_lost"}[10m])) / clamp_min(sum(rate(x_sentinel_ai_jobs_total[10m])), 0.001) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 20% of AI generation attempts are failing or retrying"
+          description: "Check provider credentials, rate limits, network access and ai-worker logs."
+
+      - alert: XSentinelAPIErrorRateHigh
+        expr: sum(rate(http_requests_total{job="x-sentinel-api",status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total{job="x-sentinel-api"}[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API 5xx error ratio is above 5%"
+          description: "The API has sustained a high server error ratio for five minutes."
+
+  - name: x-sentinel-host
+    rules:
+      - alert: XSentinelHostMemoryPressure
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host memory usage is above 90%"
+          description: "Available host memory has remained below 10% for ten minutes."
+
+      - alert: XSentinelHostDiskSpaceLow
+        expr: 100 * node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"} < 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Less than 10% disk space remains on {{ $labels.mountpoint }}"
+          description: "Free disk space is low on {{ $labels.instance }}."
+
+      - alert: XSentinelMySQLConnectionsHigh
+        expr: mysql_global_status_threads_connected / mysql_global_variables_max_connections > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL is using more than 80% of its connections"
+          description: "Review slow queries, pool sizing and max_connections."
+
+      - alert: XSentinelRedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage is above 85%"
+          description: "Redis uses noeviction; writes will fail when the configured memory limit is reached."
