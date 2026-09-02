@@ -16,6 +16,7 @@ from sqlalchemy import and_, func, or_, select, text
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
+from app.core.process_stats import ProcessStatsSampler
 from app.core.time import as_utc
 from app.db.session import AsyncSessionFactory, engine
 from app.models.xiaohongshu import XiaohongshuPublishJob, XiaohongshuPublishSetting
@@ -44,6 +45,7 @@ class XiaohongshuPublishWorker:
         )
         self.stop_event = asyncio.Event()
         self.active_tasks = 0
+        self.process_stats = ProcessStatsSampler()
 
     def request_stop(self) -> None:
         self.stop_event.set()
@@ -242,6 +244,7 @@ class XiaohongshuPublishWorker:
 
     async def _heartbeat(self) -> None:
         now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        process_stats = self.process_stats.snapshot()
         await self.redis.set(
             HEARTBEAT_KEY,
             json.dumps(
@@ -250,6 +253,7 @@ class XiaohongshuPublishWorker:
                     "status": "running",
                     "last_heartbeat": now,
                     "active_tasks": self.active_tasks,
+                    **process_stats,
                 }
             ),
             ex=self.settings.xhs_worker_heartbeat_ttl_seconds,

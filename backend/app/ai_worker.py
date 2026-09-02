@@ -20,6 +20,7 @@ from sqlalchemy import and_, func, or_, select, text
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
+from app.core.process_stats import ProcessStatsSampler
 from app.core.time import as_utc
 from app.db.session import AsyncSessionFactory, engine
 from app.models.ai import AIDraft, AIGenerationJob, AISetting, AIUserProfile
@@ -72,6 +73,7 @@ class AIGenerationWorker:
         self.provider = AIProviderClient(settings)
         self.stop_event = asyncio.Event()
         self.active_tasks = 0
+        self.process_stats = ProcessStatsSampler()
 
     def request_stop(self) -> None:
         self.stop_event.set()
@@ -617,6 +619,7 @@ class AIGenerationWorker:
             logger.exception("AI heartbeat readiness check failed")
         now = datetime.now(UTC)
         timestamp = now.isoformat().replace("+00:00", "Z")
+        process_stats = self.process_stats.snapshot()
         payload = json.dumps(
             {
                 "worker_id": self.worker_id,
@@ -628,6 +631,7 @@ class AIGenerationWorker:
                 "provider_ready": provider_ready,
                 "key_required": key_required,
                 "key_configured": key_configured,
+                **process_stats,
             }
         )
         await self.redis.set(

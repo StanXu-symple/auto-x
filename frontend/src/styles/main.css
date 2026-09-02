@@ -3654,6 +3654,77 @@ a {
 .service-health-card,
 .process-stat,
 .worker-heartbeat { border-radius: 12px; background: #fafbfc; }
+
+.service-resources {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 22px 0 24px;
+}
+
+.service-resources__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.service-resources__header h2 { margin: 0; color: var(--text); font-size: 15px; }
+.service-resources__header p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+.service-resources__header > svg { color: var(--muted-2); }
+
+.service-resource-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.service-resource-card {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(18, 24, 40, 0.025), 0 8px 28px rgba(18, 24, 40, 0.035);
+}
+
+.service-resource-card > header {
+  display: grid;
+  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+}
+
+.service-resource-card > header > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.service-resource-card > header > div { display: flex; min-width: 0; flex-direction: column; }
+.service-resource-card > header strong { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.service-resource-card > header small { margin-top: 3px; color: var(--muted); font-size: 8px; }
+
+.service-resource-card__metrics { display: grid; margin-top: 16px; gap: 13px; }
+.service-resource-card__metrics > div { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; }
+.service-resource-card__metrics span { display: inline-flex; align-items: center; color: var(--muted); font-size: 9px; gap: 4px; }
+.service-resource-card__metrics strong { overflow: hidden; color: var(--text-soft); font-size: 10px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.service-resource-card__metrics i { display: block; overflow: hidden; height: 4px; border-radius: 99px; background: var(--surface-3); grid-column: 1 / -1; }
+.service-resource-card__metrics b { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width 300ms ease; }
+.service-resource-card__metrics > div:last-child b { background: var(--cyan); }
+.service-resource-card > p { overflow: hidden; margin: 11px 0 0; color: var(--orange); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 1280px) {
+  .service-resource-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .service-resource-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .resource-gauge__track { stroke: #e7eaf0; }
 .resource-gauge__visual > strong { color: var(--text); }
 .service-health-card__icon { color: var(--primary); }

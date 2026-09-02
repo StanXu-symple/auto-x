@@ -16,6 +16,7 @@ from sqlalchemy import case, or_, select, text
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
+from app.core.process_stats import ProcessStatsSampler
 from app.db.session import AsyncSessionFactory, engine
 from app.models.monitored_user import MonitoredUser
 from app.services.metrics import POLL_QUEUE_DUE, WORKER_HEARTBEAT
@@ -49,6 +50,7 @@ class PollingWorker:
         )
         self.stop_event = asyncio.Event()
         self.active_tasks = 0
+        self.process_stats = ProcessStatsSampler()
 
     def request_stop(self) -> None:
         self.stop_event.set()
@@ -146,12 +148,14 @@ class PollingWorker:
 
     async def _heartbeat(self) -> None:
         now = datetime.now(UTC)
+        process_stats = self.process_stats.snapshot()
         payload = json.dumps(
             {
                 "worker_id": self.worker_id,
                 "timestamp": now.isoformat().replace("+00:00", "Z"),
                 "last_heartbeat": now.isoformat().replace("+00:00", "Z"),
                 "active_tasks": self.active_tasks,
+                **process_stats,
             }
         )
         await self.redis.set(

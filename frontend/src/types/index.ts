@@ -229,6 +229,33 @@ export interface WorkerMetric {
   last_heartbeat?: string
 }
 
+export interface RuntimeResourceMetric {
+  cpu_percent?: number | null
+  memory_used_bytes?: number | null
+  memory_total_bytes?: number | null
+  memory_percent?: number | null
+  rss_bytes?: number | null
+}
+
+export interface ServiceRuntimeMetric extends RuntimeResourceMetric {
+  status: string
+  latency_ms?: number
+  error?: string
+  resource_error?: string
+  [key: string]: unknown
+}
+
+export interface WorkerRuntimeMetric extends RuntimeResourceMetric {
+  status: string
+  last_heartbeat?: string
+  timestamp?: string
+  ttl_seconds?: number
+  worker_id?: string
+  active_tasks?: number
+  error?: string
+  [key: string]: unknown
+}
+
 export interface SystemMetrics {
   generated_at: string
   cpu_percent: number
@@ -253,10 +280,11 @@ export interface SystemMetrics {
     threads?: number
     open_files?: number
   }
-  database: { status: string; latency_ms?: number; error?: string }
-  redis: { status: string; latency_ms?: number; used_memory?: number; error?: string }
-  worker: { status: string; last_heartbeat?: string; timestamp?: string; ttl_seconds?: number; worker_id?: string; error?: string; [key: string]: unknown }
-  ai_worker?: { status: string; last_heartbeat?: string; timestamp?: string; ttl_seconds?: number; worker_id?: string; error?: string; active_tasks?: number; [key: string]: unknown }
+  database: ServiceRuntimeMetric
+  redis: ServiceRuntimeMetric
+  worker: WorkerRuntimeMetric
+  ai_worker?: WorkerRuntimeMetric
+  xhs_worker?: WorkerRuntimeMetric
 }
 
 export interface SystemSettings {

@@ -22,7 +22,7 @@ import {
 import { systemApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import { useUiStore } from '@/stores/ui'
-import type { ResourceMetric, ServiceHealth, SystemMetrics, SystemSettings } from '@/types'
+import type { ResourceMetric, RuntimeResourceMetric, ServiceHealth, SystemMetrics, SystemSettings } from '@/types'
 import { formatBytes, formatDateTime, formatUptime } from '@/utils/format'
 import ResourceGauge from '@/components/ResourceGauge.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -54,8 +54,41 @@ const services = computed<ServiceHealth[]>(() => {
     { name: '轮询 Worker', status: metrics.value.worker.status, message: metrics.value.worker.error },
   ]
   if (metrics.value.ai_worker) values.push({ name: 'AI Worker', status: metrics.value.ai_worker.status, message: metrics.value.ai_worker.error })
+  if (metrics.value.xhs_worker) values.push({ name: '小红书 Worker', status: metrics.value.xhs_worker.status, message: metrics.value.xhs_worker.error })
   return values
 })
+
+const serviceResources = computed(() => {
+  const current = metrics.value
+  if (!current) return []
+  return [
+    { name: 'MySQL 数据库', description: 'InnoDB 缓冲池', icon: Database, metric: current.database },
+    { name: 'Redis 缓存', description: 'Redis 已分配内存', icon: Zap, metric: current.redis },
+    { name: '轮询 Worker', description: '进程 RSS 内存', icon: Workflow, metric: current.worker },
+    ...(current.ai_worker ? [{ name: 'AI Worker', description: '进程 RSS 内存', icon: Sparkles, metric: current.ai_worker }] : []),
+    ...(current.xhs_worker ? [{ name: '小红书 Worker', description: '进程 RSS 内存', icon: Activity, metric: current.xhs_worker }] : []),
+  ]
+})
+
+function cpuText(metric: RuntimeResourceMetric) {
+  return typeof metric.cpu_percent === 'number' ? `${metric.cpu_percent.toFixed(1)}%` : '等待采样'
+}
+
+function memoryUsed(metric: RuntimeResourceMetric) {
+  return metric.memory_used_bytes ?? metric.rss_bytes
+}
+
+function memoryText(metric: RuntimeResourceMetric) {
+  const used = memoryUsed(metric)
+  if (used == null) return '暂无数据'
+  return metric.memory_total_bytes
+    ? `${formatBytes(used)} / ${formatBytes(metric.memory_total_bytes)}`
+    : formatBytes(used)
+}
+
+function resourcePercent(value?: number | null) {
+  return `${Math.min(100, Math.max(0, Number(value || 0)))}%`
+}
 
 const resourceCards = computed<Array<{ label: string; metric: ResourceMetric; color: 'purple' | 'cyan' | 'green'; detail: string }>>(() => {
   const current = metrics.value
@@ -150,7 +183,7 @@ function reset() {
 let timer: number | undefined
 onMounted(() => {
   load()
-  timer = window.setInterval(refreshMetrics, 30_000)
+  timer = window.setInterval(refreshMetrics, 60_000)
 })
 onBeforeUnmount(() => window.clearInterval(timer))
 </script>
@@ -161,7 +194,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
       <div class="server-hero__head">
         <div><span class="server-hero__icon"><Server :size="22" /></span><div><h2>应用服务器</h2><p>API 进程与依赖服务实时指标</p></div></div>
         <div class="server-hero__actions">
-          <span class="live-copy"><span class="live-dot" />30 秒自动刷新</span>
+          <span class="live-copy"><span class="live-dot" />1 分钟自动刷新</span>
           <el-button :loading="refreshing" @click="refreshMetrics"><RefreshCw v-if="!refreshing" :size="16" />刷新指标</el-button>
         </div>
       </div>
@@ -177,6 +210,36 @@ onBeforeUnmount(() => window.clearInterval(timer))
           <div><span>API 进程运行时间</span><strong>{{ formatUptime(metrics?.uptime_seconds) }}</strong><small>采集于 {{ formatDateTime(metrics?.generated_at) }}</small></div>
         </article>
       </div>
+    </section>
+
+    <section class="service-resources">
+      <header class="service-resources__header">
+        <div><h2>服务资源</h2><p>数据库、缓存与后台 Worker 的 CPU 和内存占用</p></div>
+        <MemoryStick :size="19" />
+      </header>
+      <div v-if="serviceResources.length" class="service-resource-grid">
+        <article v-for="resource in serviceResources" :key="resource.name" class="service-resource-card">
+          <header>
+            <span><component :is="resource.icon" :size="18" /></span>
+            <div><strong>{{ resource.name }}</strong><small>{{ resource.description }}</small></div>
+            <StatusBadge :status="resource.metric.status" />
+          </header>
+          <div class="service-resource-card__metrics">
+            <div>
+              <span><Cpu :size="14" />CPU</span>
+              <strong>{{ cpuText(resource.metric) }}</strong>
+              <i><b :style="{ width: resourcePercent(resource.metric.cpu_percent) }" /></i>
+            </div>
+            <div>
+              <span><MemoryStick :size="14" />内存</span>
+              <strong>{{ memoryText(resource.metric) }}</strong>
+              <i><b :style="{ width: resourcePercent(resource.metric.memory_percent) }" /></i>
+            </div>
+          </div>
+          <p v-if="resource.metric.resource_error" :title="String(resource.metric.resource_error)">资源指标不可用，连接健康检查仍正常</p>
+        </article>
+      </div>
+      <div v-else class="inline-empty">等待服务资源数据</div>
     </section>
 
     <section class="settings-grid">
@@ -210,6 +273,11 @@ onBeforeUnmount(() => window.clearInterval(timer))
             <span><Sparkles :size="17" /></span>
             <div><strong>AI Worker</strong><small>最后心跳 {{ formatDateTime(metrics.ai_worker.last_heartbeat || metrics.ai_worker.timestamp) }}<template v-if="metrics.ai_worker.ttl_seconds != null"> · TTL {{ metrics.ai_worker.ttl_seconds }} 秒</template><template v-if="metrics.ai_worker.active_tasks != null"> · 活跃任务 {{ metrics.ai_worker.active_tasks }}</template></small></div>
             <StatusBadge :status="metrics.ai_worker.status || 'unknown'" />
+          </div>
+          <div v-if="metrics?.xhs_worker" class="worker-heartbeat">
+            <span><Activity :size="17" /></span>
+            <div><strong>小红书 Worker</strong><small>最后心跳 {{ formatDateTime(metrics.xhs_worker.last_heartbeat || metrics.xhs_worker.timestamp) }}<template v-if="metrics.xhs_worker.ttl_seconds != null"> · TTL {{ metrics.xhs_worker.ttl_seconds }} 秒</template><template v-if="metrics.xhs_worker.active_tasks != null"> · 活跃任务 {{ metrics.xhs_worker.active_tasks }}</template></small></div>
+            <StatusBadge :status="metrics.xhs_worker.status || 'unknown'" />
           </div>
         </article>
       </div>
