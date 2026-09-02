@@ -43,7 +43,7 @@ def production_settings(**overrides) -> Settings:
         "redis_url": "redis://cache/0",
         "jwt_secret_key": "a-secure-production-jwt-secret-over-32-characters",
         "admin_password": "a-secure-admin-password",
-        "x_bearer_token": "real-looking-bearer-token",
+        "x_token_encryption_key": "a-separate-x-token-encryption-key-over-32-characters",
     }
     values.update(overrides)
     return Settings(**values)
@@ -58,8 +58,8 @@ def test_production_settings_accept_non_placeholder_secrets() -> None:
     [
         ("jwt_secret_key", "development-only-secret-that-is-long-enough"),
         ("admin_password", "change-me-admin-password"),
-        ("x_bearer_token", "replace-with-real-token"),
-        ("x_bearer_token", ""),
+        ("x_token_encryption_key", "replace-with-real-token-key-that-is-long"),
+        ("x_token_encryption_key", ""),
         ("mysql_dsn", "mysql+aiomysql://user:change-me-database@db/sentinel"),
         ("redis_url", "redis://:replace-with-real-password@cache/0"),
     ],

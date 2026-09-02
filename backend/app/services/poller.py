@@ -26,7 +26,8 @@ from app.models.tweet import Tweet
 from app.services.ai_jobs import enqueue_jobs_for_x_tweet_ids
 from app.services.metrics import POLL_DURATION, POLL_RUNS, TWEETS_INGESTED
 from app.services.settings_service import effective_interval, get_polling_settings
-from app.services.x_client import TweetBatch, XAPIError, XClient, XRateLimitError, XUser
+from app.services.x_client import TweetBatch, XAPIError, XRateLimitError, XUser
+from app.services.x_source_client import XSourceClient
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,7 @@ class PollingService:
         *,
         session_factory: async_sessionmaker[AsyncSession],
         redis: Redis,
-        x_client: XClient,
+        x_client: XSourceClient,
         settings: Settings,
         worker_id: str,
     ) -> None:

@@ -210,6 +210,49 @@ class AISkillOut(APIModel):
     updated_at: datetime
 
 
+class AIFeatureOut(APIModel):
+    id: int
+    code: str
+    name: str
+    description: str | None
+    base_prompt: str
+    is_active: bool
+
+
+class AIUserSkillBindingReplace(APIModel):
+    skill_ids: list[int] = Field(max_length=20)
+
+    @field_validator("skill_ids")
+    @classmethod
+    def validate_ids(cls, value: list[int]) -> list[int]:
+        if any(item <= 0 for item in value) or len(value) != len(set(value)):
+            raise ValueError("skill ids must be unique positive integers")
+        return value
+
+
+class AIUserSkillBindingOut(APIModel):
+    monitored_user_id: int
+    username: str
+    feature: AIFeatureOut
+    skill_ids: list[int]
+    skills: list[AISkillOut]
+    resolution_source: str
+
+
+class AIUserProfileOut(APIModel):
+    monitored_user_id: int
+    username: str
+    identity_summary: str
+    focus_summary: str
+    relationship_summary: str
+    recurring_topics: list[str]
+    evidence: list[dict[str, Any]]
+    confidence: float
+    version: int
+    last_source_tweet_id: int | None
+    updated_at: datetime | None
+
+
 class AIDraftOut(APIModel):
     id: int
     job_id: int
@@ -230,6 +273,7 @@ class AIJobOut(APIModel):
     source_x_tweet_id: str | None = None
     source_text: str | None = None
     source_username: str | None = None
+    feature_code: str
     skill_id: int | None
     skill_ids: list[int]
     skill_snapshot: list[dict[str, Any]]
@@ -257,6 +301,9 @@ class AIJobDetail(AIJobOut):
 
 
 class ManualGenerateRequest(APIModel):
+    feature_code: str = Field(
+        default="article_generation", min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$"
+    )
     skill_ids: list[int] | None = Field(default=None, max_length=20)
     idempotency_key: str | None = Field(
         default=None, min_length=8, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$"
@@ -299,11 +346,21 @@ class AIDraftPatch(APIModel):
         return normalized
 
 
+class GeneratedAuthorProfile(APIModel):
+    identity_summary: str = Field(max_length=4000)
+    focus_summary: str = Field(max_length=4000)
+    relationship_summary: str = Field(max_length=4000)
+    recurring_topics: list[str] = Field(max_length=30)
+    evidence: list[dict[str, Any]] = Field(max_length=50)
+    confidence: float = Field(ge=0, le=1)
+
+
 class GeneratedDraft(APIModel):
     title: str = Field(min_length=1, max_length=300)
     content: str = Field(min_length=1, max_length=50000)
     excerpt: str | None = Field(default=None, max_length=1000)
     metadata: dict[str, Any] | None = None
+    author_profile: GeneratedAuthorProfile
 
     @field_validator("title", "content")
     @classmethod

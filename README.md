@@ -1,6 +1,6 @@
 # X Sentinel
 
-一个可自托管的 X（Twitter）账号定时监听与 AI 草稿平台。前端使用 Vue 3 + Element Plus（Vue 3 对应的 Element UI 组件库），后端使用 FastAPI，MySQL 保存监听配置、历史内容和生成审计，Redis 提供分布式锁、限流闸门和 Worker 心跳。支持运行中动态增加账号、分别调整轮询周期，并内置 OpenAI/Codex Bridge 草稿生成、服务器监控、Prometheus 指标和 Grafana 面板。
+一个可自托管的 X（Twitter）账号定时监听与 AI 草稿平台。前端使用 Vue 3 + Element Plus，后端使用 FastAPI，MySQL 保存监听配置、历史内容和生成审计，Redis 提供分布式锁、限流闸门和 Worker 心跳。支持运行中动态增加账号、分别调整轮询周期，并内置统一 OpenAI 兼容数据源、AI 草稿生成、服务器监控、Prometheus 指标和 Grafana 面板。
 
 ## 已包含的功能
 
@@ -10,8 +10,9 @@
 - 可选择是否采集回复与转发
 - X API 全局限流闸门、429 退避、分页断点续传与下次执行时间调整
 - Post 内容流、关键词搜索、账号筛选和分页
-- 内置 AI Skill、手动/自动生成队列与可编辑草稿，支持 OpenAI 或 Codex Bridge
+- 内置 AI Skill、手动/自动生成队列与可编辑草稿，统一使用一个 OpenAI 兼容账号
 - AI 任务幂等、重试、请求/响应审计和独立 Worker，不会自动发布到 X
+- 小红书 MCP 扫码登录、图文编辑，以及手动、立即自动和延迟发布队列
 - 每次轮询的状态、耗时、读取数、新增数和错误审计
 - CPU、内存、磁盘、负载、进程运行时间监控
 - MySQL、Redis、API、Worker 心跳状态监控
@@ -25,14 +26,15 @@
 Vue 3 / Nginx -> FastAPI -----------> MySQL
                     |                  ^  ^
                     v                  |  |
-                  Redis <-> Polling Worker -> X API v2
+                  Redis <-> Polling Worker -> 官方 X API / twscrape
                     ^                  |
-                    +---- AI Worker ---+----> OpenAI / Codex Bridge
+                    +---- AI Worker ---+----> 统一 AI 数据源
+                    +---- XHS Worker ------> xiaohongshu-mcp -> 小红书
 
 Prometheus -> Nginx + API + both Workers + exporters -> Grafana
 ```
 
-详细设计见 [架构说明](docs/ARCHITECTURE.md)，X 官方接口、限流与成本注意事项见 [X API 接入说明](docs/X_API.md)。
+详细设计见 [架构说明](docs/ARCHITECTURE.md)，X 官方接口见 [X API 接入说明](docs/X_API.md)，小红书部署和账号风险见 [小红书接入说明](docs/XIAOHONGSHU.md)。
 
 ## 快速启动
 
@@ -53,7 +55,7 @@ MYSQL_EXPORTER_PASSWORD=replace-with-an-exporter-password
 REDIS_PASSWORD=replace-with-a-strong-password
 JWT_SECRET_KEY=replace-with-at-least-32-random-characters
 ADMIN_PASSWORD=replace-with-a-strong-admin-password
-X_BEARER_TOKEN=your-x-api-v2-bearer-token
+X_TOKEN_ENCRYPTION_KEY=generate-a-separate-secret-with-at-least-32-characters
 GRAFANA_ADMIN_PASSWORD=replace-with-a-strong-grafana-password
 ```
 
@@ -93,22 +95,15 @@ Grafana 使用 `.env` 中的 `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`，�
 
 ## AI 草稿生成
 
-AI 功能默认关闭；不配置任何 AI 密钥也可以正常使用账号监听。启用前在 `.env` 中选择一种凭据来源：
+AI 功能默认关闭；不配置 AI 数据源也可以正常使用账号监听。启用前进入管理台“AI 数据源”，填写配置名称、OpenAI 兼容 Base URL、模型和 API Key，保存并执行连通测试；再到“AI 创作”选择默认 Skill、重试次数和输出限制并启用自动生成。独立 `ai-worker` 领取任务、动态读取当前唯一数据源，并把结果保存为可继续编辑的草稿。系统不会自动发布到 X。
 
-```dotenv
-# 直接调用 OpenAI
-OPENAI_API_KEY=
+AI API Key 使用服务端凭据加密密钥持久化到 MySQL，Redis 只缓存密文，API 不返回明文，任务快照和日志也不会包含 Key。Worker 每次执行前重新读取数据源，并把数据源名称与版本写入审计快照。携带凭据的远程地址必须使用 HTTPS，本机兼容网关可使用 HTTP。
 
-# 或调用部署方提供的 Codex Bridge
-CODEX_BRIDGE_TOKEN=
+“AI 创作 → 用户策略与画像”支持按“监听用户 × AI 功能点”绑定一个或多个 Skill。每次新建 AI 会话按“手动覆盖 → 用户功能绑定 → 全局默认”解析 Skill，并把解析结果和版本写入任务快照。上下文同时包含该作者已有画像及最近 20 条动态；成功生成后会更新“他是谁、近期关注、动态关联、长期主题、证据和置信度”，供下一次创作继续使用。原帖与近期动态始终作为不可信引用数据处理，不能覆盖系统、功能点或 Skill 指令。
 
-# 自建 Bridge 时把准确 hostname 加入此 JSON 数组
-AI_ALLOWED_PROVIDER_HOSTS=["api.openai.com"]
-```
+## 小红书发布
 
-启动后在管理台填写当前 provider URL，并选择 provider、模型、默认 Skill、最大重试次数和输出限制，再打开 AI 与可选的自动生成。OpenAI 默认 URL 是 `https://api.openai.com/v1`；Codex Bridge URL 必须由管理员显式填写。新 Post 或手动操作只会创建数据库任务；独立 `ai-worker` 领取任务、调用所选 provider，并把结果保存为可继续编辑的草稿。系统不会自动发布到 X。
-
-`OPENAI_API_KEY` 与 `CODEX_BRIDGE_TOKEN` 只注入 `ai-worker`，不写入 MySQL、任务快照或日志。管理台通过 AI Worker 心跳中的 `provider_ready` / `key_configured` 布尔值显示配置状态，API 不读取或返回密钥原文。Provider URL 以管理台/数据库为唯一运行时真源；该 URL 会收到对应 Authorization，只能指向容器内可访问、且 hostname 已列入 `AI_ALLOWED_PROVIDER_HOSTS` 的可信 HTTPS endpoint。自建 Bridge 必须显式加入其准确 hostname。生产环境还应限制 AI Worker 出站目标，并确认把 Post 文本发送给第三方模型符合隐私、版权与数据驻留要求。
+小红书功能默认关闭。先启动开源 `xiaohongshu-mcp` 执行端，再进入“小红书发布”配置 MCP 地址、可选访问令牌并扫码登录。系统支持文章草稿、立即自动发布和延迟发布，独立 `xhs-worker` 负责重试、每日上限与审计。Cookie 只保存在 MCP 执行端，不会写入本项目的 MySQL 或 Redis。Docker 用户可执行 `docker compose --profile xiaohongshu up -d`，详细步骤见 [小红书接入说明](docs/XIAOHONGSHU.md)。
 
 ## 使用外部 MySQL 与 Redis
 
@@ -116,7 +111,7 @@ AI_ALLOWED_PROVIDER_HOSTS=["api.openai.com"]
 
 ```bash
 install -m 600 .env.external.example .env.external
-# 编辑 .env.external：填写专用数据库账号、JWT/管理员密码和 X Bearer Token
+# 编辑 .env.external：填写专用数据库账号、JWT/管理员密码和 X Token 加密密钥
 make external-config ENV_FILE=.env.external
 make external-up ENV_FILE=.env.external
 ```
@@ -125,14 +120,15 @@ make external-up ENV_FILE=.env.external
 
 ## 第一次使用
 
-1. 登录管理台，进入“监听账号”。
-2. 输入不带 `@` 的 X 用户名。
-3. 设置该账号的轮询周期，以及是否包含回复/转发。
-4. 保存后 Worker 会在下一调度 tick 自动执行；也可以点击“立即轮询”。
-5. 在“内容流”查看新增 Post，在“轮询记录”查看执行与错误，在“系统监控”确认服务状态。
-6. 如需 AI 草稿，先配置 provider 凭据，再到 AI 设置启用功能、选择 Skill；可手动生成，或在小规模验证后开启自动生成。
+1. 登录管理台，进入“X 数据源”。
+2. 选择“官方 X API”或实验性的“twscrape”，按页面引导保存并测试对应凭据，然后点击“启用此数据源”。
+3. 进入“监听账号”，输入不带 `@` 的 X 用户名。
+4. 设置该账号的轮询周期，以及是否包含回复/转发。
+5. 保存后 Worker 会在下一调度 tick 自动执行；也可以点击“立即轮询”。
+6. 在“内容流”查看新增 Post，在“轮询记录”查看执行与错误，在“系统监控”确认服务状态。
+7. 如需 AI 草稿，先配置 provider 凭据，再到 AI 设置启用功能、选择 Skill；可手动生成，或在小规模验证后开启自动生成。
 
-X API 当前采用按量计费，轮询周期越短、账号越多，请求成本越高。建议先用较长周期小规模验证，并在 X Developer Console 设置支出上限。
+Worker 会在每次用户名解析和时间线读取前从 MySQL 获取当前数据源，因此切换后不需要重启；系统会清除旧认证闸门并立即重新排队活跃账号。官方 X API 当前采用按量计费，轮询周期越短、账号越多，请求成本越高。twscrape 不消耗官方 API Credits，但属于非官方网页接口，可能随 X 页面更新失效，并存在验证码、Cookie 失效及账号受限风险。
 
 ## 配置项
 
@@ -144,13 +140,11 @@ X API 当前采用按量计费，轮询周期越短、账号越多，请求成�
 | `ADMIN_USERNAME` | 管理员用户名 | `admin` |
 | `ADMIN_PASSWORD` | 管理员密码 | 无安全默认值，必须修改 |
 | `JWT_SECRET_KEY` | JWT 签名密钥 | 必须修改 |
-| `X_BEARER_TOKEN` | X API v2 Bearer Token | 空 |
+| `X_TOKEN_ENCRYPTION_KEY` | 加密 MySQL 中 X Token 的服务端密钥，至少 32 位 | 空 |
+| `X_TOKEN_CACHE_TTL_SECONDS` | Redis 密文缓存有效期 | `300` |
 | `DEFAULT_POLL_INTERVAL_SECONDS` | 新账号默认轮询周期 | `300` |
 | `WORKER_SCAN_INTERVAL_SECONDS` | Worker 检查到期任务的间隔 | `2` |
 | `WORKER_MAX_CONCURRENCY` | 单 Worker 最大并发账号数 | `5` |
-| `OPENAI_API_KEY` | OpenAI 凭据；仅传给 AI Worker | 空 |
-| `CODEX_BRIDGE_TOKEN` | Codex Bridge 凭据；仅传给 AI Worker | 空 |
-| `AI_ALLOWED_PROVIDER_HOSTS` | 允许接收 provider 请求/凭据的 hostname JSON 数组 | `["api.openai.com"]` |
 | `AI_WORKER_MAX_CONCURRENCY` | 单 AI Worker 最大并发任务数 | `3` |
 | `AI_WORKER_BATCH_SIZE` | 每轮领取 AI 任务上限 | `50` |
 | `MYSQL_*` | MySQL 数据库与凭据 | 见示例文件 |
@@ -210,6 +204,9 @@ python -m app.worker
 
 # 需要先在 backend/.env 中配置对应 provider 凭据
 python -m app.ai_worker
+
+# 小红书发布队列
+python -m app.xhs_worker
 ```
 
 API 文档默认位于 [http://localhost:8000/docs](http://localhost:8000/docs)。
@@ -294,4 +291,4 @@ docker-compose.external.yml 外部 MySQL/Redis 覆盖配置
 
 ## 说明
 
-本项目不包含 X Developer 账号、OpenAI/Codex Bridge 凭据、付费额度或真实 Token。能否读取某个账号以及可读取的历史范围，取决于该账号可见性、你的 X API 权限与 X 当时的产品政策；AI 输出可能不准确，发布前必须人工核验。
+本项目不包含 X Developer 账号、AI API Key、付费额度或真实 Token。能否读取某个账号以及可读取的历史范围，取决于该账号可见性、你的 X 数据源权限与 X 当时的产品政策；AI 输出可能不准确，发布前必须人工核验。

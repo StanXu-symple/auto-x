@@ -5,19 +5,29 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentAdmin, DbSession, RedisClient
 from app.api.errors import APIError
 from app.core.config import get_settings
-from app.models.ai import AIDraft, AIGenerationJob, AISetting, AISkill
+from app.models.ai import (
+    AIDraft,
+    AIFeature,
+    AIGenerationJob,
+    AISetting,
+    AISkill,
+    AIUserProfile,
+    AIUserSkillBinding,
+)
+from app.models.ai_data_source import AIDataSource
 from app.models.monitored_user import MonitoredUser
 from app.models.tweet import Tweet
 from app.schemas.ai import (
     AIDraftOut,
     AIDraftPatch,
+    AIFeatureOut,
     AIJobDetail,
     AIJobOut,
     AISettingsOut,
@@ -25,10 +35,19 @@ from app.schemas.ai import (
     AISkillCreate,
     AISkillOut,
     AISkillPatch,
+    AIUserProfileOut,
+    AIUserSkillBindingOut,
+    AIUserSkillBindingReplace,
     ManualGenerateRequest,
 )
 from app.schemas.common import MessageResponse, Page
-from app.services.ai_jobs import create_manual_job, get_ai_setting, resolve_active_skills
+from app.services.ai_jobs import (
+    create_manual_job,
+    get_ai_feature,
+    get_ai_setting,
+    resolve_active_skills,
+    resolve_context_skills,
+)
 
 router = APIRouter(prefix="/ai", tags=["AI Creation"])
 tweets_router = APIRouter(prefix="/tweets", tags=["AI Creation"])
@@ -85,6 +104,7 @@ def _job_out(
         "source_x_tweet_id": source_x_tweet_id,
         "source_text": source_text,
         "source_username": source_username,
+        "feature_code": job.feature_code,
         "skill_id": job.skill_id,
         "skill_ids": job.skill_ids or [],
         "skill_snapshot": job.skill_snapshot or [],
@@ -188,6 +208,13 @@ async def patch_ai_settings(
     _: CurrentAdmin,
 ) -> AISettingsOut:
     changes = payload.model_dump(exclude_unset=True)
+    data_source_fields = {"provider", "model", "base_url", "bridge_url"}
+    if data_source_fields.intersection(changes):
+        raise APIError(
+            409,
+            "ai_data_source_managed_separately",
+            "模型、地址和 API Key 请在 AI 数据源菜单统一管理",
+        )
     setting = await get_ai_setting(db, for_update=True)
     if "default_skill_ids" in changes:
         requested = changes["default_skill_ids"]
@@ -201,13 +228,12 @@ async def patch_ai_settings(
     mapping = {"model": "model_name"}
     for key, value in changes.items():
         setattr(setting, mapping.get(key, key), value)
-    if setting.provider == "codex_bridge" and setting.enabled and not setting.bridge_url:
+    if setting.enabled and await db.get(AIDataSource, 1) is None:
         raise APIError(
-            422,
-            "bridge_url_required",
-            "bridge_url is required when the codex_bridge provider is enabled",
+            409,
+            "ai_data_source_required",
+            "请先在 AI 数据源菜单配置并测试 OpenAI 兼容账号",
         )
-    _ensure_provider_host_allowed(setting)
     await db.commit()
     await db.refresh(setting)
     return await _settings_out(setting, redis)
@@ -276,6 +302,11 @@ async def patch_ai_skill(
         setting.default_skill_ids = [
             selected for selected in (setting.default_skill_ids or []) if selected != skill_id
         ]
+        await db.execute(
+            update(AIUserSkillBinding)
+            .where(AIUserSkillBinding.skill_id == skill_id)
+            .values(is_active=False)
+        )
     try:
         await db.commit()
     except IntegrityError:
@@ -296,8 +327,129 @@ async def delete_ai_skill(skill_id: int, db: DbSession, _: CurrentAdmin) -> Mess
     setting.default_skill_ids = [
         selected for selected in (setting.default_skill_ids or []) if selected != skill_id
     ]
+    await db.execute(
+        update(AIUserSkillBinding)
+        .where(AIUserSkillBinding.skill_id == skill_id)
+        .values(is_active=False)
+    )
     await db.commit()
     return MessageResponse(message="AI skill deactivated")
+
+
+@router.get("/features", response_model=list[AIFeatureOut])
+async def list_ai_features(db: DbSession, _: CurrentAdmin) -> list[AIFeatureOut]:
+    features = list(
+        await db.scalars(
+            select(AIFeature)
+            .where(AIFeature.is_active.is_(True))
+            .order_by(AIFeature.id.asc())
+        )
+    )
+    return [AIFeatureOut.model_validate(feature) for feature in features]
+
+
+async def _binding_out(
+    db: DbSession, user: MonitoredUser, feature: AIFeature
+) -> AIUserSkillBindingOut:
+    setting = await get_ai_setting(db)
+    skills, source = await resolve_context_skills(
+        db,
+        monitored_user_id=user.id,
+        feature=feature,
+        fallback_skill_ids=setting.default_skill_ids or [],
+    )
+    return AIUserSkillBindingOut(
+        monitored_user_id=user.id,
+        username=user.username,
+        feature=AIFeatureOut.model_validate(feature),
+        skill_ids=[skill.id for skill in skills],
+        skills=[_skill_out(skill) for skill in skills],
+        resolution_source=source,
+    )
+
+
+@router.get(
+    "/users/{user_id}/skill-bindings/{feature_code}",
+    response_model=AIUserSkillBindingOut,
+)
+async def read_user_skill_binding(
+    user_id: int, feature_code: str, db: DbSession, _: CurrentAdmin
+) -> AIUserSkillBindingOut:
+    user = await db.get(MonitoredUser, user_id)
+    if user is None:
+        raise APIError(404, "monitored_user_not_found", "监听用户不存在")
+    try:
+        feature = await get_ai_feature(db, feature_code)
+    except ValueError:
+        raise APIError(404, "ai_feature_not_found", "AI 功能点不存在") from None
+    return await _binding_out(db, user, feature)
+
+
+@router.put(
+    "/users/{user_id}/skill-bindings/{feature_code}",
+    response_model=AIUserSkillBindingOut,
+)
+async def replace_user_skill_binding(
+    user_id: int,
+    feature_code: str,
+    payload: AIUserSkillBindingReplace,
+    db: DbSession,
+    _: CurrentAdmin,
+) -> AIUserSkillBindingOut:
+    user = await db.get(MonitoredUser, user_id)
+    if user is None:
+        raise APIError(404, "monitored_user_not_found", "监听用户不存在")
+    try:
+        feature = await get_ai_feature(db, feature_code)
+    except ValueError:
+        raise APIError(404, "ai_feature_not_found", "AI 功能点不存在") from None
+    skills = await resolve_active_skills(db, payload.skill_ids)
+    if [skill.id for skill in skills] != payload.skill_ids:
+        raise APIError(422, "invalid_skill_ids", "所有 Skill 必须存在且已启用")
+    await db.execute(
+        delete(AIUserSkillBinding).where(
+            AIUserSkillBinding.monitored_user_id == user.id,
+            AIUserSkillBinding.ai_feature_id == feature.id,
+        )
+    )
+    now = datetime.now(UTC)
+    for priority, skill in enumerate(skills, start=1):
+        db.add(
+            AIUserSkillBinding(
+                monitored_user_id=user.id,
+                ai_feature_id=feature.id,
+                skill_id=skill.id,
+                priority=priority,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    await db.commit()
+    return await _binding_out(db, user, feature)
+
+
+@router.get("/users/{user_id}/profile", response_model=AIUserProfileOut)
+async def read_user_ai_profile(
+    user_id: int, db: DbSession, _: CurrentAdmin
+) -> AIUserProfileOut:
+    user = await db.get(MonitoredUser, user_id)
+    if user is None:
+        raise APIError(404, "monitored_user_not_found", "监听用户不存在")
+    profile = await db.get(AIUserProfile, user.id)
+    return AIUserProfileOut(
+        monitored_user_id=user.id,
+        username=user.username,
+        identity_summary=profile.identity_summary if profile else "",
+        focus_summary=profile.focus_summary if profile else "",
+        relationship_summary=profile.relationship_summary if profile else "",
+        recurring_topics=profile.recurring_topics if profile else [],
+        evidence=profile.evidence if profile else [],
+        confidence=profile.confidence if profile else 0,
+        version=profile.version if profile else 0,
+        last_source_tweet_id=profile.last_source_tweet_id if profile else None,
+        updated_at=profile.updated_at if profile else None,
+    )
 
 
 @router.get("/jobs", response_model=Page[AIJobOut])
@@ -411,17 +563,26 @@ async def generate_from_tweet(
     if tweet is None:
         raise APIError(404, "tweet_not_found", "Tweet was not found")
     setting = await get_ai_setting(db)
-    requested_ids = (
-        payload.skill_ids if payload.skill_ids is not None else setting.default_skill_ids or []
+    try:
+        feature = await get_ai_feature(db, payload.feature_code)
+    except ValueError:
+        raise APIError(404, "ai_feature_not_found", "AI 功能点不存在") from None
+    skills, resolution = await resolve_context_skills(
+        db,
+        monitored_user_id=tweet.monitored_user_id,
+        feature=feature,
+        fallback_skill_ids=setting.default_skill_ids or [],
+        override_skill_ids=payload.skill_ids,
     )
-    skills = await resolve_active_skills(db, requested_ids)
-    if [skill.id for skill in skills] != requested_ids:
+    if payload.skill_ids is not None and [skill.id for skill in skills] != payload.skill_ids:
         raise APIError(422, "invalid_skill_ids", "All selected skills must exist and be active")
     try:
         job, _created = await create_manual_job(
             db,
             tweet=tweet,
+            feature=feature,
             skills=skills,
+            skill_resolution=resolution,
             idempotency_key=payload.idempotency_key,
         )
         await db.commit()

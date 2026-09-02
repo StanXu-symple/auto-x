@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.dialects import mysql
 
-from app.models.ai import AISetting, AISkill
+from app.models.ai import AIFeature, AISetting, AISkill
 from app.models.tweet import Tweet
 from app.services.ai_jobs import enqueue_auto_jobs
 
@@ -23,7 +23,9 @@ class FakeSession:
         self.statements.append(statement)
 
 
-async def test_auto_enqueue_is_idempotent_and_freezes_skill_audit_snapshot() -> None:
+async def test_auto_enqueue_is_idempotent_and_freezes_skill_audit_snapshot(
+    monkeypatch,
+) -> None:
     now = datetime.now(UTC)
     setting = AISetting(
         id=1,
@@ -69,7 +71,28 @@ async def test_auto_enqueue_is_idempotent_and_freezes_skill_audit_snapshot() -> 
         posted_at=now,
         raw_payload={},
     )
-    session = FakeSession(setting, [[skill], [tweet_1, tweet_2], ["auto:11"]])
+    feature = AIFeature(
+        id=1,
+        code="article_generation",
+        name="文章理解与创作",
+        description="desc",
+        base_prompt="理解作者",
+        is_active=True,
+    )
+
+    async def fake_feature(*_args):
+        return feature
+
+    async def fake_skills(*_args, **_kwargs):
+        return [skill], "user_feature_binding"
+
+    async def fake_context(*_args, **_kwargs):
+        return {"author": {"monitored_user_id": 1}, "recent_dynamics": []}
+
+    monkeypatch.setattr("app.services.ai_jobs.get_ai_feature", fake_feature)
+    monkeypatch.setattr("app.services.ai_jobs.resolve_context_skills", fake_skills)
+    monkeypatch.setattr("app.services.ai_jobs.build_author_context", fake_context)
+    session = FakeSession(setting, [[tweet_1, tweet_2], ["auto:11"]])
     inserted = await enqueue_auto_jobs(session, [11, 12])  # type: ignore[arg-type]
 
     assert inserted == 1
@@ -85,6 +108,8 @@ async def test_auto_enqueue_is_idempotent_and_freezes_skill_audit_snapshot() -> 
     ]
     assert request_snapshots[0]["config"]["model"] == "gpt-5.6-terra"
     assert request_snapshots[0]["source"]["text"] == "first"
+    assert request_snapshots[0]["feature"]["code"] == "article_generation"
+    assert request_snapshots[0]["skill_resolution"] == "user_feature_binding"
 
 
 async def test_auto_enqueue_stays_off_when_disabled() -> None:

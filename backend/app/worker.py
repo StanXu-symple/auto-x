@@ -21,7 +21,7 @@ from app.models.monitored_user import MonitoredUser
 from app.services.metrics import POLL_QUEUE_DUE, WORKER_HEARTBEAT
 from app.services.poller import GLOBAL_X_GATE_KEY, PollingService
 from app.services.settings_service import get_polling_settings
-from app.services.x_client import XClient
+from app.services.x_source_client import XSourceClient
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +35,10 @@ class PollingWorker:
             decode_responses=True,
             socket_timeout=settings.redis_socket_timeout_seconds,
         )
-        self.x_client = XClient(
-            settings.x_bearer_token,
-            base_url=settings.x_api_base_url,
-            timeout_seconds=settings.x_request_timeout_seconds,
-            max_pages=settings.x_max_pages_per_poll,
-            page_size=settings.x_page_size,
+        self.x_client = XSourceClient(
+            session_factory=AsyncSessionFactory,
+            redis=self.redis,
+            settings=settings,
         )
         self.poller = PollingService(
             session_factory=AsyncSessionFactory,

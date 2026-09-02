@@ -21,20 +21,24 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  UserRound,
   WandSparkles,
 } from 'lucide-vue-next'
-import { aiApi, tweetsApi } from '@/services/api'
+import { aiApi, monitoredUsersApi, tweetsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import { useUiStore } from '@/stores/ui'
 import type {
   AiDraft,
   AiDraftStatus,
+  AiFeature,
   AiJob,
-  AiProvider,
   AiSettings,
   AiSkill,
   AiSkillPayload,
+  AiUserProfile,
+  AiUserSkillBinding,
   EntityId,
+  MonitoredUser,
   Tweet,
   UpdateAiSettingsPayload,
 } from '@/types'
@@ -51,18 +55,22 @@ const settings = ref<AiSettings | null>(null)
 const skills = ref<AiSkill[]>([])
 const jobs = ref<AiJob[]>([])
 const sourceTweets = ref<Tweet[]>([])
+const monitoredUsers = ref<MonitoredUser[]>([])
+const features = ref<AiFeature[]>([])
+const selectedUserId = ref<EntityId | ''>('')
+const selectedFeatureCode = ref('article_generation')
+const userBinding = ref<AiUserSkillBinding | null>(null)
+const userProfile = ref<AiUserProfile | null>(null)
+const bindingSkillIds = ref<EntityId[]>([])
+const bindingSaving = ref(false)
 const jobsTotal = ref(0)
-const loading = reactive({ initial: true, settings: false, skills: false, jobs: false, generate: false, draft: false })
+const loading = reactive({ initial: true, settings: false, skills: false, jobs: false, context: false, generate: false, draft: false })
 const errors = reactive({ settings: '', skills: '', jobs: '' })
 const jobFilters = reactive({ page: 1, page_size: 15, status: 'all' })
 
 const settingsForm = reactive<UpdateAiSettingsPayload>({
   enabled: false,
   auto_generate: true,
-  provider: 'openai_responses',
-  model: 'gpt-5.6-terra',
-  base_url: 'https://api.openai.com/v1',
-  bridge_url: '',
   prompt_template: '',
   language: 'zh-CN',
   tone: '专业自然',
@@ -82,7 +90,7 @@ const skillForm = reactive<AiSkillPayload>({ name: '', description: '', instruct
 
 const generateDialogOpen = ref(false)
 const generateFormError = ref('')
-const generateForm = reactive({ source_x_tweet_id: '', skill_ids: [] as EntityId[] })
+const generateForm = reactive({ source_x_tweet_id: '', feature_code: 'article_generation', override_skills: false, skill_ids: [] as EntityId[] })
 
 const draftDialogOpen = ref(false)
 const editingJob = ref<AiJob | null>(null)
@@ -94,19 +102,10 @@ const highlightedJobId = computed(() => String(route.query.job || ''))
 const runningJobs = computed(() => jobs.value.filter((job) => ['queued', 'running', 'retry_wait'].includes(job.status)).length)
 const draftJobs = computed(() => jobs.value.filter((job) => Boolean(job.draft)).length)
 
-const providerOptions: Array<{ value: AiProvider; label: string; description: string }> = [
-  { value: 'openai_responses', label: 'OpenAI Responses', description: 'OpenAI Responses API 或兼容端点' },
-  { value: 'codex_bridge', label: 'Codex Bridge', description: '通过本地 AI Worker / Bridge 调用' },
-]
-
 function applySettings(value: AiSettings) {
   settings.value = value
   settingsForm.enabled = value.enabled
   settingsForm.auto_generate = value.auto_generate
-  settingsForm.provider = value.provider
-  settingsForm.model = value.model
-  settingsForm.base_url = value.base_url
-  settingsForm.bridge_url = value.bridge_url || ''
   settingsForm.prompt_template = value.prompt_template || ''
   settingsForm.language = value.language || 'zh-CN'
   settingsForm.tone = value.tone || '专业自然'
@@ -168,16 +167,72 @@ async function loadSourceTweets() {
   }
 }
 
+async function loadContextOptions() {
+  try {
+    const [usersResult, featureResult] = await Promise.all([
+      monitoredUsersApi.list({ page: 1, page_size: 100 }),
+      aiApi.features(),
+    ])
+    monitoredUsers.value = usersResult.items
+    features.value = featureResult
+    if (!features.value.some((feature) => feature.code === selectedFeatureCode.value)) {
+      selectedFeatureCode.value = features.value[0]?.code || 'article_generation'
+    }
+    if (!selectedUserId.value && monitoredUsers.value[0]) selectedUserId.value = monitoredUsers.value[0].id
+    await loadUserContext()
+  } catch (requestError) {
+    ui.toast('加载用户 AI 上下文失败', 'error', getErrorMessage(requestError))
+  }
+}
+
+async function loadUserContext() {
+  if (!selectedUserId.value || !selectedFeatureCode.value) {
+    userBinding.value = null
+    userProfile.value = null
+    return
+  }
+  loading.context = true
+  try {
+    const [binding, profile] = await Promise.all([
+      aiApi.userSkillBinding(selectedUserId.value, selectedFeatureCode.value),
+      aiApi.userProfile(selectedUserId.value),
+    ])
+    userBinding.value = binding
+    userProfile.value = profile
+    bindingSkillIds.value = [...binding.skill_ids]
+  } catch (requestError) {
+    ui.toast('读取用户 Skill 策略失败', 'error', getErrorMessage(requestError))
+  } finally {
+    loading.context = false
+  }
+}
+
+async function saveUserBinding() {
+  if (!selectedUserId.value || !selectedFeatureCode.value) return
+  bindingSaving.value = true
+  try {
+    userBinding.value = await aiApi.saveUserSkillBinding(
+      selectedUserId.value,
+      selectedFeatureCode.value,
+      [...bindingSkillIds.value],
+    )
+    bindingSkillIds.value = [...userBinding.value.skill_ids]
+    ui.toast('用户 Skill 策略已保存', 'success', '后续会话会按用户和 AI 功能点动态加载')
+  } catch (requestError) {
+    ui.toast('保存用户 Skill 策略失败', 'error', getErrorMessage(requestError))
+  } finally {
+    bindingSaving.value = false
+  }
+}
+
 async function loadAll() {
   loading.initial = true
   await Promise.all([loadSettings(), loadSkills(), loadJobs(), loadSourceTweets()])
+  await loadContextOptions()
   loading.initial = false
 }
 
 function validateSettings() {
-  if (!settingsForm.model.trim()) return '请填写模型名称'
-  if (settingsForm.provider === 'openai_responses' && !settingsForm.base_url.trim()) return '请填写 API Base URL'
-  if (settingsForm.provider === 'codex_bridge' && !String(settingsForm.bridge_url || '').trim()) return '请填写 Codex Bridge URL'
   if (settingsForm.max_attempts < 1 || settingsForm.max_attempts > 10) return '最大重试次数应为 1–10'
   if (settingsForm.max_output_tokens < 128 || settingsForm.max_output_tokens > 100000) return '最大输出 Token 应为 128–100000'
   return ''
@@ -193,9 +248,6 @@ async function saveSettings() {
   try {
     const payload: UpdateAiSettingsPayload = {
       ...settingsForm,
-      model: settingsForm.model.trim(),
-      base_url: settingsForm.base_url.trim(),
-      bridge_url: settingsForm.bridge_url?.trim() || null,
       prompt_template: settingsForm.prompt_template.trim(),
       tone: settingsForm.tone.trim(),
       default_skill_ids: [...settingsForm.default_skill_ids],
@@ -280,7 +332,9 @@ async function removeSkill(skill: AiSkill) {
 
 function openGenerateDialog(tweet?: Tweet) {
   generateForm.source_x_tweet_id = tweet ? tweet.tweet_id : ''
-  generateForm.skill_ids = [...settingsForm.default_skill_ids]
+  generateForm.feature_code = selectedFeatureCode.value || 'article_generation'
+  generateForm.override_skills = false
+  generateForm.skill_ids = []
   generateFormError.value = ''
   generateDialogOpen.value = true
 }
@@ -294,7 +348,8 @@ async function submitGeneration() {
   loading.generate = true
   try {
     const result = await aiApi.generateFromTweet(generateForm.source_x_tweet_id.trim(), {
-      skill_ids: [...generateForm.skill_ids],
+      feature_code: generateForm.feature_code,
+      skill_ids: generateForm.override_skills ? [...generateForm.skill_ids] : undefined,
       idempotency_key: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${generateForm.source_x_tweet_id}`,
     })
     generateDialogOpen.value = false
@@ -430,6 +485,8 @@ watch(activeTab, (tab) => {
   router.replace({ query: { ...route.query, tab } })
 })
 
+watch([selectedUserId, selectedFeatureCode], () => loadUserContext())
+
 let refreshTimer: number | undefined
 onMounted(() => {
   loadAll()
@@ -488,13 +545,9 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
             <el-alert v-if="errors.settings" :title="errors.settings" type="error" :closable="false" show-icon />
             <div class="settings-sections">
               <section class="settings-block">
-                <header><span><Bot :size="18" /></span><div><h3>模型与连接</h3><p>选择生成 Provider，并配置服务端凭据与模型</p></div><el-tag :type="configured ? 'success' : 'warning'" effect="plain">{{ configured ? 'Provider 已配置' : '缺少凭据' }}</el-tag></header>
-                <div class="settings-form-grid">
-                  <el-form-item label="Provider"><el-select v-model="settingsForm.provider"><el-option v-for="option in providerOptions" :key="option.value" :label="option.label" :value="option.value"><div class="provider-option"><strong>{{ option.label }}</strong><small>{{ option.description }}</small></div></el-option></el-select></el-form-item>
-                  <el-form-item label="模型"><el-input v-model="settingsForm.model" placeholder="gpt-5.6-terra" /></el-form-item>
-                  <el-form-item v-if="settingsForm.provider === 'openai_responses'" label="API Base URL" class="span-2"><el-input v-model="settingsForm.base_url" placeholder="https://api.openai.com/v1" /></el-form-item>
-                  <el-form-item v-else label="Codex Bridge URL" class="span-2"><el-input v-model="settingsForm.bridge_url" placeholder="http://ai-worker:8010" /></el-form-item>
-                  <el-form-item label="凭据状态" class="span-2"><div class="credential-status"><span :class="{ 'is-ready': settings?.key_configured || settings?.key_status === 'not_required' || settings?.key_status === 'worker_managed' }"><KeyRound :size="15" /></span><div><strong>{{ settings?.key_status === 'configured' ? 'API Key 已由服务端安全配置' : settings?.key_status === 'worker_managed' ? '凭据由 AI Worker 管理' : settings?.key_status === 'not_required' ? '当前 Provider 不需要 API Key' : '尚未配置 API Key' }}</strong><small>密钥仅通过服务端环境变量或 Secret 注入，前端不会读取或传输密钥。</small></div></div></el-form-item>
+                <header><span><Bot :size="18" /></span><div><h3>统一 AI 数据源</h3><p>模型、服务地址和 API Key 由独立数据源菜单统一管理</p></div><el-tag :type="configured ? 'success' : 'warning'" effect="plain">{{ configured ? '数据源可用' : '等待配置' }}</el-tag></header>
+                <div class="credential-status"><span :class="{ 'is-ready': configured }"><KeyRound :size="15" /></span><div><strong>{{ settings?.model || '尚未配置模型' }}</strong><small>{{ settings?.base_url || '请先配置 OpenAI 兼容 Base URL 与 API Key' }}</small></div><el-button type="primary" plain @click="router.push('/ai-data-source')">管理 AI 数据源</el-button></div>
+                <div class="settings-form-grid compact-provider-settings">
                   <el-form-item label="推理强度"><el-select v-model="settingsForm.reasoning_effort"><el-option label="无" value="none" /><el-option label="低" value="low" /><el-option label="中" value="medium" /><el-option label="高" value="high" /><el-option label="超高" value="xhigh" /><el-option label="最大" value="max" /></el-select></el-form-item>
                   <el-form-item label="请求超时"><el-input-number v-model="settingsForm.request_timeout_seconds" :min="5" :max="600" /><span class="field-unit">秒</span></el-form-item>
                 </div>
@@ -521,6 +574,35 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
           </div>
         </el-tab-pane>
 
+        <el-tab-pane name="user-context"><template #label><span class="ai-tab-label"><UserRound :size="15" />用户策略与画像</span></template>
+          <div v-loading="loading.context" class="ai-pane user-context-pane">
+            <header class="ai-pane__toolbar">
+              <div><h3>按用户动态装配 AI 上下文</h3><p>每个监听用户可针对不同 AI 功能点选择 Skill；画像会随成功生成持续更新。</p></div>
+              <el-button :loading="loading.context" @click="loadContextOptions"><RefreshCw v-if="!loading.context" :size="15" />刷新</el-button>
+            </header>
+            <div class="context-selector">
+              <el-form-item label="监听用户"><el-select v-model="selectedUserId" filterable placeholder="选择监听用户"><el-option v-for="user in monitoredUsers" :key="user.id" :label="`${user.display_name || user.username} · @${user.username}`" :value="user.id" /></el-select></el-form-item>
+              <el-form-item label="AI 功能点"><el-select v-model="selectedFeatureCode" placeholder="选择功能点"><el-option v-for="feature in features" :key="feature.code" :label="feature.name" :value="feature.code" /></el-select></el-form-item>
+            </div>
+            <EmptyState v-if="!monitoredUsers.length" compact title="还没有监听用户" description="先添加需要监听的 X 用户，再为他配置专属 Skill"><template #icon><UserRound :size="26" /></template><el-button type="primary" @click="router.push('/accounts')">添加监听用户</el-button></EmptyState>
+            <div v-else class="context-grid">
+              <section class="settings-block binding-card">
+                <header><span><WandSparkles :size="18" /></span><div><h3>专属 Skill 组合</h3><p>{{ userBinding?.feature.description || '选择该功能调用时需要注入的提示指令' }}</p></div><el-tag effect="plain" :type="userBinding?.resolution_source === 'user_feature_binding' ? 'success' : 'info'">{{ userBinding?.resolution_source === 'user_feature_binding' ? '用户专属' : '继承全局默认' }}</el-tag></header>
+                <el-alert title="留空并保存表示移除专属绑定，系统将自动回退到全局默认 Skills。" type="info" :closable="false" show-icon />
+                <el-form-item label="Skills（顺序即优先级）"><el-select v-model="bindingSkillIds" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择一个或多个 Skill"><el-option v-for="skill in skills.filter((item) => item.is_active)" :key="skill.id" :label="`${skill.name} · v${skill.version || 1}`" :value="skill.id" /></el-select></el-form-item>
+                <div class="feature-prompt"><small>功能点基础提示词</small><p>{{ userBinding?.feature.base_prompt || features.find((item) => item.code === selectedFeatureCode)?.base_prompt }}</p></div>
+                <footer><span>解析顺序：手动覆盖 → 用户功能绑定 → 全局默认</span><el-button type="primary" :loading="bindingSaving" @click="saveUserBinding"><Save v-if="!bindingSaving" :size="15" />保存策略</el-button></footer>
+              </section>
+              <section class="settings-block profile-card">
+                <header><span><Bot :size="18" /></span><div><h3>作者长期画像</h3><p>基于历史画像、近期动态和当前帖子进行保守迭代</p></div><el-tag effect="plain">v{{ userProfile?.version || 0 }} · 置信度 {{ Math.round((userProfile?.confidence || 0) * 100) }}%</el-tag></header>
+                <dl class="profile-details"><div><dt>他是谁</dt><dd>{{ userProfile?.identity_summary || '尚未生成；首次成功创作后自动形成画像。' }}</dd></div><div><dt>近期关注</dt><dd>{{ userProfile?.focus_summary || '暂无近期关注总结' }}</dd></div><div><dt>动态关联与思想脉络</dt><dd>{{ userProfile?.relationship_summary || '暂无关联分析' }}</dd></div></dl>
+                <div class="profile-topics"><small>长期主题</small><div><el-tag v-for="topic in userProfile?.recurring_topics || []" :key="topic" effect="plain">{{ topic }}</el-tag><span v-if="!userProfile?.recurring_topics?.length">暂无</span></div></div>
+                <footer><span>最近更新：{{ formatDateTime(userProfile?.updated_at) }}</span><span v-if="userProfile?.last_source_tweet_id">来源推文 #{{ userProfile.last_source_tweet_id }}</span></footer>
+              </section>
+            </div>
+          </div>
+        </el-tab-pane>
+
         <el-tab-pane name="skills"><template #label><span class="ai-tab-label"><WandSparkles :size="15" />Skills</span></template>
           <div class="ai-pane">
             <header class="ai-pane__toolbar"><div><h3>创作 Skills</h3><p>把写作方法拆成可复用、可组合的提示指令</p></div><div class="ai-pane__actions"><el-button :loading="loading.skills" @click="loadSkills"><RefreshCw v-if="!loading.skills" :size="15" />刷新</el-button><el-button type="primary" @click="openCreateSkill"><Plus :size="15" />新建 Skill</el-button></div></header>
@@ -538,7 +620,9 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
       <el-alert v-if="generateFormError" :title="generateFormError" type="error" :closable="false" show-icon />
       <el-form label-position="top" class="dialog-form">
         <el-form-item label="源推文" required><el-select v-model="generateForm.source_x_tweet_id" filterable allow-create default-first-option placeholder="选择最近推文，或直接输入 X Tweet ID"><el-option v-for="tweet in sourceTweets" :key="tweet.id" :value="tweet.tweet_id" :label="`X ${tweet.tweet_id} · @${tweet.username} · ${tweet.text.slice(0, 60)}`"><div class="tweet-option"><strong>X {{ tweet.tweet_id }} · @{{ tweet.username }}</strong><span>{{ tweet.text }}</span></div></el-option></el-select></el-form-item>
-        <el-form-item label="本次使用的 Skills"><el-select v-model="generateForm.skill_ids" multiple collapse-tags collapse-tags-tooltip placeholder="不选则使用系统默认组合"><el-option v-for="skill in skills.filter((item) => item.is_active)" :key="skill.id" :label="skill.name" :value="skill.id" /></el-select></el-form-item>
+        <el-form-item label="AI 功能点"><el-select v-model="generateForm.feature_code"><el-option v-for="feature in features" :key="feature.code" :label="feature.name" :value="feature.code" /></el-select></el-form-item>
+        <el-form-item><el-switch v-model="generateForm.override_skills" active-text="本次手动覆盖用户 Skill 策略" inactive-text="按用户与功能点动态加载 Skills" /></el-form-item>
+        <el-form-item v-if="generateForm.override_skills" label="本次使用的 Skills"><el-select v-model="generateForm.skill_ids" multiple collapse-tags collapse-tags-tooltip placeholder="选择本次覆盖组合"><el-option v-for="skill in skills.filter((item) => item.is_active)" :key="skill.id" :label="skill.name" :value="skill.id" /></el-select></el-form-item>
       </el-form>
       <template #footer><el-button @click="generateDialogOpen = false">取消</el-button><el-button type="primary" :loading="loading.generate" @click="submitGeneration"><Sparkles v-if="!loading.generate" :size="15" />加入生成队列</el-button></template>
     </el-dialog>
@@ -583,11 +667,12 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .ai-pane { min-height: 390px; padding: 18px; }.ai-pane__toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; gap: 16px; }.ai-pane__toolbar h3, .settings-block h3 { margin: 0 0 3px; font-size: 13px; }.ai-pane__actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }.ai-pane__actions .el-input { width: 210px; }.status-filter { width: 125px; }
 .job-source { min-width: 0; gap: 9px; }.source-mark { flex: 0 0 auto; padding: 4px 6px; border-radius: 5px; color: var(--primary-bright); background: var(--primary-soft); font-family: ui-monospace, monospace; font-size: 8px; }.job-source > div { min-width: 0; }.job-source strong { font-size: 10px; }.job-source p { overflow: hidden; max-width: 330px; margin: 3px 0 0; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }.skill-tags { display: flex; flex-wrap: wrap; gap: 4px; }.skill-tags > span { color: var(--muted); font-size: 9px; }.attempt-copy, .waiting-copy { color: var(--muted); font-size: 9px; }.job-actions { min-height: 30px; gap: 5px; }.waiting-copy { display: inline-flex; align-items: center; gap: 5px; }.job-error-icon { margin-left: 4px; color: var(--red); }.ai-job-table :deep(.ai-job-row--highlighted td.el-table__cell) { background: rgba(124, 98, 255, .13) !important; }
 .settings-pane { padding: 18px 20px 0; }.settings-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }.settings-block { padding: 17px; border: 1px solid var(--border); border-radius: 11px; background: rgba(9, 11, 17, .38); }.settings-block header { margin-bottom: 17px; gap: 10px; }.settings-block header > span { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; color: var(--primary-bright); background: var(--primary-soft); }.settings-block header > div { flex: 1; }.settings-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }.span-2 { grid-column: 1 / -1; }.field-unit { margin-left: 7px; color: var(--muted); font-size: 9px; }.provider-option { display: flex; flex-direction: column; padding: 4px 0; }.provider-option small { color: var(--muted); font-size: 8px; }.automation-block { grid-column: 1 / -1; }.switch-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }.switch-list > div { display: flex; align-items: center; justify-content: space-between; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); gap: 10px; }.switch-list span { display: flex; flex-direction: column; }.switch-list strong { font-size: 10px; }.switch-list small { margin-top: 3px; color: var(--muted); font-size: 8px; line-height: 1.45; }.settings-footer { display: flex; align-items: center; justify-content: flex-end; margin: 18px -20px 0; padding: 13px 20px; border-top: 1px solid var(--border); gap: 8px; }.settings-footer > span { margin-right: auto; color: var(--muted); font-size: 8px; }
-.credential-status { display: flex; width: 100%; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); gap: 10px; }.credential-status > span { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; color: var(--orange); background: rgba(245,167,66,.1); }.credential-status > span.is-ready { color: var(--green); background: rgba(50,212,154,.1); }.credential-status > div { display: flex; flex-direction: column; }.credential-status strong { font-size: 9px; }.credential-status small { margin-top: 3px; color: var(--muted); font-size: 8px; line-height: 1.45; }
+.credential-status { display: flex; width: 100%; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); gap: 10px; }.credential-status > span { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; color: var(--orange); background: rgba(245,167,66,.1); }.credential-status > span.is-ready { color: var(--green); background: rgba(50,212,154,.1); }.credential-status > div { display: flex; flex: 1; min-width: 0; flex-direction: column; }.credential-status strong { font-size: 9px; }.credential-status small { margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 8px; line-height: 1.45; text-overflow: ellipsis; }.compact-provider-settings { margin-top: 14px; }
+.context-selector { display: grid; grid-template-columns: repeat(2, minmax(0, 280px)); margin-bottom: 14px; gap: 12px; }.context-selector :deep(.el-form-item) { margin-bottom: 0; }.context-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }.binding-card, .profile-card { display: flex; min-height: 390px; flex-direction: column; }.binding-card :deep(.el-alert) { margin-bottom: 14px; }.binding-card :deep(.el-select) { width: 100%; }.binding-card > footer, .profile-card > footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 15px; color: var(--muted); font-size: 8px; gap: 10px; }.feature-prompt { padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); }.feature-prompt small, .profile-topics small { color: var(--primary-bright); font-size: 8px; font-weight: 700; }.feature-prompt p { margin: 7px 0 0; color: var(--text-soft); font-size: 9px; line-height: 1.7; white-space: pre-wrap; }.profile-details { display: grid; margin: 0; gap: 9px; }.profile-details > div { padding: 11px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); }.profile-details dt { color: var(--primary-bright); font-size: 8px; font-weight: 700; }.profile-details dd { margin: 6px 0 0; color: var(--text-soft); font-size: 9px; line-height: 1.65; }.profile-topics { margin-top: 12px; }.profile-topics > div { display: flex; flex-wrap: wrap; margin-top: 7px; color: var(--muted); font-size: 9px; gap: 5px; }
 .skill-grid { display: grid; min-height: 120px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; }.skill-card { display: flex; min-width: 0; min-height: 220px; flex-direction: column; padding: 15px; border: 1px solid var(--border); border-radius: 11px; background: linear-gradient(145deg, var(--surface-2), var(--surface)); }.skill-card.is-inactive { opacity: .62; }.skill-card header { gap: 9px; }.skill-card__icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; color: var(--primary-bright); background: var(--primary-soft); }.skill-card header > div { min-width: 0; flex: 1; }.skill-card header strong, .skill-card header small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.skill-card header strong { font-size: 11px; }.skill-card header small { margin-top: 2px; color: var(--muted); font-size: 8px; }.skill-card > p { overflow: hidden; min-height: 28px; margin: 12px 0 8px; color: var(--text-soft); font-size: 9px; line-height: 1.55; }.skill-card pre { display: -webkit-box; overflow: hidden; flex: 1; margin: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); background: rgba(0,0,0,.18); font-family: inherit; font-size: 8px; line-height: 1.6; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 5; }.skill-card footer { display: flex; align-items: center; justify-content: space-between; margin-top: 11px; color: var(--muted); font-size: 8px; }.skill-card footer > div { display: flex; gap: 4px; }
 .dialog-form { margin-top: 14px; }.dialog-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 12px; }.tweet-option { display: flex; flex-direction: column; max-width: 470px; }.tweet-option span { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }.draft-dialog-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 8px; }.dialog-footer-spacer { display: inline-block; min-width: 80px; flex: 1; }
 :deep(.el-dialog__footer > div) { display: flex; align-items: center; width: 100%; }
-@media (max-width: 1180px) { .ai-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.skill-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.settings-sections { grid-template-columns: minmax(0, 1fr); }.automation-block { grid-column: auto; }.switch-list { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 800px) { .ai-hero { align-items: flex-start; flex-direction: column; }.ai-hero__actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }.provider-readiness { margin-right: auto; }.ai-pane__toolbar { align-items: flex-start; flex-direction: column; }.ai-pane__actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }.ai-pane__actions .el-input { width: min(100%, 280px); }.skill-grid { grid-template-columns: minmax(0, 1fr); }.settings-form-grid { grid-template-columns: minmax(0, 1fr); }.span-2 { grid-column: auto; } }
+@media (max-width: 1180px) { .ai-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.skill-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.settings-sections, .context-grid { grid-template-columns: minmax(0, 1fr); }.automation-block { grid-column: auto; }.switch-list { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 800px) { .ai-hero { align-items: flex-start; flex-direction: column; }.ai-hero__actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }.provider-readiness { margin-right: auto; }.ai-pane__toolbar { align-items: flex-start; flex-direction: column; }.ai-pane__actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }.ai-pane__actions .el-input { width: min(100%, 280px); }.skill-grid, .context-selector { grid-template-columns: minmax(0, 1fr); }.settings-form-grid { grid-template-columns: minmax(0, 1fr); }.span-2 { grid-column: auto; } }
 @media (max-width: 560px) { .ai-hero { padding: 18px; }.ai-hero__copy { align-items: flex-start; }.ai-hero__icon { width: 42px; height: 42px; }.ai-summary-grid { grid-template-columns: minmax(0, 1fr); }.ai-pane { padding: 13px; }.dialog-form-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

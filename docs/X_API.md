@@ -1,4 +1,13 @@
-# X API 接入说明
+# X 数据源接入说明
+
+## 运行时数据源选择
+
+管理台“X 数据源”提供两个互斥模式：
+
+- `official_api`：保留原有 App-only Bearer Token 管理和官方 X API v2 读取。
+- `twscrape`：使用专用 X 账号的 `auth_token`、`ct0` Cookie，通过 twscrape 读取网页 GraphQL。
+
+当前选择保存在 MySQL `app_settings.x_source`。Worker 的每次读取都会重新获取该值并路由到对应客户端；切换模式会清除全局认证/限流闸门，并把活跃监听账号重新排队，无需重启服务。两类凭据分别加密保存，可同时保留，切换模式不会删除另一套凭据。
 
 ## 使用的官方接口
 
@@ -18,7 +27,19 @@ X Sentinel 采用 X API v2 的服务端 Bearer Token：
 
 ## 凭据
 
-在 X Developer Console 创建 Project/App，生成 Bearer Token，然后写入部署环境的 `X_BEARER_TOKEN`。不要把真实 Token 写入代码、镜像或提交记录。
+在 X Developer Console 创建 App 并生成 Bearer Token。登录管理台的“X 数据源”，选择官方 X API，再选择 Developer Console 或 API Key/Secret 换取方式，按引导获取后粘贴保存。Token 使用 `X_TOKEN_ENCRYPTION_KEY` 加密持久化到 MySQL，Redis 仅临时缓存密文；不要把真实 Token 写入代码、镜像或提交记录。
+
+官方认证资料：
+
+- [Developer Console 与 Keys and tokens](https://docs.x.com/fundamentals/developer-portal)
+- [App-only Bearer Token](https://docs.x.com/fundamentals/authentication/oauth-2-0/application-only)
+- [OAuth 2.0 PKCE 用户授权](https://docs.x.com/fundamentals/authentication/oauth-2-0/user-access-token)
+
+### twscrape Cookies
+
+建议创建只用于读取的专用 X 账号，在已登录浏览器的开发者工具中复制 `https://x.com` 下的 `auth_token` 和 `ct0`。管理台保存时把二者作为一个 JSON 凭据包加密到 MySQL，Redis 只缓存密文。twscrape 本身需要 SQLite 账号池，Worker 只在系统临时目录创建权限 `0600` 的运行时数据库，凭据轮换或 Worker 退出时删除。
+
+twscrape 属于非官方方案，不保证长期可用。Cookie 代表登录会话，不得使用个人主账号、不得分享或写入日志；若账号出现异常登录、验证码或限制，应立即停用该模式并在 X 中撤销会话。使用前应自行确认 [twscrape 项目说明](https://github.com/vladkens/twscrape) 与 [X 服务条款](https://x.com/en/tos)。
 
 ## 限流与成本
 
@@ -28,7 +49,7 @@ X Sentinel 采用 X API v2 的服务端 Bearer Token：
 - `x-rate-limit-remaining`
 - `x-rate-limit-reset`
 
-遇到 HTTP 429 时，Worker 会在 Redis 中设置共享 Bearer Token 的全局限流闸门，并将相关任务推迟到限流窗口重置之后，避免其他账号继续撞击同一端点。管理员仍应在 X Developer Console 查看当前端点价格、账户余额和支出上限；接口价格会变化，不应硬编码在系统内。
+遇到 HTTP 429 时，Worker 会在 Redis 中设置当前数据源的全局限流闸门，并将相关任务推迟到限流窗口重置之后。官方模式会采用响应头中的重置时间；twscrape 账号池不可用或被限流时采用保守的延迟重试。管理员仍应在 X Developer Console 查看官方端点价格、账户余额和支出上限；接口价格会变化，不应硬编码在系统内。
 
 一个粗略的请求量估算公式：
 

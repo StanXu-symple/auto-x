@@ -37,6 +37,73 @@ class AISkill(Base):
     )
 
 
+class AIFeature(Base):
+    __tablename__ = "ai_features"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    base_prompt: Mapped[str] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class AIUserSkillBinding(Base):
+    __tablename__ = "ai_user_skill_bindings"
+    __table_args__ = (
+        Index(
+            "uq_ai_user_skill_binding",
+            "monitored_user_id",
+            "ai_feature_id",
+            "skill_id",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    monitored_user_id: Mapped[int] = mapped_column(
+        ForeignKey("monitored_users.id", ondelete="CASCADE"), index=True
+    )
+    ai_feature_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_features.id", ondelete="CASCADE"), index=True
+    )
+    skill_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_skills.id", ondelete="CASCADE"), index=True
+    )
+    priority: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class AIUserProfile(Base):
+    __tablename__ = "ai_user_profiles"
+
+    monitored_user_id: Mapped[int] = mapped_column(
+        ForeignKey("monitored_users.id", ondelete="CASCADE"), primary_key=True
+    )
+    identity_summary: Mapped[str] = mapped_column(Text, default="")
+    focus_summary: Mapped[str] = mapped_column(Text, default="")
+    relationship_summary: Mapped[str] = mapped_column(Text, default="")
+    recurring_topics: Mapped[list[str]] = mapped_column(JSON)
+    evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    confidence: Mapped[float] = mapped_column(default=0.0, server_default="0")
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    last_source_tweet_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tweets.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class AISetting(Base):
     __tablename__ = "ai_settings"
 
@@ -80,6 +147,9 @@ class AIGenerationJob(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     source_tweet_id: Mapped[int] = mapped_column(
         ForeignKey("tweets.id", ondelete="CASCADE"), index=True
+    )
+    feature_code: Mapped[str] = mapped_column(
+        String(64), default="article_generation", server_default="article_generation"
     )
     skill_id: Mapped[int | None] = mapped_column(
         ForeignKey("ai_skills.id", ondelete="SET NULL"), nullable=True, index=True

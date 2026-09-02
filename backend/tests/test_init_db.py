@@ -45,8 +45,8 @@ async def test_seed_statements_are_race_safe_mysql_upserts(monkeypatch) -> None:
     monkeypatch.setattr(init_db, "AsyncSessionFactory", lambda: session)
     settings = Settings(_env_file=None)
     await init_db.seed_runtime_defaults(settings)
-    # Administrator, polling settings, three bundled AI skills, and AI settings.
-    assert len(session.statements) == 6
+    # Administrator, polling/X source settings, three skills, AI feature/settings, XHS.
+    assert len(session.statements) == 9
     for statement in session.statements:
         sql = str(statement.compile(dialect=mysql.dialect())).upper()
         assert "ON DUPLICATE KEY UPDATE" in sql

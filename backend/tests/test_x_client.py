@@ -144,5 +144,29 @@ async def test_rate_limit_reset_header_is_propagated() -> None:
 async def test_missing_token_is_a_configuration_error() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: None)) as http_client:
         client = XClient("", client=http_client)
-        with pytest.raises(XAPIError, match="X_BEARER_TOKEN"):
+        with pytest.raises(XAPIError, match="Bearer Token"):
             await client.lookup_user("openai")
+
+
+@pytest.mark.asyncio
+async def test_dynamic_token_provider_is_used_for_each_request() -> None:
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["authorization"])
+        return httpx.Response(
+            200,
+            json={"data": {"id": "42", "username": "OpenAI", "name": "OpenAI"}},
+        )
+
+    tokens = iter(["first-token", "rotated-token"])
+
+    async def provider() -> str:
+        return next(tokens)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = XClient(client=http_client, token_provider=provider)
+        await client.lookup_user("openai")
+        await client.lookup_user("openai")
+
+    assert seen == ["Bearer first-token", "Bearer rotated-token"]

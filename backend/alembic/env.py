@@ -12,11 +12,13 @@ from app.models import (  # noqa: F401
     AIDraft,
     AIGenerationJob,
     AISetting,
+    AIDataSource,
     AISkill,
     AppSetting,
     MonitoredUser,
     PollingLog,
     Tweet,
+    XCredential,
 )
 
 config = context.config

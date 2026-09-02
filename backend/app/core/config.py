@@ -45,7 +45,8 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = "change-me-now"
 
-    x_bearer_token: str = ""
+    x_token_encryption_key: str = ""
+    x_token_cache_ttl_seconds: int = Field(default=300, ge=30, le=86400)
     x_api_base_url: str = "https://api.x.com/2"
     x_request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     x_max_pages_per_poll: int = Field(default=5, ge=1, le=50)
@@ -64,8 +65,8 @@ class Settings(BaseSettings):
     login_rate_limit_attempts: int = Field(default=5, ge=1, le=100)
     login_rate_limit_window_seconds: int = Field(default=300, ge=30, le=3600)
 
-    # AI provider credentials intentionally live only in process environment. They are
-    # never persisted in the database or included in generation audit snapshots.
+    # Legacy environment fields remain readable for deployment compatibility. Runtime AI
+    # generation uses the encrypted singleton managed through /api/v1/ai-data-source.
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     codex_bridge_url: str = ""
@@ -80,6 +81,11 @@ class Settings(BaseSettings):
     ai_worker_lock_ttl_seconds: int = Field(default=180, ge=30, le=3600)
     ai_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
     ai_worker_metrics_port: int = Field(default=8002, ge=0, le=65535)
+
+    xhs_worker_scan_interval_seconds: float = Field(default=3.0, ge=0.5, le=60)
+    xhs_worker_lock_ttl_seconds: int = Field(default=300, ge=30, le=1800)
+    xhs_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
+    xhs_request_timeout_seconds: float = Field(default=180.0, ge=10, le=600)
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
@@ -117,8 +123,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "MySQL password must be non-empty and non-placeholder in production"
                 )
-            if not self.x_bearer_token or placeholder(self.x_bearer_token):
-                raise ValueError("X_BEARER_TOKEN must be configured in production")
+            if len(self.x_token_encryption_key) < 32 or placeholder(
+                self.x_token_encryption_key
+            ):
+                raise ValueError(
+                    "X_TOKEN_ENCRYPTION_KEY must contain at least 32 characters in production"
+                )
             parsed_redis_password = unquote(urlsplit(self.redis_url).password or "")
             if parsed_redis_password and placeholder(parsed_redis_password):
                 raise ValueError("REDIS_PASSWORD must not be a placeholder in production")

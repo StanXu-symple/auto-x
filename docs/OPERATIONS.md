@@ -19,7 +19,7 @@
 
 ```bash
 make init
-# 编辑 .env，替换所有 change-me / development-only 值并填写 X_BEARER_TOKEN；启用 AI 时再填写对应 provider 凭据
+# 编辑 .env，替换所有 change-me / development-only 值并填写 X_TOKEN_ENCRYPTION_KEY；X Token 启动后在管理台录入
 make validate-prod-env
 make prod-config
 make prod-up
@@ -47,7 +47,7 @@ make prod-up
 
 ```bash
 install -m 600 .env.external.example .env.external
-# 填写专用 MySQL 应用账号、JWT/管理员密码和 X_BEARER_TOKEN
+# 填写专用 MySQL 应用账号、JWT/管理员密码和 X_TOKEN_ENCRYPTION_KEY
 make validate-external-env ENV_FILE=.env.external
 make external-config ENV_FILE=.env.external
 make external-up ENV_FILE=.env.external
@@ -80,26 +80,13 @@ docker compose logs --tail=200 worker
 docker compose restart worker
 ```
 
-AI Worker 使用 Redis key `xsentinel:ai-worker:heartbeat` 上报短期 JSON 心跳，字段包括 `worker_id`、`status`、`last_heartbeat`、`active_tasks`、`provider`、`provider_ready`、`key_required` 与 `key_configured`。管理台只读取这些布尔状态来显示凭据是否由 Worker 配好，不会让 API 读取或返回密钥原文；`provider_ready` 表示凭据/目标配置通过本地检查，不等同于已探测 provider 的远端可用性。Worker 还会在容器网络 `8002/metrics` 暴露任务计数、耗时、待处理队列和草稿计数。容器健康检查同时验证 Redis 与指标端点；Prometheus 的 `x-sentinel-ai-worker` job 和 Grafana AI 面板用于观察进程与队列。
+AI Worker 使用 Redis key `xsentinel:ai-worker:heartbeat` 上报短期 JSON 心跳，字段包括 `worker_id`、`status`、`last_heartbeat`、`active_tasks`、`provider`、`provider_ready`、`key_required` 与 `key_configured`。管理台只读取这些布尔状态，不会返回密钥原文；`provider_ready` 表示凭据/目标配置通过本地检查，不等同于已探测 provider 的远端可用性。Worker 还会在容器网络 `8002/metrics` 暴露任务计数、耗时、待处理队列和草稿计数。容器健康检查同时验证 Redis 与指标端点；Prometheus 的 `x-sentinel-ai-worker` job 和 Grafana AI 面板用于观察进程与队列。
 
 AI 专用指标为 `x_sentinel_ai_jobs_total{status,provider}`、`x_sentinel_ai_job_duration_seconds{status,provider}`、`x_sentinel_ai_queue_due`、`x_sentinel_ai_drafts_total{provider}` 和 `x_sentinel_ai_worker_heartbeat_timestamp_seconds`；Python 进程与 GC 指标由 Prometheus client 一并暴露。
 
 ## AI Worker 与 provider
 
-AI 默认关闭。部署者只需配置实际启用的 provider：
-
-```dotenv
-# OpenAI
-OPENAI_API_KEY=
-
-# 或 Codex Bridge
-CODEX_BRIDGE_TOKEN=
-
-# 自建 Bridge 示例；只写 hostname，不写 scheme、端口或路径
-AI_ALLOWED_PROVIDER_HOSTS=["api.openai.com","bridge.example.com"]
-```
-
-Provider URL 由管理台写入数据库并作为唯一运行时真源；OpenAI 初始值是 `https://api.openai.com/v1`，Bridge URL 必须显式填写且从 `ai-worker` 容器内可达。密钥始终只从 AI Worker 环境读取。模型、最大重试、请求超时与输出限制也由管理台写入数据库。以下参数控制 Worker 本身：
+AI 默认关闭。先在管理台“AI 数据源”保存唯一的 OpenAI 兼容 Base URL、模型和 API Key 并完成连通测试，再到“AI 创作”启用功能。Key 加密写入 MySQL，Redis 仅缓存密文；模型、最大重试、请求超时与输出限制也由管理台维护。以下参数控制 Worker 本身：
 
 - `AI_WORKER_SCAN_INTERVAL_SECONDS`：扫描到期任务的间隔，默认 `2`。
 - `AI_WORKER_MAX_CONCURRENCY`：单实例并发 provider 请求数，默认 `3`。
@@ -109,16 +96,7 @@ Provider URL 由管理台写入数据库并作为唯一运行时真源；OpenAI 
 
 若把心跳 TTL/刷新周期显著调高，还应同步调整 Prometheus `XSentinelAIWorkerHeartbeatStale` 的 `60` 秒阈值和 Grafana 心跳面板阈值，避免健康 Worker 被误报。
 
-扩容前先确认 provider 并发/费用限制；多个 AI Worker 可以共享队列，但总并发约为“实例数 × 单实例并发”。密钥轮换时先更新权限为 `0600` 的环境文件，再只重建 AI Worker：
-
-```bash
-docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml \
-  up -d --no-deps --force-recreate ai-worker
-```
-
-外部数据模式执行同类操作时必须把第二个覆盖文件换为 `docker-compose.external.yml`，避免意外切换部署模型。
-
-Provider 调用会发送原 Post 与所选 Skill 指令。管理台保存的 `base_url` / `bridge_url` 是携带对应 Authorization 凭据的目标地址；API 与 AI Worker 都会拒绝 hostname 不在 `AI_ALLOWED_PROVIDER_HOSTS` 中的地址，带凭据的非本机请求还必须使用 HTTPS。自建 Bridge 必须先把准确 hostname 加入 JSON 数组，修改后重建 API 与 AI Worker。生产网络应再用防火墙/代理做域名或 IP allowlist，防止误配置或管理员账号被盗后把密钥发送到恶意地址。还应在 provider 侧设置费用上限，并根据隐私/数据驻留要求决定是否改用受控 Bridge。AI 输出只形成草稿，必须人工核验。
+扩容前先确认 provider 并发/费用限制；多个 AI Worker 可以共享队列，但总并发约为“实例数 × 单实例并发”。Key 轮换直接在“AI 数据源”输入新 Key 并保存，不需要重启 Worker。Provider 调用会发送原 Post 与所选 Skill 指令；远程目标必须使用 HTTPS，本机兼容网关允许 HTTP。生产网络应再用防火墙/代理限制 AI Worker 出站目标，并在 provider 侧设置费用上限。AI 输出只形成草稿，必须人工核验。
 
 ## 备份
 
@@ -215,13 +193,13 @@ docker compose --profile monitoring logs --tail=200 prometheus grafana
 ### 新账号一直处于 queued
 
 1. 确认 `worker` 容器健康且管理台心跳正常。
-2. 确认 `X_BEARER_TOKEN` 有效、X 账户有余额且接口权限足够。
+2. 在“X 数据源”确认当前模式并测试对应凭据；官方模式还需确认 X 账户有余额且接口权限足够，twscrape 模式需确认 Cookie 会话仍有效。
 3. 查看 Worker 日志和该账号最近的轮询记录。
 4. 检查 MySQL/Redis 是否可用；立即轮询令牌持久化在 MySQL，Redis 负责每账号互斥和全局 X API 闸门。
 
 ### 出现 429
 
-这是 X API 限流。系统会读取 `x-rate-limit-reset` 并设置共享 Token 的全局 Redis 闸门，在窗口重置前暂停派发。不要连续点击“立即轮询”；应提高轮询周期或降低活跃账号数，并在 X Developer Console 查看端点限额。
+官方模式下这是 X API 限流，系统会读取 `x-rate-limit-reset` 并设置全局 Redis 闸门；twscrape 模式下也可能是登录账号被网页接口临时限制。不要连续点击“立即轮询”；应提高轮询周期或降低活跃账号数，并在“X 数据源”测试当前凭据。
 
 ### AI 任务一直 queued / retrying
 

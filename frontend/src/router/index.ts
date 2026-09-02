@@ -36,10 +36,28 @@ const router = createRouter({
           meta: { title: '内容流', description: '检索和查看已采集的推文内容' },
         },
         {
+          path: 'x-authorization',
+          name: 'x-authorization',
+          component: () => import('@/views/XAuthorizationView.vue'),
+          meta: { title: 'X 数据源中心', description: '选择官方 API 或 twscrape，并安全管理访问凭据' },
+        },
+        {
+          path: 'ai-data-source',
+          name: 'ai-data-source',
+          component: () => import('@/views/AiDataSourceView.vue'),
+          meta: { title: 'AI 数据源', description: '统一管理 OpenAI 兼容地址、模型与 API Key' },
+        },
+        {
           path: 'ai-writing',
           name: 'ai-writing',
           component: () => import('@/views/AiWritingView.vue'),
           meta: { title: 'AI 创作', description: '把监听内容转化为可审核、可编辑的创作草稿' },
+        },
+        {
+          path: 'xiaohongshu',
+          name: 'xiaohongshu',
+          component: () => import('@/views/XiaohongshuView.vue'),
+          meta: { title: '小红书发布', description: '管理登录连接、图文内容与自动或延迟发布策略' },
         },
         {
           path: 'polling-logs',

@@ -26,7 +26,7 @@ value_for() {
   printf '%s\n' "${value}"
 }
 
-required=(MYSQL_DATABASE MYSQL_USER MYSQL_PASSWORD JWT_SECRET_KEY ADMIN_USERNAME ADMIN_PASSWORD X_BEARER_TOKEN CORS_ORIGINS)
+required=(MYSQL_DATABASE MYSQL_USER MYSQL_PASSWORD JWT_SECRET_KEY ADMIN_USERNAME ADMIN_PASSWORD X_TOKEN_ENCRYPTION_KEY CORS_ORIGINS)
 if [[ "${mode}" == "external" ]]; then
   required+=(MYSQL_HOST MYSQL_PORT REDIS_HOST REDIS_PORT)
 else
@@ -68,6 +68,7 @@ done
 
 jwt_secret="$(value_for JWT_SECRET_KEY)"
 admin_password="$(value_for ADMIN_PASSWORD)"
+x_token_encryption_key="$(value_for X_TOKEN_ENCRYPTION_KEY)"
 mysql_database="$(value_for MYSQL_DATABASE)"
 if (( ${#jwt_secret} < 32 )); then
   echo >&2 "JWT_SECRET_KEY must contain at least 32 characters"
@@ -75,6 +76,10 @@ if (( ${#jwt_secret} < 32 )); then
 fi
 if (( ${#admin_password} < 12 )); then
   echo >&2 "ADMIN_PASSWORD must contain at least 12 characters"
+  failed=true
+fi
+if (( ${#x_token_encryption_key} < 32 )); then
+  echo >&2 "X_TOKEN_ENCRYPTION_KEY must contain at least 32 characters"
   failed=true
 fi
 if [[ ! "${mysql_database}" =~ ^[A-Za-z0-9_]+$ ]]; then

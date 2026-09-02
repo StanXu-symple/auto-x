@@ -260,8 +260,192 @@ export interface SystemSettings {
   updated_at?: string
 }
 
+export type XCredentialAcquisitionMethod = 'developer_console' | 'api_exchange'
+export type XCredentialVerificationStatus = 'unverified' | 'valid' | 'invalid' | 'error'
+
+export interface XCredentialStatus {
+  configured: boolean
+  token_hint: string | null
+  acquisition_method: XCredentialAcquisitionMethod | null
+  verification_status: XCredentialVerificationStatus | null
+  last_verified_at: string | null
+  last_error: string | null
+  updated_at: string | null
+  version: number | null
+  cache_active: boolean
+  cache_ttl_seconds: number | null
+}
+
+export interface XCredentialSavePayload {
+  bearer_token: string
+  acquisition_method: XCredentialAcquisitionMethod
+}
+
+export interface XCredentialTestResult {
+  valid: boolean
+  verification_status: 'valid' | 'invalid' | 'error'
+  message: string
+  checked_at: string
+}
+
+export type XSourceProvider = 'official_api' | 'twscrape'
+
+export interface TwscrapeCredentialStatus {
+  configured: boolean
+  account_hint: string | null
+  verification_status: XCredentialVerificationStatus | null
+  last_verified_at: string | null
+  last_error: string | null
+  updated_at: string | null
+  version: number | null
+  cache_active: boolean
+  cache_ttl_seconds: number | null
+}
+
+export interface XSourceStatus {
+  active_provider: XSourceProvider
+  official_api: XCredentialStatus
+  twscrape: TwscrapeCredentialStatus
+  updated_at: string | null
+}
+
+export interface TwscrapeCredentialSavePayload {
+  account_label: string
+  auth_token: string
+  ct0: string
+  acknowledged_risk: boolean
+}
+
+export interface XSourceTestResult {
+  provider: XSourceProvider
+  valid: boolean
+  verification_status: 'valid' | 'invalid' | 'error'
+  message: string
+  checked_at: string
+}
+
 export type AiProvider = 'openai_responses' | 'codex_bridge'
 export type AiReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export interface AiDataSourceStatus {
+  configured: boolean
+  name: string | null
+  protocol: 'openai_responses'
+  base_url: string | null
+  model: string | null
+  key_hint: string | null
+  verification_status: 'unverified' | 'valid' | 'invalid' | 'error' | null
+  last_verified_at: string | null
+  last_error: string | null
+  version: number | null
+  cache_active: boolean
+  cache_ttl_seconds: number | null
+  updated_at: string | null
+}
+
+export interface AiDataSourceSavePayload {
+  name: string
+  protocol: 'openai_responses'
+  base_url: string
+  model: string
+  api_key?: string | null
+}
+
+export interface AiDataSourceTestResult {
+  valid: boolean
+  verification_status: 'valid' | 'invalid' | 'error'
+  message: string
+  models: string[]
+  checked_at: string
+}
+
+export type XhsPublishStrategy = 'manual' | 'automatic' | 'delayed'
+export type XhsPublishStatus = 'draft' | 'queued' | 'publishing' | 'retry_wait' | 'published' | 'failed' | 'cancelled'
+export type XhsVisibility = '公开可见' | '仅自己可见' | '仅互关好友可见'
+
+export interface XhsConnectionStatus {
+  configured: boolean
+  name: string | null
+  connector: 'xiaohongshu_mcp' | null
+  mcp_url: string | null
+  token_configured: boolean
+  token_hint: string | null
+  verification_status: 'unverified' | 'valid' | 'invalid' | 'error' | null
+  login_status: 'unknown' | 'logged_in' | 'logged_out' | string
+  risk_acknowledged: boolean
+  last_verified_at: string | null
+  last_error: string | null
+  version: number | null
+  cache_active: boolean
+  cache_ttl_seconds: number | null
+  updated_at: string | null
+}
+
+export interface XhsConnectionSavePayload {
+  name: string
+  connector: 'xiaohongshu_mcp'
+  mcp_url: string
+  auth_token?: string | null
+  risk_acknowledged: boolean
+}
+
+export interface XhsConnectionTestResult {
+  valid: boolean
+  logged_in: boolean
+  verification_status: string
+  login_status: string
+  message: string
+  checked_at: string
+}
+
+export interface XhsPublishSettings {
+  enabled: boolean
+  default_strategy: XhsPublishStrategy
+  default_delay_minutes: number
+  max_attempts: number
+  daily_publish_limit: number
+  default_visibility: XhsVisibility
+  declare_original: boolean
+  worker_status: string
+  worker_last_heartbeat: string | null
+  updated_at: string
+}
+
+export interface XhsPublishJob {
+  id: EntityId
+  source_ai_draft_id: EntityId | null
+  title: string
+  content: string
+  images: string[]
+  tags: string[]
+  products: string[]
+  visibility: XhsVisibility
+  is_original: boolean
+  strategy: XhsPublishStrategy
+  status: XhsPublishStatus
+  scheduled_at: string | null
+  attempts: number
+  max_attempts: number
+  last_error: string | null
+  platform_note_id: string | null
+  platform_url: string | null
+  published_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface XhsPublishJobCreatePayload {
+  source_ai_draft_id?: number | null
+  title: string
+  content: string
+  images: string[]
+  tags: string[]
+  products?: string[]
+  visibility?: XhsVisibility
+  is_original?: boolean
+  strategy?: XhsPublishStrategy
+  scheduled_at?: string | null
+}
 
 export interface AiSettings {
   enabled: boolean
@@ -290,10 +474,6 @@ export interface AiSettings {
 export interface UpdateAiSettingsPayload {
   enabled: boolean
   auto_generate: boolean
-  provider: AiProvider
-  model: string
-  base_url: string
-  bridge_url?: string | null
   prompt_template: string
   language: string
   tone: string
@@ -333,6 +513,38 @@ export interface AiSkillQuery extends PaginationQuery {
   active?: boolean
 }
 
+export interface AiFeature {
+  id: EntityId
+  code: string
+  name: string
+  description?: string | null
+  base_prompt: string
+  is_active: boolean
+}
+
+export interface AiUserSkillBinding {
+  monitored_user_id: EntityId
+  username: string
+  feature: AiFeature
+  skill_ids: EntityId[]
+  skills: AiSkill[]
+  resolution_source: 'user_feature_binding' | 'global_default' | 'manual_override' | string
+}
+
+export interface AiUserProfile {
+  monitored_user_id: EntityId
+  username: string
+  identity_summary: string
+  focus_summary: string
+  relationship_summary: string
+  recurring_topics: string[]
+  evidence: Array<{ tweet_id?: string; reason?: string }>
+  confidence: number
+  version: number
+  last_source_tweet_id?: EntityId | null
+  updated_at?: string | null
+}
+
 export type AiJobStatus =
   | 'queued'
   | 'running'
@@ -366,6 +578,7 @@ export interface AiJob {
   source_text?: string | null
   source_tweet?: Pick<Tweet, 'id' | 'tweet_id' | 'username' | 'text' | 'posted_at'> | null
   status: AiJobStatus | string
+  feature_code?: string
   draft?: AiDraft | null
   error_message?: string | null
   last_error?: string | null
@@ -398,6 +611,7 @@ export interface AiJobQuery extends PaginationQuery {
 
 export interface GenerateTweetPayload {
   skill_ids?: EntityId[]
+  feature_code?: string
   idempotency_key?: string
 }
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -47,15 +48,17 @@ class XClient:
 
     def __init__(
         self,
-        bearer_token: str,
+        bearer_token: str = "",
         *,
         base_url: str = "https://api.x.com/2",
         timeout_seconds: float = 20.0,
         max_pages: int = 5,
         page_size: int = 100,
         client: httpx.AsyncClient | None = None,
+        token_provider: Callable[[], Awaitable[str]] | None = None,
     ) -> None:
         self.bearer_token = bearer_token
+        self.token_provider = token_provider
         self.base_url = base_url.rstrip("/")
         self.max_pages = max_pages
         self.page_size = page_size
@@ -63,7 +66,6 @@ class XClient:
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds),
             headers={
-                "Authorization": f"Bearer {bearer_token}",
                 "User-Agent": "X-Sentinel/1.0",
                 "Accept": "application/json",
             },
@@ -80,10 +82,20 @@ class XClient:
             await self._client.aclose()
 
     async def _request(self, path: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        if not self.bearer_token:
-            raise XAPIError("X_BEARER_TOKEN is not configured")
+        bearer_token = self.bearer_token
+        if self.token_provider is not None:
+            try:
+                bearer_token = await self.token_provider()
+            except Exception as exc:
+                raise XAPIError(f"X credential is unavailable: {exc}") from exc
+        if not bearer_token:
+            raise XAPIError("X Bearer Token is not configured")
         try:
-            response = await self._client.get(f"{self.base_url}{path}", params=params)
+            response = await self._client.get(
+                f"{self.base_url}{path}",
+                params=params,
+                headers={"Authorization": f"Bearer {bearer_token}"},
+            )
         except httpx.TimeoutException as exc:
             raise XAPIError("X API request timed out") from exc
         except httpx.HTTPError as exc:

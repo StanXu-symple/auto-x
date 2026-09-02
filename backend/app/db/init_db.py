@@ -8,8 +8,15 @@ from app.core.config import Settings
 from app.core.security import hash_password
 from app.db.base import Base
 from app.db.session import AsyncSessionFactory, engine
-from app.models import Admin, AISetting, AISkill, AppSetting  # imports all model metadata
-from app.services.ai_defaults import DEFAULT_AI_MODEL, DEFAULT_AI_SKILLS
+from app.models import (  # imports all model metadata
+    Admin,
+    AIFeature,
+    AISetting,
+    AISkill,
+    AppSetting,
+    XiaohongshuPublishSetting,
+)
+from app.services.ai_defaults import DEFAULT_AI_FEATURES, DEFAULT_AI_MODEL, DEFAULT_AI_SKILLS
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +62,16 @@ async def seed_runtime_defaults(settings: Settings, *, seed_admin: bool = True) 
             statement = statement.on_duplicate_key_update(key=statement.inserted.key)
             await session.execute(statement)
 
+        x_source = await session.get(AppSetting, "x_source")
+        if x_source is None:
+            statement = mysql_insert(AppSetting).values(
+                key="x_source",
+                value={"provider": "official_api"},
+                updated_at=datetime.now(UTC),
+            )
+            statement = statement.on_duplicate_key_update(key=statement.inserted.key)
+            await session.execute(statement)
+
         # Use fixed IDs and no-op updates so startup races are harmless and administrator
         # edits to the bundled skills are never overwritten on subsequent restarts.
         now = datetime.now(UTC)
@@ -70,6 +87,16 @@ async def seed_runtime_defaults(settings: Settings, *, seed_admin: bool = True) 
                 updated_at=now,
             )
             statement = statement.on_duplicate_key_update(id=AISkill.id)
+            await session.execute(statement)
+
+        for feature in DEFAULT_AI_FEATURES:
+            statement = mysql_insert(AIFeature).values(
+                **feature,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+            statement = statement.on_duplicate_key_update(id=AIFeature.id)
             await session.execute(statement)
 
         statement = mysql_insert(AISetting).values(
@@ -92,4 +119,18 @@ async def seed_runtime_defaults(settings: Settings, *, seed_admin: bool = True) 
             updated_at=now,
         )
         statement = statement.on_duplicate_key_update(id=AISetting.id)
+        await session.execute(statement)
+
+        statement = mysql_insert(XiaohongshuPublishSetting).values(
+            id=1,
+            enabled=False,
+            default_strategy="manual",
+            default_delay_minutes=60,
+            max_attempts=3,
+            daily_publish_limit=10,
+            default_visibility="公开可见",
+            declare_original=False,
+            updated_at=now,
+        )
+        statement = statement.on_duplicate_key_update(id=XiaohongshuPublishSetting.id)
         await session.execute(statement)

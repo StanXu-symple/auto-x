@@ -4,11 +4,17 @@ import type {
   AiJob,
   AiJobActionResponse,
   AiJobQuery,
+  AiFeature,
   AiDraft,
+  AiDataSourceSavePayload,
+  AiDataSourceStatus,
+  AiDataSourceTestResult,
   AiSettings,
   AiSkill,
   AiSkillQuery,
   AiSkillPayload,
+  AiUserProfile,
+  AiUserSkillBinding,
   ApiEnvelope,
   AuthUser,
   CreateMonitoredUserPayload,
@@ -30,6 +36,19 @@ import type {
   UpdateMonitoredUserPayload,
   UpdateAiDraftPayload,
   UpdateAiSettingsPayload,
+  XCredentialSavePayload,
+  XCredentialStatus,
+  XCredentialTestResult,
+  XSourceProvider,
+  XSourceStatus,
+  XSourceTestResult,
+  TwscrapeCredentialSavePayload,
+  XhsConnectionSavePayload,
+  XhsConnectionStatus,
+  XhsConnectionTestResult,
+  XhsPublishJob,
+  XhsPublishJobCreatePayload,
+  XhsPublishSettings,
 } from '@/types'
 
 type Wrapped<T> = T | ApiEnvelope<T>
@@ -119,6 +138,39 @@ export const systemApi = {
   },
 }
 
+export const xCredentialsApi = {
+  async status() {
+    return dataOf(await http.get<Wrapped<XCredentialStatus>>('/x-credentials/status'))
+  },
+  async save(payload: XCredentialSavePayload) {
+    return dataOf(await http.put<Wrapped<XCredentialStatus>>('/x-credentials/bearer-token', payload))
+  },
+  async test() {
+    return dataOf(await http.post<Wrapped<XCredentialTestResult>>('/x-credentials/test'))
+  },
+  async remove() {
+    await http.delete('/x-credentials/bearer-token')
+  },
+}
+
+export const xSourcesApi = {
+  async status() {
+    return dataOf(await http.get<Wrapped<XSourceStatus>>('/x-sources/status'))
+  },
+  async selectProvider(provider: XSourceProvider) {
+    return dataOf(await http.put<Wrapped<XSourceStatus>>('/x-sources/provider', { provider }))
+  },
+  async saveTwscrape(payload: TwscrapeCredentialSavePayload) {
+    return dataOf(await http.put<Wrapped<XSourceStatus>>('/x-sources/twscrape/credentials', payload))
+  },
+  async testTwscrape() {
+    return dataOf(await http.post<Wrapped<XSourceTestResult>>('/x-sources/twscrape/test'))
+  },
+  async removeTwscrape() {
+    await http.delete('/x-sources/twscrape/credentials')
+  },
+}
+
 export const aiApi = {
   async settings() {
     return dataOf(await http.get<Wrapped<AiSettings>>('/ai/settings'))
@@ -138,6 +190,27 @@ export const aiApi = {
   async removeSkill(id: EntityId) {
     await http.delete(`/ai/skills/${id}`)
   },
+  async features() {
+    return dataOf(await http.get<Wrapped<AiFeature[]>>('/ai/features'))
+  },
+  async userSkillBinding(userId: EntityId, featureCode: string) {
+    return dataOf(
+      await http.get<Wrapped<AiUserSkillBinding>>(
+        `/ai/users/${userId}/skill-bindings/${featureCode}`,
+      ),
+    )
+  },
+  async saveUserSkillBinding(userId: EntityId, featureCode: string, skillIds: EntityId[]) {
+    return dataOf(
+      await http.put<Wrapped<AiUserSkillBinding>>(
+        `/ai/users/${userId}/skill-bindings/${featureCode}`,
+        { skill_ids: skillIds },
+      ),
+    )
+  },
+  async userProfile(userId: EntityId) {
+    return dataOf(await http.get<Wrapped<AiUserProfile>>(`/ai/users/${userId}/profile`))
+  },
   async jobs(params: AiJobQuery) {
     return pageOf(await http.get<Wrapped<PaginatedResponse<AiJob>>>('/ai/jobs', { params }))
   },
@@ -149,5 +222,65 @@ export const aiApi = {
   },
   async generateFromTweet(tweetId: EntityId, payload: GenerateTweetPayload = {}) {
     return dataOf(await http.post<Wrapped<AiJobActionResponse>>(`/tweets/${tweetId}/generate`, payload))
+  },
+}
+
+export const aiDataSourceApi = {
+  async status() {
+    return dataOf(await http.get<Wrapped<AiDataSourceStatus>>('/ai-data-source'))
+  },
+  async save(payload: AiDataSourceSavePayload) {
+    return dataOf(await http.put<Wrapped<AiDataSourceStatus>>('/ai-data-source', payload))
+  },
+  async test() {
+    return dataOf(await http.post<Wrapped<AiDataSourceTestResult>>('/ai-data-source/test'))
+  },
+  async models() {
+    return dataOf(await http.get<Wrapped<{ models: string[] }>>('/ai-data-source/models'))
+  },
+  async remove() {
+    await http.delete('/ai-data-source')
+  },
+}
+
+export const xiaohongshuApi = {
+  async connection() {
+    return dataOf(await http.get<Wrapped<XhsConnectionStatus>>('/xiaohongshu/connection'))
+  },
+  async saveConnection(payload: XhsConnectionSavePayload) {
+    return dataOf(await http.put<Wrapped<XhsConnectionStatus>>('/xiaohongshu/connection', payload))
+  },
+  async testConnection() {
+    return dataOf(await http.post<Wrapped<XhsConnectionTestResult>>('/xiaohongshu/connection/test'))
+  },
+  async loginQr() {
+    return dataOf(await http.post<Wrapped<{ image_data: string; mime_type: string; message: string }>>('/xiaohongshu/connection/login-qrcode'))
+  },
+  async removeConnection() {
+    await http.delete('/xiaohongshu/connection')
+  },
+  async settings() {
+    return dataOf(await http.get<Wrapped<XhsPublishSettings>>('/xiaohongshu/settings'))
+  },
+  async saveSettings(payload: Omit<XhsPublishSettings, 'worker_status' | 'worker_last_heartbeat' | 'updated_at'>) {
+    return dataOf(await http.put<Wrapped<XhsPublishSettings>>('/xiaohongshu/settings', payload))
+  },
+  async jobs(params: { page?: number; page_size?: number; status?: string } = {}) {
+    return pageOf(await http.get<Wrapped<PaginatedResponse<XhsPublishJob>>>('/xiaohongshu/jobs', { params }))
+  },
+  async createJob(payload: XhsPublishJobCreatePayload) {
+    return dataOf(await http.post<Wrapped<XhsPublishJob>>('/xiaohongshu/jobs', payload))
+  },
+  async publishNow(id: EntityId) {
+    return dataOf(await http.post<Wrapped<XhsPublishJob>>(`/xiaohongshu/jobs/${id}/publish`))
+  },
+  async schedule(id: EntityId, scheduledAt: string) {
+    return dataOf(await http.post<Wrapped<XhsPublishJob>>(`/xiaohongshu/jobs/${id}/schedule`, { scheduled_at: scheduledAt }))
+  },
+  async cancel(id: EntityId) {
+    return dataOf(await http.post<Wrapped<XhsPublishJob>>(`/xiaohongshu/jobs/${id}/cancel`))
+  },
+  async retry(id: EntityId) {
+    return dataOf(await http.post<Wrapped<XhsPublishJob>>(`/xiaohongshu/jobs/${id}/retry`))
   },
 }

@@ -12,6 +12,7 @@ import uuid
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 from prometheus_client import start_http_server
 from redis.asyncio import Redis
@@ -21,7 +22,12 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.core.time import as_utc
 from app.db.session import AsyncSessionFactory, engine
-from app.models.ai import AIDraft, AIGenerationJob, AISetting
+from app.models.ai import AIDraft, AIGenerationJob, AISetting, AIUserProfile
+from app.models.ai_data_source import AIDataSource
+from app.services.ai_data_source import (
+    AIDataSourceUnavailableError,
+    get_ai_data_source,
+)
 from app.services.ai_provider import AIProviderClient, AIProviderError, ProviderRequest
 from app.services.metrics import (
     AI_DRAFTS,
@@ -209,7 +215,8 @@ class AIGenerationWorker:
             renew_task = asyncio.create_task(
                 self._renew_lease(job_id, lock_key, claim_token, lost_lock)
             )
-            request = self._provider_request(job)
+            request = await self._provider_request(job)
+            provider_name = request.provider
             result = await self._generate_with_lease(request, lost_lock)
             await self._assert_lock(lock_key, claim_token, lost_lock)
             applied = await self._commit_success(
@@ -306,18 +313,45 @@ class AIGenerationWorker:
             session.expunge(job)
             return job
 
-    @staticmethod
-    def _provider_request(job: AIGenerationJob) -> ProviderRequest:
+    async def _provider_request(self, job: AIGenerationJob) -> ProviderRequest:
         snapshot = job.request_snapshot or {}
         config = snapshot.get("config")
         source = snapshot.get("source")
         if not isinstance(config, dict) or not isinstance(source, dict):
             raise AIProviderError("Generation job has no valid audit snapshot", retryable=False)
+        try:
+            async with AsyncSessionFactory() as session:
+                data_source = await get_ai_data_source(session, self.redis, self.settings)
+                current_job = await session.get(AIGenerationJob, job.id, with_for_update=True)
+                if current_job is None or current_job.claim_token != job.claim_token:
+                    raise AIProviderError("Generation job claim is no longer valid", retryable=True)
+                current_snapshot = dict(current_job.request_snapshot or {})
+                current_config = dict(current_snapshot.get("config") or {})
+                current_config.update(
+                    {
+                        "provider": data_source.protocol,
+                        "model": data_source.model,
+                        "base_url": data_source.base_url,
+                        "bridge_url": None,
+                        "ai_data_source_name": data_source.name,
+                        "ai_data_source_version": data_source.version,
+                    }
+                )
+                current_snapshot["config"] = current_config
+                current_job.provider = data_source.protocol
+                current_job.model_name = data_source.model
+                current_job.request_snapshot = current_snapshot
+                await session.commit()
+        except AIDataSourceUnavailableError as exc:
+            raise AIProviderError(str(exc), retryable=False) from exc
+        job.provider = data_source.protocol
+        job.model_name = data_source.model
+        job.request_snapshot = current_snapshot
         return ProviderRequest(
-            provider=job.provider,
-            model=job.model_name,
-            base_url=str(config.get("base_url") or "https://api.openai.com/v1"),
-            bridge_url=(str(config["bridge_url"]) if config.get("bridge_url") else None),
+            provider=data_source.protocol,
+            model=data_source.model,
+            base_url=data_source.base_url,
+            bridge_url=None,
             prompt_template=(
                 str(config["prompt_template"]) if config.get("prompt_template") else None
             ),
@@ -327,8 +361,11 @@ class AIGenerationWorker:
             max_output_tokens=int(config.get("max_output_tokens") or 2500),
             timeout_seconds=int(config.get("request_timeout_seconds") or 60),
             skill_snapshot=job.skill_snapshot or [],
+            feature_snapshot=dict(snapshot.get("feature") or {}),
+            author_context=dict(snapshot.get("author_context") or {}),
             source=source,
             job_id=job.id,
+            api_key=data_source.api_key,
         )
 
     async def _generate_with_lease(self, request: ProviderRequest, lost_lock: asyncio.Event):
@@ -395,6 +432,38 @@ class AIGenerationWorker:
                 draft.excerpt = draft_payload.get("excerpt")
                 draft.draft_metadata = metadata
                 draft.revision += 1
+            profile_payload = dict(draft_payload.get("author_profile") or {})
+            author = ((job.request_snapshot or {}).get("author_context") or {}).get("author") or {}
+            monitored_user_id = int(author.get("monitored_user_id") or 0)
+            if monitored_user_id:
+                profile = await session.get(
+                    AIUserProfile, monitored_user_id, with_for_update=True
+                )
+                if profile is None:
+                    profile = AIUserProfile(
+                        monitored_user_id=monitored_user_id,
+                        identity_summary=profile_payload.get("identity_summary", ""),
+                        focus_summary=profile_payload.get("focus_summary", ""),
+                        relationship_summary=profile_payload.get("relationship_summary", ""),
+                        recurring_topics=profile_payload.get("recurring_topics", []),
+                        evidence=profile_payload.get("evidence", []),
+                        confidence=float(profile_payload.get("confidence") or 0),
+                        version=1,
+                        last_source_tweet_id=job.source_tweet_id,
+                    )
+                    session.add(profile)
+                else:
+                    profile.identity_summary = profile_payload.get("identity_summary", "")
+                    profile.focus_summary = profile_payload.get("focus_summary", "")
+                    profile.relationship_summary = profile_payload.get(
+                        "relationship_summary", ""
+                    )
+                    profile.recurring_topics = profile_payload.get("recurring_topics", [])
+                    profile.evidence = profile_payload.get("evidence", [])
+                    profile.confidence = float(profile_payload.get("confidence") or 0)
+                    profile.version += 1
+                    profile.last_source_tweet_id = job.source_tweet_id
+                    profile.updated_at = now
             job.status = "succeeded"
             job.response_snapshot = response_snapshot
             job.prompt_hash = prompt_hash
@@ -528,32 +597,22 @@ class AIGenerationWorker:
                 setting = await session.get(AISetting, 1)
                 if setting is None:
                     raise RuntimeError("AI settings row is missing; apply migration 0003")
-                provider = setting.provider
-                if provider == "openai_responses":
-                    key_required = True
-                    key_configured = bool(self.settings.openai_api_key)
+                data_source = await session.get(AIDataSource, 1)
+                provider = "openai_responses"
+                key_required = True
+                key_configured = data_source is not None
+                if data_source is not None:
+                    hostname = urlsplit(data_source.base_url).hostname or ""
                     try:
                         self.provider._validate_destination(
-                            setting.base_url.rstrip("/") + "/responses",
-                            allowed_hosts=self.settings.ai_allowed_provider_hosts,
+                            data_source.base_url.rstrip("/") + "/responses",
+                            allowed_hosts=[*self.settings.ai_allowed_provider_hosts, hostname],
                             sends_credential=True,
                         )
                         destination_ready = True
                     except AIProviderError:
                         destination_ready = False
                     provider_ready = key_configured and destination_ready
-                elif provider == "codex_bridge":
-                    key_required = False
-                    key_configured = bool(self.settings.codex_bridge_api_key)
-                    try:
-                        self.provider._validate_destination(
-                            setting.bridge_url or "",
-                            allowed_hosts=self.settings.ai_allowed_provider_hosts,
-                            sends_credential=key_configured,
-                        )
-                        provider_ready = True
-                    except AIProviderError:
-                        provider_ready = False
         except Exception:
             logger.exception("AI heartbeat readiness check failed")
         now = datetime.now(UTC)
