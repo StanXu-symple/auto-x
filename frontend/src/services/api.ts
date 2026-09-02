@@ -17,6 +17,7 @@ import type {
   AiUserSkillBinding,
   ApiEnvelope,
   AuthUser,
+  ChangePasswordPayload,
   CreateMonitoredUserPayload,
   DashboardSummary,
   EntityId,
@@ -81,6 +82,9 @@ export const authApi = {
   },
   async me() {
     return dataOf(await http.get<Wrapped<AuthUser>>('/auth/me'))
+  },
+  async changePassword(payload: ChangePasswordPayload) {
+    return dataOf(await http.patch<Wrapped<{ message: string }>>('/auth/password', payload))
   },
 }
 

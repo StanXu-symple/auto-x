@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   Activity,
@@ -9,6 +10,7 @@ import {
   FileClock,
   Gauge,
   KeyRound,
+  LockKeyhole,
   LogOut,
   Menu,
   MessageSquareText,
@@ -24,6 +26,9 @@ import {
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
+import { authApi } from '@/services/api'
+import { getErrorMessage } from '@/services/http'
+import BaseModal from '@/components/BaseModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,6 +36,11 @@ const auth = useAuthStore()
 const ui = useUiStore()
 const collapsed = ref(localStorage.getItem('x-sentinel-sidebar') === 'collapsed')
 const profileOpen = ref(false)
+const passwordModalOpen = ref(false)
+const passwordSubmitting = ref(false)
+const passwordError = ref('')
+const passwordTouched = ref(false)
+const passwordForm = reactive({ current: '', next: '', confirm: '' })
 const now = ref(new Date())
 
 const navigation = [
@@ -58,6 +68,56 @@ function toggleCollapsed() {
 function logout() {
   auth.logout()
   router.push('/login')
+}
+
+const passwordInvalid = computed(() => {
+  if (!passwordTouched.value) return false
+  return (
+    !passwordForm.current ||
+    passwordForm.next.length < 12 ||
+    passwordForm.next === passwordForm.current ||
+    passwordForm.confirm !== passwordForm.next
+  )
+})
+
+function openPasswordModal() {
+  profileOpen.value = false
+  passwordError.value = ''
+  passwordTouched.value = false
+  passwordForm.current = ''
+  passwordForm.next = ''
+  passwordForm.confirm = ''
+  passwordModalOpen.value = true
+}
+
+function closePasswordModal() {
+  if (!passwordSubmitting.value) passwordModalOpen.value = false
+}
+
+async function submitPasswordChange() {
+  passwordTouched.value = true
+  passwordError.value = ''
+  if (passwordInvalid.value) return
+
+  passwordSubmitting.value = true
+  try {
+    await authApi.changePassword({
+      current_password: passwordForm.current,
+      new_password: passwordForm.next,
+    })
+    passwordModalOpen.value = false
+    ElMessage.success('密码已更新')
+  } catch (error) {
+    const message = getErrorMessage(error, '密码修改失败，请稍后重试')
+    passwordError.value =
+      message === 'Current password is incorrect'
+        ? '当前密码不正确'
+        : message === 'New password must be different from the current password'
+          ? '新密码不能与当前密码相同'
+          : message
+  } finally {
+    passwordSubmitting.value = false
+  }
 }
 
 let clockTimer: number | undefined
@@ -156,6 +216,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
                   <UserRound :size="16" />
                   <span>{{ auth.user?.email || auth.user?.username }}</span>
                 </div>
+                <button type="button" @click="openPasswordModal"><KeyRound :size="16" />修改密码</button>
                 <button type="button" @click="logout"><LogOut :size="16" />退出登录</button>
               </div>
             </Transition>
@@ -171,5 +232,48 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
         </RouterView>
       </main>
     </section>
+
+    <BaseModal
+      :open="passwordModalOpen"
+      title="修改登录密码"
+      description="更新后，新密码会安全地保存到数据库。"
+      width="small"
+      :close-on-backdrop="!passwordSubmitting"
+      @close="closePasswordModal"
+    >
+      <form class="password-form sentinel-form" @submit.prevent="submitPasswordChange">
+        <div v-if="passwordError" class="form-alert form-alert--error" role="alert">{{ passwordError }}</div>
+
+        <label class="password-field">
+          <span>当前密码</span>
+          <el-input v-model="passwordForm.current" type="password" show-password autocomplete="current-password" size="large" placeholder="输入当前密码" />
+          <small v-if="passwordTouched && !passwordForm.current">请输入当前密码</small>
+        </label>
+
+        <label class="password-field">
+          <span>新密码</span>
+          <el-input v-model="passwordForm.next" type="password" show-password autocomplete="new-password" size="large" placeholder="至少 12 个字符" />
+          <small v-if="passwordTouched && passwordForm.next.length < 12">新密码至少需要 12 个字符</small>
+          <small v-else-if="passwordTouched && passwordForm.next === passwordForm.current">新密码不能与当前密码相同</small>
+        </label>
+
+        <label class="password-field">
+          <span>确认新密码</span>
+          <el-input v-model="passwordForm.confirm" type="password" show-password autocomplete="new-password" size="large" placeholder="再次输入新密码" />
+          <small v-if="passwordTouched && passwordForm.confirm !== passwordForm.next">两次输入的新密码不一致</small>
+        </label>
+      </form>
+
+      <template #footer>
+        <div class="modal-actions">
+          <button class="button button--secondary" type="button" :disabled="passwordSubmitting" @click="closePasswordModal">取消</button>
+          <button class="button button--primary" type="button" :disabled="passwordSubmitting" @click="submitPasswordChange">
+            <span v-if="passwordSubmitting" class="spinner spinner--small" />
+            <LockKeyhole v-else :size="16" />
+            {{ passwordSubmitting ? '正在保存' : '更新密码' }}
+          </button>
+        </div>
+      </template>
+    </BaseModal>
   </div>
 </template>

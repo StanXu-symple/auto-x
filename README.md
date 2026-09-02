@@ -80,6 +80,7 @@ docker compose ps
 ```
 
 打开 [http://localhost:8080](http://localhost:8080)，使用 `.env` 中的 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录。
+首次登录后可从右上角头像菜单进入“修改密码”；新密码将使用 Argon2 哈希后持久化到 MySQL，后续启动不会被 `.env` 中的初始密码覆盖。
 
 ### 3. 启动监控套件（可选）
 

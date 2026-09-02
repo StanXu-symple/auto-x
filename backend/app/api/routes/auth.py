@@ -10,7 +10,8 @@ from app.api.errors import APIError
 from app.core.config import get_settings
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.admin import Admin
-from app.schemas.auth import AdminPublic, LoginRequest, TokenResponse
+from app.schemas.auth import AdminPublic, ChangePasswordRequest, LoginRequest, TokenResponse
+from app.schemas.common import MessageResponse
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 logger = logging.getLogger(__name__)
@@ -107,3 +108,23 @@ async def login(
 @router.get("/me", response_model=AdminPublic)
 async def current_admin(admin: CurrentAdmin) -> AdminPublic:
     return AdminPublic.model_validate(admin)
+
+
+@router.patch("/password", response_model=MessageResponse)
+async def change_password(
+    payload: ChangePasswordRequest,
+    admin: CurrentAdmin,
+    db: DbSession,
+) -> MessageResponse:
+    if not verify_password(payload.current_password, admin.password_hash):
+        raise APIError(400, "current_password_invalid", "Current password is incorrect")
+    if payload.new_password == payload.current_password:
+        raise APIError(
+            400,
+            "password_unchanged",
+            "New password must be different from the current password",
+        )
+
+    admin.password_hash = hash_password(payload.new_password)
+    await db.commit()
+    return MessageResponse(message="Password updated successfully")

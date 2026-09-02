@@ -15,6 +15,7 @@ async def test_liveness_and_openapi_contract() -> None:
     assert health.json()["service"] == "X Sentinel"
     paths = openapi.json()["paths"]
     assert "/api/v1/auth/login" in paths
+    assert "/api/v1/auth/password" in paths
     assert "/api/v1/dashboard/summary" in paths
     assert "/api/v1/monitored-users/{user_id}/poll" in paths
     assert "/api/v1/system/metrics" in paths
