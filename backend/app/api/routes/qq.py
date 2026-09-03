@@ -571,7 +571,7 @@ async def list_tasks(db: DbSession, _: CurrentAdmin):
 @router.post("/tasks", response_model=QQScheduledTaskOut, status_code=201)
 async def create_task(payload: QQScheduledTaskCreate, db: DbSession, _: CurrentAdmin):
     now = datetime.now(UTC)
-    task = QQScheduledTask(name=payload.name.strip(), message=payload.message.strip(), frequency=payload.frequency, run_time=payload.run_time, weekdays=','.join(map(str, payload.weekdays)), month_day=payload.month_day, is_enabled=payload.is_enabled, next_run_at=now if payload.send_immediately else now + timedelta(days=1), created_at=now, updated_at=now)
+    task = QQScheduledTask(name=payload.name.strip(), message=payload.message.strip(), frequency=payload.frequency, interval_value=payload.interval_value, run_time=payload.run_time, weekdays=','.join(map(str, payload.weekdays)), month_day=payload.month_day, is_enabled=payload.is_enabled, next_run_at=now if payload.send_immediately else now + timedelta(days=1), created_at=now, updated_at=now)
     db.add(task); await db.flush()
     db.add_all([QQScheduledTaskBot(task_id=task.id, bot_id=i) for i in set(payload.bot_ids)])
     db.add_all([QQScheduledTaskGroup(task_id=task.id, bot_id=int(g["bot_id"]), group_openid=str(g["group_openid"])) for g in payload.groups])
@@ -582,7 +582,7 @@ async def create_task(payload: QQScheduledTaskCreate, db: DbSession, _: CurrentA
 async def update_task(task_id: int, payload: QQScheduledTaskCreate, db: DbSession, _: CurrentAdmin):
     task = await db.get(QQScheduledTask, task_id)
     if not task: raise APIError(404, "qq_task_not_found", "QQ 定时任务不存在")
-    for key in ("name", "message", "frequency", "run_time", "month_day", "is_enabled"): setattr(task, key, getattr(payload, key))
+    for key in ("name", "message", "frequency", "interval_value", "run_time", "month_day", "is_enabled"): setattr(task, key, getattr(payload, key))
     task.weekdays = ','.join(map(str, payload.weekdays)); task.updated_at = datetime.now(UTC)
     await db.execute(delete(QQScheduledTaskBot).where(QQScheduledTaskBot.task_id == task.id)); await db.execute(delete(QQScheduledTaskGroup).where(QQScheduledTaskGroup.task_id == task.id))
     db.add_all([QQScheduledTaskBot(task_id=task.id, bot_id=i) for i in set(payload.bot_ids)]); db.add_all([QQScheduledTaskGroup(task_id=task.id, bot_id=int(g["bot_id"]), group_openid=str(g["group_openid"])) for g in payload.groups]); await db.commit(); await db.refresh(task)

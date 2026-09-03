@@ -101,6 +101,7 @@ class QQScheduledTask(Base):
     name: Mapped[str] = mapped_column(String(100))
     message: Mapped[str] = mapped_column(Text)
     frequency: Mapped[str] = mapped_column(String(16))  # daily, weekly, monthly
+    interval_value: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     run_time: Mapped[str] = mapped_column(String(8))
     weekdays: Mapped[str] = mapped_column(String(32), default="")
     month_day: Mapped[int | None] = mapped_column(Integer, nullable=True)

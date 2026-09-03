@@ -356,9 +356,9 @@ class QQDeliveryWorker:
     def _next_task_run(task: QQScheduledTask, now: datetime) -> datetime:
         hour, minute, second = map(int, task.run_time.split(":"))
         candidate = now.replace(hour=hour, minute=minute, second=second, microsecond=0)
-        if task.frequency == "secondly": return now + timedelta(seconds=1)
-        if task.frequency == "minutely": return now.replace(second=second, microsecond=0) + timedelta(minutes=1)
-        if task.frequency == "hourly": return now.replace(minute=minute, second=second, microsecond=0) + timedelta(hours=1)
+        if task.frequency == "secondly": return now + timedelta(seconds=task.interval_value)
+        if task.frequency == "minutely": return now.replace(second=second, microsecond=0) + timedelta(minutes=task.interval_value)
+        if task.frequency == "hourly": return now.replace(minute=minute, second=second, microsecond=0) + timedelta(hours=task.interval_value)
         if task.frequency == "weekly":
             days = {int(item) for item in task.weekdays.split(",") if item}
             days = days or {candidate.isoweekday()}
