@@ -400,7 +400,7 @@ onBeforeUnmount(() => window.clearInterval(statusTimer))
           <tbody>
             <tr v-for="delivery in deliveries" :key="delivery.id">
               <td><span class="delivery-status" :class="delivery.status"><i />{{ deliveryLabel(delivery.status) }}</span></td>
-              <td><strong>{{ delivery.target_name }}</strong><small>{{ delivery.bot_name }} · {{ delivery.kind === 'test' ? '测试' : '新推文' }}</small></td>
+              <td><strong>{{ delivery.target_name }}</strong><small>{{ delivery.bot_name }} · {{ delivery.kind === 'test' ? '测试' : delivery.kind === 'batch' ? '手动批量推送' : '新推文' }}</small></td>
               <td><p>{{ delivery.last_error || delivery.message_body }}</p><small v-if="delivery.last_error" class="error-copy">{{ delivery.group_openid }}</small></td>
               <td><strong>{{ delivery.attempts }} / {{ delivery.max_attempts }}</strong><small v-if="delivery.status === 'retry_wait'">下次 {{ formatDateTime(delivery.next_attempt_at) }}</small></td>
               <td><strong>{{ formatDateTime(delivery.completed_at || delivery.created_at) }}</strong><small>#{{ delivery.id }}</small></td>

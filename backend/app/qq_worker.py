@@ -35,7 +35,7 @@ from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
 from app.core.time import as_utc
 from app.db.session import AsyncSessionFactory, engine
-from app.models.qq import QQBotAccount, QQDelivery, QQNotificationTarget
+from app.models.qq import QQBotAccount, QQDelivery, QQJoinedGroup, QQNotificationTarget
 from app.services.metrics import (
     QQ_DELIVERIES,
     QQ_DELIVERY_DURATION,
@@ -396,11 +396,38 @@ class QQDeliveryWorker:
             )
             if not due and not stale:
                 return None
-            target = await session.get(QQNotificationTarget, delivery.target_id)
-            bot = await session.get(QQBotAccount, target.bot_id) if target else None
-            if target is None or bot is None or not target.is_enabled or not bot.is_enabled:
+            cancel_reason = None
+            if delivery.kind == "batch":
+                # Manual batches select a joined group without a subscription target.
+                bot = await session.scalar(select(QQBotAccount).where(
+                    QQBotAccount.app_id == delivery.bot_app_id,
+                ))
+                group_openid = delivery.group_openid
+                if bot is None or not bot.is_enabled:
+                    cancel_reason = "机器人已删除或停用"
+                elif bot.version != delivery.bot_version:
+                    cancel_reason = "机器人凭据已变更，请重新提交批量推送"
+                else:
+                    joined = await session.scalar(select(QQJoinedGroup.id).where(
+                        QQJoinedGroup.bot_id == bot.id,
+                        QQJoinedGroup.app_id == bot.app_id,
+                        QQJoinedGroup.group_openid == group_openid,
+                        QQJoinedGroup.is_joined.is_(True),
+                    ))
+                    if joined is None:
+                        cancel_reason = "机器人已退出目标群或未记录入群状态"
+            else:
+                target = (
+                    await session.get(QQNotificationTarget, delivery.target_id)
+                    if delivery.target_id is not None else None
+                )
+                bot = await session.get(QQBotAccount, target.bot_id) if target else None
+                group_openid = target.group_openid if target else delivery.group_openid
+                if target is None or bot is None or not target.is_enabled or not bot.is_enabled:
+                    cancel_reason = "机器人或群通知目标已删除或停用"
+            if cancel_reason:
                 delivery.status = "cancelled"
-                delivery.last_error = "机器人或群通知目标已删除或停用"
+                delivery.last_error = cancel_reason
                 delivery.completed_at = now
                 delivery.claim_token = None
                 delivery.claimed_by = None
@@ -433,7 +460,7 @@ class QQDeliveryWorker:
                 bot_version=bot.version,
                 app_id=bot.app_id,
                 app_secret=app_secret,
-                group_openid=target.group_openid,
+                group_openid=group_openid,
                 message_body=delivery.message_body,
                 attempts=delivery.attempts,
                 max_attempts=delivery.max_attempts,
