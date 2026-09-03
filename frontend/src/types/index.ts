@@ -289,6 +289,7 @@ export interface SystemMetrics {
 }
 
 export type QQVerificationStatus = 'unverified' | 'valid' | 'invalid' | 'error'
+export type QQOnlineStatus = 'online' | 'connecting' | 'offline' | 'disabled'
 export type QQDeliveryStatus = 'queued' | 'sending' | 'retry_wait' | 'sent' | 'failed' | 'cancelled'
 
 export interface QQOverview {
@@ -312,6 +313,7 @@ export interface QQBotAccount {
   last_error: string | null
   version: number
   target_count: number
+  online_status: QQOnlineStatus | string
   created_at: string
   updated_at: string
 }

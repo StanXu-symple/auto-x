@@ -50,6 +50,7 @@ class QQBotOut(APIModel):
     last_error: str | None
     version: int
     target_count: int = 0
+    online_status: Literal["online", "connecting", "offline", "disabled"] = "offline"
     created_at: datetime
     updated_at: datetime
 

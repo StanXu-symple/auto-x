@@ -33,6 +33,7 @@ from app.schemas.qq import (
     QQTargetUpdate,
 )
 from app.services.qq_notifications import (
+    QQ_BOT_STATUS,
     QQ_WORKER_HEARTBEAT,
     QQCredentialValidationError,
     create_test_delivery,
@@ -183,7 +184,15 @@ async def overview(db: DbSession, redis: RedisClient, _: CurrentAdmin) -> QQOver
 
 
 @router.get("/bots", response_model=list[QQBotOut])
-async def list_bots(db: DbSession, _: CurrentAdmin) -> list[QQBotOut]:
+async def list_bots(db: DbSession, redis: RedisClient, _: CurrentAdmin) -> list[QQBotOut]:
+    bot_status: dict[str, str] = {}
+    try:
+        raw_status = await redis.get(QQ_BOT_STATUS)
+        if raw_status:
+            payload = json.loads(raw_status)
+            bot_status = payload if isinstance(payload, dict) else {}
+    except Exception:
+        bot_status = {}
     count = (
         select(func.count(QQNotificationTarget.id))
         .where(QQNotificationTarget.bot_id == QQBotAccount.id)
@@ -193,7 +202,14 @@ async def list_bots(db: DbSession, _: CurrentAdmin) -> list[QQBotOut]:
     rows = (
         await db.execute(select(QQBotAccount, count).order_by(QQBotAccount.created_at.desc()))
     ).all()
-    return [_bot_out(bot, int(target_count or 0)) for bot, target_count in rows]
+    result = []
+    for bot, target_count in rows:
+        output = _bot_out(bot, int(target_count or 0))
+        output.online_status = (
+            "disabled" if not bot.is_enabled else bot_status.get(bot.app_id, "offline")
+        )
+        result.append(output)
+    return result
 
 
 @router.get("/bots/{bot_id}/groups", response_model=list[QQJoinedGroupOut])

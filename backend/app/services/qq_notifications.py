@@ -25,6 +25,7 @@ from app.services.x_credentials import (
 logger = logging.getLogger(__name__)
 QQ_DELIVERY_QUEUE = "xsentinel:qq:delivery-queue"
 QQ_WORKER_HEARTBEAT = "xsentinel:qq-worker:heartbeat"
+QQ_BOT_STATUS = "xsentinel:qq-worker:bot-status"
 
 
 class QQCredentialUnavailableError(RuntimeError):

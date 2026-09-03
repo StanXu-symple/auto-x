@@ -44,6 +44,7 @@ from app.services.metrics import (
 )
 from app.services.qq_groups import record_group_presence
 from app.services.qq_notifications import (
+    QQ_BOT_STATUS,
     QQ_DELIVERY_QUEUE,
     QQ_WORKER_HEARTBEAT,
     decrypt_app_secret,
@@ -151,6 +152,16 @@ async def refresh_inbound_bots(
         # gateway lookup is retried by the next sync pass.
         if set(adapter.tasks) - before:
             websocket_started.add(info.id)
+
+
+async def publish_bot_status(redis: Redis, adapter: QQAdapter, *, ttl: int = 30) -> None:
+    """Publish per-AppID Gateway state for the administration UI."""
+    status = {
+        info.id: "connecting" for info in adapter.qq_config.qq_bots
+    }
+    for bot in adapter.bots.values():
+        status[bot.self_id] = "online" if bot.ready else "connecting"
+    await redis.set(QQ_BOT_STATUS, json.dumps(status), ex=ttl)
 
 
 RELEASE_LOCK_SCRIPT = """
@@ -533,11 +544,12 @@ def main() -> None:
     worker = QQDeliveryWorker(settings, sender)
     worker_task: asyncio.Task[None] | None = None
     inbound_sync_task: asyncio.Task[None] | None = None
+    bot_status_task: asyncio.Task[None] | None = None
     websocket_started: set[str] = set()
 
     @driver.on_startup
     async def start_worker() -> None:
-        nonlocal inbound_sync_task, worker_task
+        nonlocal bot_status_task, inbound_sync_task, worker_task
         await worker.check_dependencies()
         try:
             await refresh_inbound_bots(get_adapter(QQAdapter), websocket_started)
@@ -549,6 +561,7 @@ def main() -> None:
             while not worker.stop_event.is_set():
                 try:
                     await refresh_inbound_bots(get_adapter(QQAdapter), websocket_started)
+                    await publish_bot_status(worker.redis, get_adapter(QQAdapter))
                 except Exception:
                     logger.exception("Unable to load QQ bot accounts for inbound events")
                 try:
@@ -557,11 +570,28 @@ def main() -> None:
                     pass
 
         inbound_sync_task = asyncio.create_task(sync_inbound_bots())
+
+        async def publish_status_loop() -> None:
+            while not worker.stop_event.is_set():
+                try:
+                    await publish_bot_status(worker.redis, get_adapter(QQAdapter))
+                except Exception:
+                    logger.exception("Unable to publish QQ bot status")
+                try:
+                    await asyncio.wait_for(worker.stop_event.wait(), timeout=5)
+                except TimeoutError:
+                    pass
+
+        bot_status_task = asyncio.create_task(publish_status_loop())
         worker_task = asyncio.create_task(worker.run(check_dependencies=False))
 
     @driver.on_shutdown
     async def stop_worker() -> None:
         worker.request_stop()
+        if bot_status_task is not None:
+            bot_status_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await bot_status_task
         if inbound_sync_task is not None:
             inbound_sync_task.cancel()
             with suppress(asyncio.CancelledError):
