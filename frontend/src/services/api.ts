@@ -34,6 +34,7 @@ import type {
   QQBotPayload,
   QQBotTestResult,
   QQDelivery,
+  QQJoinedGroup,
   QQNotificationTarget,
   QQOverview,
   QQTargetPayload,
@@ -155,6 +156,9 @@ export const qqApi = {
   },
   async bots() {
     return dataOf(await http.get<Wrapped<QQBotAccount[]>>('/qq/bots'))
+  },
+  async joinedGroups(botId: EntityId) {
+    return dataOf(await http.get<Wrapped<QQJoinedGroup[]>>(`/qq/bots/${botId}/groups`))
   },
   async createBot(payload: QQBotPayload & { app_secret: string }) {
     return dataOf(await http.post<Wrapped<QQBotAccount>>('/qq/bots', payload))

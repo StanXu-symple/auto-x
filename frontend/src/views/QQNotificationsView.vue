@@ -27,6 +27,7 @@ import type {
   MonitoredUser,
   QQBotAccount,
   QQDelivery,
+  QQJoinedGroup,
   QQNotificationTarget,
   QQOverview,
 } from '@/types'
@@ -48,6 +49,11 @@ const botModalOpen = ref(false)
 const targetModalOpen = ref(false)
 const editingBotId = ref<number | null>(null)
 const editingTargetId = ref<number | null>(null)
+const joinedGroups = ref<QQJoinedGroup[]>([])
+const groupsLoading = ref(false)
+const groupsError = ref('')
+const groupInputMode = ref<'select' | 'manual'>('select')
+let groupRequestId = 0
 
 const botForm = reactive({ name: '', app_id: '', app_secret: '', is_enabled: true })
 const targetForm = reactive({
@@ -189,11 +195,53 @@ function openTarget(target?: QQNotificationTarget) {
   targetForm.all_monitored_users = target?.all_monitored_users ?? true
   targetForm.monitored_user_ids = [...(target?.monitored_user_ids ?? [])]
   targetForm.message_template = target?.message_template ?? DEFAULT_TEMPLATE
+  groupInputMode.value = target ? 'manual' : 'select'
   targetModalOpen.value = true
+  void loadJoinedGroups(true)
+}
+
+async function loadJoinedGroups(onOpen = false) {
+  const requestId = ++groupRequestId
+  const botId = targetForm.bot_id
+  joinedGroups.value = []
+  groupsError.value = ''
+  groupsLoading.value = !!botId
+  if (!botId) return
+  try {
+    const rows = await qqApi.joinedGroups(botId)
+    if (requestId !== groupRequestId || botId !== targetForm.bot_id || !targetModalOpen.value) return
+    joinedGroups.value = rows
+    if (onOpen && rows.some((group) => group.group_openid === targetForm.group_openid)) {
+      groupInputMode.value = 'select'
+    }
+  } catch (error) {
+    if (requestId === groupRequestId && targetModalOpen.value) {
+      groupsError.value = getErrorMessage(error, '获取群列表失败，请重试或手动填写 OpenID')
+    }
+  } finally {
+    if (requestId === groupRequestId) groupsLoading.value = false
+  }
+}
+
+function changeTargetBot() {
+  targetForm.group_openid = ''
+  targetForm.name = ''
+  void loadJoinedGroups()
+}
+
+function selectJoinedGroup(openid: string) {
+  const group = joinedGroups.value.find((item) => item.group_openid === openid)
+  if (group) targetForm.name = group.name || `通知群 ${openid.slice(-8)}`
 }
 
 async function saveTarget() {
   if (!targetForm.bot_id || !targetForm.name.trim() || !targetForm.group_openid.trim()) return ElMessage.warning('请填写机器人、群名称和群 OpenID')
+  if (groupInputMode.value === 'select') {
+    const group = joinedGroups.value.find((item) => item.group_openid === targetForm.group_openid)
+    if (groupsLoading.value || !group || (group.target_id && group.target_id !== editingTargetId.value)) {
+      return ElMessage.warning('请选择当前机器人可用的群，或切换为手动填写')
+    }
+  }
   if (!targetForm.all_monitored_users && !targetForm.monitored_user_ids.length) return ElMessage.warning('请至少选择一个监听账号')
   actionKey.value = 'save-target'
   try {
@@ -282,7 +330,7 @@ onMounted(() => loadAll())
       <div>
         <span class="qq-eyebrow"><Bot :size="14" /> OFFICIAL QQ DELIVERY</span>
         <h2>QQ 推送适配</h2>
-        <p>轮询任务发现新内容后，由独立 Worker 通过已授权机器人投递到指定群。</p>
+        <p>轮询任务发现新内容后，由独立 Worker 通过已授权机器人投递到指定群。机器人被群管理员添加后，QQ 会发送入群事件，Worker 会自动回复确认。</p>
       </div>
       <div class="qq-toolbar__actions">
         <el-button :loading="refreshing" @click="loadAll(true)"><RefreshCw v-if="!refreshing" :size="16" />刷新</el-button>
@@ -363,8 +411,26 @@ onMounted(() => loadAll())
 
     <BaseModal :open="targetModalOpen" :title="editingTargetId ? '编辑群目标' : '添加群目标'" description="新推文入库后会按这里的范围生成独立投递任务。" width="large" @close="targetModalOpen = false">
       <el-form class="qq-form target-form" label-position="top" @submit.prevent="saveTarget">
-        <div class="form-grid"><el-form-item label="发送机器人"><el-select v-model="targetForm.bot_id" placeholder="选择机器人"><el-option v-for="bot in bots" :key="bot.id" :label="`${bot.name} · ${bot.app_id}`" :value="bot.id" /></el-select></el-form-item><el-form-item label="群名称"><el-input v-model="targetForm.name" maxlength="100" placeholder="例如：监控通知群" /></el-form-item></div>
-        <el-form-item label="群 OpenID"><el-input v-model="targetForm.group_openid" maxlength="128" placeholder="腾讯 QQ 开放平台提供的 group_openid" /></el-form-item>
+        <div class="form-grid"><el-form-item label="发送机器人"><el-select v-model="targetForm.bot_id" placeholder="选择机器人" @change="changeTargetBot"><el-option v-for="bot in bots" :key="bot.id" :label="`${bot.name} · ${bot.app_id}`" :value="bot.id" /></el-select></el-form-item><el-form-item label="群名称（本地备注）"><el-input v-model="targetForm.name" maxlength="100" placeholder="例如：监控通知群" /></el-form-item></div>
+        <el-form-item label="目标群">
+          <div class="group-picker">
+            <div class="group-picker__toolbar">
+              <el-radio-group v-model="groupInputMode" size="small">
+                <el-radio-button value="select">选择已加入的群</el-radio-button>
+                <el-radio-button value="manual">手动填写</el-radio-button>
+              </el-radio-group>
+              <el-button :loading="groupsLoading" :disabled="!targetForm.bot_id" @click="loadJoinedGroups()"><RefreshCw v-if="!groupsLoading" :size="14" />刷新群列表</el-button>
+            </div>
+            <el-select v-if="groupInputMode === 'select'" v-model="targetForm.group_openid" filterable :loading="groupsLoading" :disabled="!targetForm.bot_id" placeholder="选择机器人已加入的群" @change="selectJoinedGroup">
+              <el-option v-for="group in joinedGroups" :key="group.group_openid" :value="group.group_openid" :label="`${group.name || 'QQ群'} · ${group.group_openid}${group.target_id ? '（已配置目标）' : ''}`" :disabled="!!group.target_id && group.target_id !== editingTargetId" />
+            </el-select>
+            <el-input v-else v-model="targetForm.group_openid" maxlength="128" placeholder="填写 group_openid，非 QQ 群号" />
+            <small v-if="groupsError" class="group-picker__error" role="alert">{{ groupsError }}</small>
+            <small v-else-if="groupsLoading" class="template-help">正在获取所选机器人的群列表…</small>
+            <small v-else-if="!joinedGroups.length" class="template-help">尚未记录到群。请先将机器人加入群，或在已有群中 @ 一次机器人，再刷新列表；也可手动填写。</small>
+            <small class="template-help">列表来自已接收的入群和群消息事件，退群后移除。需先配置 QQ 事件回调；接入前未收到事件的群不会自动列出。群名为本地备注。</small>
+          </div>
+        </el-form-item>
         <div class="form-switch"><div><strong>接收全部监听账号</strong><small>关闭后可选择需要推送的特定 X 账号。</small></div><el-switch v-model="targetForm.all_monitored_users" /></div>
         <el-form-item v-if="!targetForm.all_monitored_users" label="监听账号"><el-select v-model="targetForm.monitored_user_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择一个或多个账号"><el-option v-for="user in monitoredUsers" :key="user.id" :label="`@${user.username}${user.display_name ? ` · ${user.display_name}` : ''}`" :value="Number(user.id)" /></el-select></el-form-item>
         <el-form-item label="消息模板"><el-input v-model="targetForm.message_template" type="textarea" :rows="5" maxlength="2000" show-word-limit /><small class="template-help">可用字段：{author}、{username}、{text}、{url}、{posted_at}</small></el-form-item>
@@ -376,5 +442,6 @@ onMounted(() => loadAll())
 </template>
 
 <style scoped>
+.group-picker{display:flex;flex-direction:column;gap:9px;width:100%}.group-picker__toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}.group-picker__error{color:#b33d4d;font-size:12px;line-height:1.5}
 .qq-page{display:flex;flex-direction:column;gap:18px;max-width:1320px;margin:0 auto;color:#17191c}.qq-toolbar{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:6px 0 2px}.qq-toolbar h2{margin:7px 0 5px;font-size:24px;font-weight:680;letter-spacing:0}.qq-toolbar p,.qq-section header p{margin:0;color:#727986;font-size:13px;line-height:1.6}.qq-eyebrow{display:flex;align-items:center;gap:7px;color:#635bff;font-size:10px;font-weight:750;letter-spacing:.12em}.qq-toolbar__actions{display:flex;gap:9px;flex-shrink:0}.qq-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.qq-summary article{display:flex;align-items:center;min-height:92px;padding:18px;border:1px solid #e7e9ee;border-radius:16px;background:#fff;box-shadow:0 6px 22px rgba(20,25,38,.045);gap:13px}.qq-summary article>span,.bot-avatar,.target-icon,.qq-empty>span{display:grid;place-items:center;flex:0 0 auto;width:40px;height:40px;border:1px solid #e9e7ff;border-radius:12px;color:#635bff;background:#f8f7ff}.qq-summary article>div{display:flex;flex-direction:column;gap:3px}.qq-summary small,.bot-meta small,.target-scope small{color:#858b96;font-size:10px}.qq-summary strong{font-size:23px;font-weight:680}.qq-summary strong em{color:#a2a7af;font-size:12px;font-style:normal;font-weight:500}.status-text{font-size:15px!important}.status-text.online{color:#07865e}.status-text.offline{color:#d04c5b}.platform-notice{display:grid;grid-template-columns:auto 1fr auto;align-items:start;padding:15px 17px;border:1px solid #eadfac;border-radius:16px;color:#755b00;background:#fffdf4;gap:11px}.platform-notice strong{font-size:12px}.platform-notice p{margin:3px 0 0;color:#756a42;font-size:11px;line-height:1.65}.platform-notice a{display:flex;align-items:center;gap:5px;color:#635bff;font-size:11px;white-space:nowrap}.qq-section{overflow:hidden;border:1px solid #e7e9ee;border-radius:16px;background:#fff;box-shadow:0 8px 28px rgba(20,25,38,.045)}.qq-section>header{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:19px 20px;border-bottom:1px solid #eceef2}.qq-section>header h3{margin:0 0 4px;font-size:15px}.qq-section>header>span{color:#858b96;font-size:12px}.bot-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px}.bot-card{display:flex;flex-direction:column;min-width:0;padding:16px;border:1px solid #e8eaf0;border-radius:14px;background:#fff;transition:border-color .18s,box-shadow .18s}.bot-card:hover{border-color:#d5d0ff;box-shadow:0 8px 24px rgba(42,40,70,.06)}.bot-card__top{display:flex;align-items:center;min-width:0;gap:11px}.bot-card__top>div{display:flex;overflow:hidden;flex:1;flex-direction:column;gap:3px}.bot-card__top strong,.target-main strong{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.bot-card__top small,.target-main small{overflow:hidden;color:#7d838e;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.verification{padding:5px 8px;border-radius:999px;color:#716b7f;background:#f1f2f5;font-size:9px;font-weight:700;white-space:nowrap}.verification.valid{color:#087855;background:#eaf8f2}.verification.invalid,.verification.error{color:#b63f50;background:#fff0f2}.verification.unverified{color:#9a6800;background:#fff7df}.bot-meta{display:grid;grid-template-columns:repeat(3,1fr);margin:15px 0;padding:12px 0;border-top:1px solid #eff0f3;border-bottom:1px solid #eff0f3}.bot-meta span{display:grid;grid-template-columns:auto 1fr;min-width:0;padding:0 10px;border-right:1px solid #eff0f3;gap:2px 7px}.bot-meta span:first-child{padding-left:0}.bot-meta span:last-child{padding-right:0;border:0}.bot-meta svg{grid-row:1/3;color:#8d879c}.bot-meta strong{overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.row-error{display:flex;align-items:flex-start;margin:0 0 12px;padding:8px 10px;border-radius:8px;color:#b33d4d;background:#fff2f3;font-size:10px;line-height:1.5;gap:6px}.row-error svg{flex:0 0 auto}.bot-card footer{display:flex;align-items:center;justify-content:space-between;margin-top:auto}.bot-card footer>div,.target-actions{display:flex;gap:5px}.target-list{display:flex;flex-direction:column}.target-row{display:grid;grid-template-columns:auto minmax(180px,1.5fr) minmax(130px,1fr) auto auto;align-items:center;padding:14px 18px;border-bottom:1px solid #eff0f3;gap:14px}.target-row:last-child{border:0}.target-icon{width:38px;height:38px;border-radius:11px}.target-main,.target-scope{display:flex;min-width:0;flex-direction:column;gap:4px}.target-scope strong{font-size:11px}.qq-empty{display:flex;align-items:center;justify-content:center;min-height:220px;flex-direction:column;padding:32px;text-align:center}.qq-empty>span{margin-bottom:12px}.qq-empty strong{font-size:13px}.qq-empty p{margin:5px 0 15px;color:#858b96;font-size:11px}.qq-empty--compact{min-height:160px}.status-filter{width:150px}.delivery-table-wrap{overflow-x:auto}.delivery-table{width:100%;min-width:870px;border-collapse:collapse}.delivery-table th{padding:11px 15px;color:#9298a3;background:#fafbfc;font-size:9px;font-weight:700;text-align:left;text-transform:uppercase}.delivery-table td{padding:13px 15px;border-top:1px solid #eff0f3;font-size:11px;vertical-align:middle}.delivery-table td>strong,.delivery-table td>small{display:block}.delivery-table td>small{margin-top:3px;color:#9298a3;font-size:9px}.delivery-table td p{display:-webkit-box;overflow:hidden;max-width:390px;margin:0;color:#4d525b;line-height:1.45;-webkit-box-orient:vertical;-webkit-line-clamp:2}.delivery-table .error-copy{color:#bb5360}.delivery-status{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;color:#666d78;background:#f1f2f5;font-size:9px;font-weight:700;white-space:nowrap}.delivery-status i{width:5px;height:5px;border-radius:50%;background:currentColor}.delivery-status.sent{color:#087855;background:#eaf8f2}.delivery-status.failed,.delivery-status.cancelled{color:#ba4051;background:#fff0f2}.delivery-status.queued,.delivery-status.sending{color:#554ac7;background:#f0efff}.delivery-status.retry_wait{color:#9a6800;background:#fff7df}.table-empty{display:flex;align-items:center;justify-content:center;min-height:110px;color:#8a909a;gap:8px}.pagination{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-top:1px solid #eff0f3;color:#8b919b;font-size:10px}.pagination>div{display:flex;align-items:center;gap:10px}.pagination strong{color:#515660;font-size:10px}.qq-form{display:flex;flex-direction:column}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.form-switch{display:flex;align-items:center;justify-content:space-between;margin-bottom:17px;padding:12px 13px;border:1px solid #e8eaf0;border-radius:12px;background:#fafbfc;gap:16px}.form-switch>div{display:flex;flex-direction:column;gap:3px}.form-switch strong{font-size:12px}.form-switch small,.template-help{color:#858b96;font-size:10px;line-height:1.5}.qq-form :deep(.el-select){width:100%}.qq-form :deep(.el-textarea__inner){line-height:1.55}.target-form :deep(.el-form-item){margin-bottom:17px}.delivery-section{margin-bottom:20px}@media(max-width:900px){.qq-summary{grid-template-columns:repeat(2,1fr)}.bot-grid{grid-template-columns:1fr}.target-row{grid-template-columns:auto minmax(0,1fr) auto auto}.target-scope{grid-column:2/3}.target-actions{grid-column:4;grid-row:1/3}}@media(max-width:620px){.qq-page{gap:13px}.qq-toolbar{align-items:flex-start;flex-direction:column}.qq-toolbar__actions{width:100%}.qq-toolbar__actions .el-button{flex:1}.qq-summary{grid-template-columns:1fr 1fr;gap:8px}.qq-summary article{min-height:80px;padding:12px;border-radius:14px}.qq-summary article>span{display:none}.platform-notice{grid-template-columns:auto 1fr}.platform-notice a{grid-column:2}.qq-section{border-radius:14px}.qq-section>header{align-items:flex-start;padding:16px;flex-direction:column}.bot-grid{padding:10px}.bot-meta{grid-template-columns:1fr}.bot-meta span{grid-template-columns:auto 1fr;padding:7px 0;border-right:0;border-bottom:1px solid #eff0f3}.target-row{grid-template-columns:auto minmax(0,1fr) auto;padding:13px}.target-scope{grid-column:2}.target-actions{grid-column:2/4;grid-row:auto;justify-content:flex-end}.form-grid{grid-template-columns:1fr}.status-filter{width:100%}}
 </style>

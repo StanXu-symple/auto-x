@@ -4,14 +4,20 @@ import json
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentAdmin, DbSession, RedisClient
 from app.api.errors import APIError
 from app.core.config import get_settings
 from app.models.monitored_user import MonitoredUser
-from app.models.qq import QQBotAccount, QQDelivery, QQNotificationTarget, QQTargetSubscription
+from app.models.qq import (
+    QQBotAccount,
+    QQDelivery,
+    QQJoinedGroup,
+    QQNotificationTarget,
+    QQTargetSubscription,
+)
 from app.schemas.common import MessageResponse, Page
 from app.schemas.qq import (
     QQBotCreate,
@@ -20,6 +26,7 @@ from app.schemas.qq import (
     QQBotUpdate,
     QQDeliveryAccepted,
     QQDeliveryOut,
+    QQJoinedGroupOut,
     QQOverview,
     QQTargetCreate,
     QQTargetOut,
@@ -187,6 +194,33 @@ async def list_bots(db: DbSession, _: CurrentAdmin) -> list[QQBotOut]:
         await db.execute(select(QQBotAccount, count).order_by(QQBotAccount.created_at.desc()))
     ).all()
     return [_bot_out(bot, int(target_count or 0)) for bot, target_count in rows]
+
+
+@router.get("/bots/{bot_id}/groups", response_model=list[QQJoinedGroupOut])
+async def list_joined_groups(
+    bot_id: int, db: DbSession, _: CurrentAdmin,
+) -> list[QQJoinedGroupOut]:
+    bot = await _get_bot(db, bot_id)
+    rows = (await db.execute(
+        select(QQJoinedGroup, QQNotificationTarget.name, QQNotificationTarget.id)
+        .outerjoin(QQNotificationTarget, and_(
+            QQNotificationTarget.bot_id == QQJoinedGroup.bot_id,
+            QQNotificationTarget.group_openid == QQJoinedGroup.group_openid,
+        ))
+        .where(
+            QQJoinedGroup.bot_id == bot.id,
+            QQJoinedGroup.app_id == bot.app_id,
+            QQJoinedGroup.is_joined.is_(True),
+        )
+        .order_by(QQJoinedGroup.last_event_at.desc(), QQJoinedGroup.id.desc())
+    )).all()
+    return [
+        QQJoinedGroupOut(
+            group_openid=group.group_openid, name=name,
+            target_id=target_id, last_event_at=group.last_event_at,
+        )
+        for group, name, target_id in rows
+    ]
 
 
 @router.post("/bots", response_model=QQBotOut, status_code=status.HTTP_201_CREATED)

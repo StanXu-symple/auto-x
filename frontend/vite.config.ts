@@ -13,6 +13,10 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
+        '/qq/webhook': {
+          target: env.VITE_QQ_PROXY_TARGET || 'http://localhost:8003',
+          changeOrigin: true,
+        },
         '/api': {
           target: env.VITE_PROXY_TARGET || 'http://localhost:8000',
           changeOrigin: true,

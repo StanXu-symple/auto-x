@@ -13,16 +13,19 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 import nonebot
-from nonebot import get_adapter, get_driver
+from nonebot import get_adapter, get_driver, on_type
 from nonebot.adapters.qq import (
     ActionFailed,
     Bot,
+    GroupAddRobotEvent,
+    GroupDelRobotEvent,
+    GroupMessageCreateEvent,
     NetworkError,
     RateLimitException,
     UnauthorizedException,
 )
 from nonebot.adapters.qq import Adapter as QQAdapter
-from nonebot.adapters.qq.config import BotInfo
+from nonebot.adapters.qq.config import BotInfo, Intents
 from prometheus_client import start_http_server
 from redis.asyncio import Redis
 from sqlalchemy import and_, func, or_, select, text
@@ -39,6 +42,7 @@ from app.services.metrics import (
     QQ_QUEUE_DUE,
     QQ_WORKER_HEARTBEAT_METRIC,
 )
+from app.services.qq_groups import record_group_presence
 from app.services.qq_notifications import (
     QQ_DELIVERY_QUEUE,
     QQ_WORKER_HEARTBEAT,
@@ -47,6 +51,91 @@ from app.services.qq_notifications import (
 )
 
 logger = logging.getLogger(__name__)
+
+GROUP_ADD_ROBOT_ACK = "机器人已入群，请在 X Sentinel 中选择本群并配置推送目标。"
+
+
+async def acknowledge_group_add(bot: Bot, event: GroupAddRobotEvent) -> None:
+    """Acknowledge QQ's GROUP_ADD_ROBOT dispatch in the group.
+
+    QQ sends this event only after the group administrator has added the robot;
+    there is no API call that approves the robot's own invitation.  Replying
+    with the event id provides a visible confirmation to the operator;
+    transport acknowledgement is handled separately by the adapter.
+    """
+    await bot.send(event, GROUP_ADD_ROBOT_ACK)
+
+
+async def handle_group_event(
+    bot: Bot, event: GroupAddRobotEvent | GroupDelRobotEvent | GroupMessageCreateEvent,
+) -> None:
+    # Membership persists even when the optional welcome message is rejected.
+    event_at = event.timestamp
+    if isinstance(event_at, str):
+        event_at = datetime.fromisoformat(event_at.replace("Z", "+00:00"))
+    async with AsyncSessionFactory() as session:
+        changed = await record_group_presence(
+            session, app_id=bot.self_id, group_openid=event.group_openid,
+            is_joined=not isinstance(event, GroupDelRobotEvent), event_at=event_at,
+        )
+        await session.commit()
+    if changed and isinstance(event, GroupAddRobotEvent):
+        try:
+            await acknowledge_group_add(bot, event)
+        except Exception:
+            logger.exception("Unable to send QQ group welcome message")
+
+
+def register_group_event_handlers() -> None:
+    # GroupAtMessageCreateEvent inherits GroupMessageCreateEvent. Observing an
+    # @ message discovers groups joined before this worker was configured.
+    matcher = on_type(
+        (GroupAddRobotEvent, GroupDelRobotEvent, GroupMessageCreateEvent), block=False
+    )
+    matcher.append_handler(handle_group_event)
+
+
+async def load_inbound_bot_infos() -> list[BotInfo]:
+    """Build webhook bot entries from the encrypted bot accounts in MySQL."""
+    async with AsyncSessionFactory() as session:
+        rows = (
+            await session.scalars(
+                select(QQBotAccount).where(QQBotAccount.is_enabled.is_(True))
+            )
+        ).all()
+    settings = get_settings()
+    result: list[BotInfo] = []
+    for row in rows:
+        try:
+            secret = decrypt_app_secret(row.encrypted_app_secret, settings)
+        except Exception:
+            logger.exception(
+                "Unable to load QQ bot secret for inbound events", extra={"bot_id": row.id}
+            )
+            continue
+        result.append(
+            BotInfo(
+                id=row.app_id,
+                token="",
+                secret=secret,
+                use_websocket=False,
+                intent=Intents(c2c_group_at_messages=True),
+            )
+        )
+    return result
+
+
+async def refresh_inbound_bots(adapter: QQAdapter) -> None:
+    infos = await load_inbound_bot_infos()
+    configured = {info.id: info for info in infos}
+    adapter.qq_config.qq_bots = infos
+    # The adapter prefers connected bots to qq_bots when verifying webhooks.
+    # Evict cached credentials when an account is disabled/deleted/rotated.
+    for bot in list(adapter.bots.values()):
+        info = configured.get(bot.self_id)
+        if info is None or bot.bot_info.secret != info.secret:
+            adapter.bot_disconnect(bot)
+
 
 RELEASE_LOCK_SCRIPT = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
@@ -420,19 +509,44 @@ def main() -> None:
     )
     driver = get_driver()
     driver.register_adapter(QQAdapter)
+    register_group_event_handlers()
+
     sender = NoneBotQQSender(get_adapter(QQAdapter), settings)
     worker = QQDeliveryWorker(settings, sender)
     worker_task: asyncio.Task[None] | None = None
+    inbound_sync_task: asyncio.Task[None] | None = None
 
     @driver.on_startup
     async def start_worker() -> None:
-        nonlocal worker_task
+        nonlocal inbound_sync_task, worker_task
         await worker.check_dependencies()
+        try:
+            await refresh_inbound_bots(get_adapter(QQAdapter))
+        except Exception:
+            logger.exception("Unable to load QQ bot accounts for inbound events")
+        # Keep the adapter's webhook allow-list in sync with the UI-managed
+        # accounts so GROUP_ADD_ROBOT callbacks can be dispatched per bot.
+        async def sync_inbound_bots() -> None:
+            while not worker.stop_event.is_set():
+                try:
+                    await refresh_inbound_bots(get_adapter(QQAdapter))
+                except Exception:
+                    logger.exception("Unable to load QQ bot accounts for inbound events")
+                try:
+                    await asyncio.wait_for(worker.stop_event.wait(), timeout=15)
+                except TimeoutError:
+                    pass
+
+        inbound_sync_task = asyncio.create_task(sync_inbound_bots())
         worker_task = asyncio.create_task(worker.run(check_dependencies=False))
 
     @driver.on_shutdown
     async def stop_worker() -> None:
         worker.request_stop()
+        if inbound_sync_task is not None:
+            inbound_sync_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await inbound_sync_task
         if worker_task is not None:
             with suppress(TimeoutError):
                 await asyncio.wait_for(worker_task, timeout=15)

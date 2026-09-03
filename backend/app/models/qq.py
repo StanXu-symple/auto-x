@@ -36,6 +36,27 @@ class QQBotAccount(Base):
     )
 
 
+class QQJoinedGroup(Base):
+    __tablename__ = "qq_joined_groups"
+    __table_args__ = (
+        Index("uq_qq_joined_group", "bot_id", "app_id", "group_openid", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_id: Mapped[int] = mapped_column(
+        ForeignKey("qq_bot_accounts.id", ondelete="CASCADE"), index=True
+    )
+    # AppIDs can be edited; never expose a previous application's group OpenIDs.
+    app_id: Mapped[str] = mapped_column(String(64))
+    group_openid: Mapped[str] = mapped_column(String(128))
+    is_joined: Mapped[bool] = mapped_column(Boolean)
+    last_event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class QQNotificationTarget(Base):
     __tablename__ = "qq_notification_targets"
     __table_args__ = (Index("uq_qq_notification_target", "bot_id", "group_openid", unique=True),)

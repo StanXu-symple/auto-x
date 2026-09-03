@@ -34,6 +34,7 @@ async def test_liveness_and_openapi_contract() -> None:
     assert "/api/v1/x-sources/twscrape/test" in paths
     assert "/api/v1/qq/overview" in paths
     assert "/api/v1/qq/bots" in paths
+    assert "/api/v1/qq/bots/{bot_id}/groups" in paths
     assert "/api/v1/qq/targets" in paths
     assert "/api/v1/qq/deliveries" in paths
 

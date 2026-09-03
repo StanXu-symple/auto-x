@@ -61,6 +61,13 @@ class QQBotTestResult(APIModel):
     checked_at: datetime
 
 
+class QQJoinedGroupOut(APIModel):
+    group_openid: str
+    name: str | None = None
+    target_id: int | None = None
+    last_event_at: datetime
+
+
 class QQTargetCreate(APIModel):
     bot_id: int = Field(gt=0)
     name: str = Field(min_length=1, max_length=100)

@@ -330,6 +330,13 @@ export interface QQBotTestResult {
   checked_at: string
 }
 
+export interface QQJoinedGroup {
+  group_openid: string
+  name: string | null
+  target_id: number | null
+  last_event_at: string
+}
+
 export interface QQNotificationTarget {
   id: number
   bot_id: number
