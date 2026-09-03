@@ -40,6 +40,13 @@ const editorError = ref('')
 const actionLoading = ref<string | null>(null)
 
 const activeCount = computed(() => accounts.value.filter((account) => account.is_active).length)
+const pausedCount = computed(() => accounts.value.length - activeCount.value)
+const filterDescription = computed(() => {
+  if (filters.search.trim()) return `搜索：${filters.search.trim()}`
+  if (filters.status === 'active') return '仅显示运行中的账号'
+  if (filters.status === 'paused') return '仅显示已暂停的账号'
+  return `当前页 ${accounts.value.length} 个账号`
+})
 
 async function load() {
   loading.value = true
@@ -179,17 +186,24 @@ onMounted(load)
       <div><span class="summary-strip__icon"><Radio :size="18" /></span><span><small>账号总数</small><strong>{{ total }}</strong></span></div>
       <i />
       <div><span class="summary-strip__icon is-success"><Zap :size="18" /></span><span><small>当前页运行中</small><strong>{{ activeCount }}</strong></span></div>
+      <i />
+      <div><span class="summary-strip__icon is-neutral"><Pause :size="18" /></span><span><small>当前页已暂停</small><strong>{{ pausedCount }}</strong></span></div>
       <div class="summary-strip__action"><el-button type="primary" @click="openCreate"><Plus :size="17" />添加监听账号</el-button></div>
     </section>
 
     <section class="panel data-panel">
       <header class="data-toolbar">
-        <el-input v-model="filters.search" class="element-search" placeholder="搜索用户名或显示名称…" clearable><template #prefix><Search :size="16" /></template></el-input>
-        <el-radio-group v-model="filters.status" class="element-segmented" size="small">
-          <el-radio-button v-for="option in [{ value: 'all', label: '全部' }, { value: 'active', label: '运行中' }, { value: 'paused', label: '已暂停' }]" :key="option.value" :value="option.value">{{ option.label }}</el-radio-button>
-        </el-radio-group>
-        <el-tooltip content="刷新列表" placement="top"><el-button circle :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" /></el-button></el-tooltip>
+        <div class="toolbar-heading"><strong>监听账号</strong><span>独立控制每个账号的采集状态和轮询节奏</span></div>
+        <div class="toolbar-controls">
+          <el-input v-model="filters.search" class="element-search" placeholder="搜索用户名或显示名称" clearable><template #prefix><Search :size="16" /></template></el-input>
+          <el-radio-group v-model="filters.status" class="element-segmented" size="small">
+            <el-radio-button v-for="option in [{ value: 'all', label: '全部' }, { value: 'active', label: '运行中' }, { value: 'paused', label: '已暂停' }]" :key="option.value" :value="option.value">{{ option.label }}</el-radio-button>
+          </el-radio-group>
+          <el-tooltip content="刷新列表" placement="top"><el-button circle :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" /></el-button></el-tooltip>
+        </div>
       </header>
+
+      <div class="content-result-bar"><span>共 <strong>{{ total }}</strong> 个账号</span><span>{{ filterDescription }}</span></div>
 
       <div v-if="error && !accounts.length" class="error-panel error-panel--embedded">
         <AlertCircle :size="21" /><div><strong>账号列表加载失败</strong><span>{{ error }}</span></div><button class="button button--secondary" @click="load">重试</button>
@@ -202,12 +216,12 @@ onMounted(load)
       <div v-else-if="accounts.length" class="table-wrap">
         <el-table v-loading="loading" :data="accounts" row-key="id" class="sentinel-table" table-layout="auto">
           <el-table-column label="账号" min-width="220">
-            <template #default="{ row: account }"><div class="account-cell"><span class="avatar avatar--account">{{ (account.display_name || account.username).slice(0, 1).toUpperCase() }}</span><span><strong>{{ account.display_name || account.username }}</strong><small>@{{ account.username }}<template v-if="account.x_user_id"> · {{ account.x_user_id }}</template></small></span></div></template>
+            <template #default="{ row: account }"><div class="account-cell"><span class="avatar avatar--account"><img v-if="account.avatar_url" :src="account.avatar_url" alt="" referrerpolicy="no-referrer" /><template v-else>{{ (account.display_name || account.username).slice(0, 1).toUpperCase() }}</template></span><span><strong>{{ account.display_name || account.username }}</strong><small>@{{ account.username }}</small><small v-if="account.x_user_id" class="account-id">ID {{ account.x_user_id }}</small></span></div></template>
           </el-table-column>
           <el-table-column label="状态" width="130"><template #default="{ row: account }"><StatusBadge :status="account.is_active ? account.status || 'active' : 'paused'" /><small v-if="account.last_error" class="row-error" :title="account.last_error">{{ account.last_error }}</small></template></el-table-column>
           <el-table-column label="轮询频率" min-width="130"><template #default="{ row: account }"><span class="interval-cell"><Clock3 :size="15" />{{ formatInterval(account.effective_poll_interval_seconds) }}<el-tag v-if="account.poll_interval_seconds == null" size="small" effect="plain">默认</el-tag></span></template></el-table-column>
           <el-table-column label="上次轮询" min-width="150"><template #default="{ row: account }"><span class="date-cell"><strong>{{ formatRelative(account.last_polled_at) }}</strong><small>{{ formatDateTime(account.last_polled_at) }}</small></span></template></el-table-column>
-          <el-table-column label="下次轮询" min-width="150"><template #default="{ row: account }"><span class="date-cell"><strong>{{ account.is_active ? formatRelative(account.next_poll_at) : '—' }}</strong><small>{{ account.is_active ? formatDateTime(account.next_poll_at) : '监听已暂停' }}</small></span></template></el-table-column>
+          <el-table-column label="下次轮询" min-width="150"><template #default="{ row: account }"><span class="date-cell"><strong>{{ account.is_active ? formatRelative(account.next_poll_at) : '不适用' }}</strong><small>{{ account.is_active ? formatDateTime(account.next_poll_at) : '监听已暂停' }}</small></span></template></el-table-column>
           <el-table-column label="操作" fixed="right" width="135" align="right">
             <template #default="{ row: account }">
               <div class="row-actions">

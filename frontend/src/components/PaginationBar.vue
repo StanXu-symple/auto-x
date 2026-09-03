@@ -9,7 +9,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.page
 
 <template>
   <div class="pagination">
-    <span>共 {{ total }} 条 · {{ totalPages }} 页</span>
+    <span>共 {{ total }} 条，{{ totalPages }} 页</span>
     <el-pagination
       background
       layout="prev, pager, next"

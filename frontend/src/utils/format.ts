@@ -13,9 +13,9 @@ const compactFormatter = new Intl.NumberFormat('zh-CN', {
 })
 
 export const formatDateTime = (value?: string | null) => {
-  if (!value) return '—'
+  if (!value) return '暂无'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '—' : dateTimeFormatter.format(date)
+  return Number.isNaN(date.getTime()) ? '暂无' : dateTimeFormatter.format(date)
 }
 
 export const formatRelative = (value?: string | null) => {
@@ -34,14 +34,14 @@ export const formatRelative = (value?: string | null) => {
 export const formatNumber = (value?: number | null) => compactFormatter.format(value || 0)
 
 export const formatDuration = (milliseconds?: number | null) => {
-  if (milliseconds == null) return '—'
+  if (milliseconds == null) return '暂无'
   if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`
   if (milliseconds < 60_000) return `${(milliseconds / 1000).toFixed(1)} s`
   return `${Math.floor(milliseconds / 60_000)}m ${Math.round((milliseconds % 60_000) / 1000)}s`
 }
 
 export const formatInterval = (seconds?: number | null) => {
-  if (!seconds) return '—'
+  if (!seconds) return '暂无'
   if (seconds < 60) return `${seconds} 秒`
   if (seconds < 3600) return `${seconds / 60 % 1 ? (seconds / 60).toFixed(1) : seconds / 60} 分钟`
   return `${seconds / 3600 % 1 ? (seconds / 3600).toFixed(1) : seconds / 3600} 小时`
@@ -55,7 +55,7 @@ export const formatBytes = (bytes?: number | null) => {
 }
 
 export const formatUptime = (seconds?: number | null) => {
-  if (!seconds) return '—'
+  if (!seconds) return '暂无'
   const days = Math.floor(seconds / 86_400)
   const hours = Math.floor((seconds % 86_400) / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)

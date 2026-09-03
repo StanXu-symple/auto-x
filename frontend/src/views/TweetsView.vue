@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { useRouter } from 'vue-router'
 import {
@@ -51,6 +51,15 @@ const filters = reactive({
   date_from: '',
   date_to: '',
 })
+
+const hasFilters = computed(() => Boolean(
+  filters.search.trim() || filters.monitored_user_id || filters.date_from || filters.date_to,
+))
+const activeFilterCount = computed(() => [
+  filters.monitored_user_id,
+  filters.date_from,
+  filters.date_to,
+].filter(Boolean).length)
 
 async function load() {
   loading.value = true
@@ -179,11 +188,22 @@ onMounted(async () => {
 
 <template>
   <div class="tweets-view page-stack">
+    <section class="summary-strip">
+      <div><span class="summary-strip__icon"><MessageSquareText :size="18" /></span><span><small>内容总数</small><strong>{{ total }}</strong></span></div>
+      <i />
+      <div><span class="summary-strip__icon is-neutral"><CalendarDays :size="18" /></span><span><small>当前页</small><strong>{{ tweets.length }}</strong></span></div>
+      <i />
+      <div><span class="summary-strip__icon is-success"><Send :size="18" /></span><span><small>已选择</small><strong>{{ selectedTweetIds.length }}</strong></span></div>
+    </section>
+
     <section class="panel data-panel">
       <header class="data-toolbar data-toolbar--tweets">
-        <el-input v-model="filters.search" class="element-search element-search--large" placeholder="搜索推文正文、用户名或关键词…" clearable><template #prefix><Search :size="16" /></template></el-input>
-        <el-button :type="filtersOpen ? 'primary' : ''" plain @click="filtersOpen = !filtersOpen"><Filter :size="16" />筛选条件</el-button>
-        <el-tooltip content="刷新内容流"><el-button circle :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" /></el-button></el-tooltip>
+        <div class="toolbar-heading"><strong>采集内容</strong><span>检索、筛选并将内容送往后续创作或推送流程</span></div>
+        <div class="toolbar-controls">
+          <el-input v-model="filters.search" class="element-search element-search--large" placeholder="搜索正文、用户名或关键词" clearable><template #prefix><Search :size="16" /></template></el-input>
+          <el-button :type="filtersOpen ? 'primary' : ''" plain @click="filtersOpen = !filtersOpen"><Filter :size="16" />筛选<template v-if="activeFilterCount">（{{ activeFilterCount }}）</template></el-button>
+          <el-tooltip content="刷新内容流"><el-button circle :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" /></el-button></el-tooltip>
+        </div>
       </header>
 
       <Transition name="filter-panel">
@@ -191,7 +211,7 @@ onMounted(async () => {
           <label class="field field--compact"><span class="field__label">监听账号</span><el-select v-model="filters.monitored_user_id" placeholder="全部账号" clearable><el-option v-for="account in accounts" :key="account.id" :label="`@${account.username}`" :value="String(account.id)" /></el-select></label>
           <label class="field field--compact"><span class="field__label">起始日期</span><el-date-picker v-model="filters.date_from" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" :prefix-icon="CalendarDays" /></label>
           <label class="field field--compact"><span class="field__label">结束日期</span><el-date-picker v-model="filters.date_to" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" :prefix-icon="CalendarDays" /></label>
-          <el-button class="filter-panel__clear" @click="clearFilters">清空筛选</el-button>
+          <el-button class="filter-panel__clear" :disabled="!activeFilterCount" @click="clearFilters">清空筛选</el-button>
         </div>
       </Transition>
 
@@ -214,7 +234,7 @@ onMounted(async () => {
           <span class="avatar avatar--tweet">{{ (tweet.username || 'X').slice(0, 1).toUpperCase() }}</span>
           <div class="tweet-card__body">
             <header>
-              <div><strong>@{{ tweet.username || '未知用户' }}</strong><span>{{ tweet.lang || '语言未知' }}</span><i>·</i><time :title="formatDateTime(tweetTime(tweet))">{{ formatRelative(tweetTime(tweet)) }}</time></div>
+              <div><strong>@{{ tweet.username || '未知用户' }}</strong><span>{{ tweet.lang || '语言未知' }}</span><i class="meta-separator" /><time :title="formatDateTime(tweetTime(tweet))">{{ formatRelative(tweetTime(tweet)) }}</time></div>
               <a :href="tweetUrl(tweet)" target="_blank" rel="noopener noreferrer" class="icon-button" aria-label="在 X 查看"><ExternalLink :size="16" /></a>
             </header>
             <div v-if="tweetKind(tweet) !== 'original'" class="tweet-card__type"><Repeat2 v-if="tweetKind(tweet) === 'retweet'" :size="14" /><MessageCircle v-else :size="14" />{{ tweetKind(tweet) === 'retweet' ? '转推' : '回复' }}</div>
@@ -239,7 +259,7 @@ onMounted(async () => {
 
       <EmptyState v-else-if="!loading" title="没有找到相关内容" description="新推文会在下一次轮询完成后出现在这里">
         <template #icon><MessageSquareText :size="26" /></template>
-        <el-button v-if="filters.search || filters.monitored_user_id || filters.date_from || filters.date_to" @click="filters.search = ''; clearFilters()">清除搜索和筛选</el-button>
+        <el-button v-if="hasFilters" @click="filters.search = ''; clearFilters()">清除搜索和筛选</el-button>
       </EmptyState>
 
       <PaginationBar v-if="total > filters.page_size" :page="filters.page" :page-size="filters.page_size" :total="total" @change="changePage" />
@@ -258,8 +278,8 @@ onMounted(async () => {
 <style scoped>
 .tweet-ai-button { margin-left: 2px; }
 .tweet-select { display:flex; flex:0 0 28px; align-items:flex-start; justify-content:center; padding-top:7px; }
-.tweet-card--selected { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.tweet-card--selected { background: var(--primary-soft); }
 .tweet-media__video-poster { position:relative; display:block; overflow:hidden; }
 .tweet-media__video-poster span { position:absolute; top:50%; left:50%; display:flex; align-items:center; padding:7px 10px; border-radius:999px; color:#fff; background:rgba(20,24,35,.75); font-size:10px; gap:5px; transform:translate(-50%,-50%); }
-.batch-toolbar { position:sticky; bottom:12px; display:flex; align-items:center; justify-content:flex-end; gap:14px; margin-top:14px; padding:10px 14px; border:1px solid #dfe3f5; border-radius:12px; background:#fff; box-shadow:0 8px 24px rgba(20,25,38,.12); }
+.batch-toolbar { position:sticky; bottom:12px; display:flex; align-items:center; justify-content:flex-end; gap:14px; margin-top:14px; padding:10px 14px; border:1px solid var(--border-strong); border-radius:var(--radius-md); background:#fff; box-shadow:0 8px 24px rgba(31,41,55,.1); }
 </style>

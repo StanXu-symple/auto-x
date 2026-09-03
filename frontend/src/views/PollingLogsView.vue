@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { AlertCircle, CalendarDays, ChevronDown, Clock3, FileClock, RefreshCw, TerminalSquare } from 'lucide-vue-next'
 import { monitoredUsersApi, pollingLogsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
@@ -16,6 +16,17 @@ const loading = ref(true)
 const error = ref('')
 const expanded = ref<string | null>(null)
 const filters = reactive({ page: 1, page_size: 20, monitored_user_id: '', status: 'all', trigger: 'all', date_from: '', date_to: '' })
+const successCount = computed(() => runs.value.filter((run) => run.status === 'success').length)
+const issueCount = computed(() => runs.value.filter((run) => ['failed', 'error', 'rate_limited', 'partial'].includes(run.status)).length)
+const hasFilters = computed(() => Boolean(
+  filters.monitored_user_id || filters.status !== 'all' || filters.trigger !== 'all' || filters.date_from || filters.date_to,
+))
+
+function clearFilters() {
+  Object.assign(filters, {
+    monitored_user_id: '', status: 'all', trigger: 'all', date_from: '', date_to: '',
+  })
+}
 
 async function load() {
   loading.value = true
@@ -65,15 +76,32 @@ onMounted(async () => {
 
 <template>
   <div class="logs-view page-stack">
+    <section class="summary-strip">
+      <div><span class="summary-strip__icon"><FileClock :size="18" /></span><span><small>记录总数</small><strong>{{ total }}</strong></span></div>
+      <i />
+      <div><span class="summary-strip__icon is-success"><TerminalSquare :size="18" /></span><span><small>当前页成功</small><strong>{{ successCount }}</strong></span></div>
+      <i />
+      <div><span class="summary-strip__icon is-danger"><AlertCircle :size="18" /></span><span><small>当前页异常</small><strong>{{ issueCount }}</strong></span></div>
+    </section>
+
     <section class="panel data-panel">
       <header class="data-toolbar data-toolbar--logs">
-        <el-select v-model="filters.monitored_user_id" class="element-account-select" filterable clearable placeholder="筛选监听账号"><el-option v-for="account in accounts" :key="account.id" :label="`@${account.username}`" :value="String(account.id)" /></el-select>
-        <el-select v-model="filters.status" class="element-filter-select"><el-option label="全部状态" value="all" /><el-option label="成功" value="success" /><el-option label="失败" value="error" /><el-option label="限流" value="rate_limited" /><el-option label="执行中" value="running" /><el-option label="已跳过" value="skipped" /></el-select>
-        <el-select v-model="filters.trigger" class="element-filter-select"><el-option label="全部方式" value="all" /><el-option label="定时调度" value="scheduled" /><el-option label="手动触发" value="manual" /></el-select>
-        <el-date-picker v-model="filters.date_from" class="element-date-filter" type="date" value-format="YYYY-MM-DD" placeholder="起始日期" :prefix-icon="CalendarDays" />
-        <el-date-picker v-model="filters.date_to" class="element-date-filter" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" :prefix-icon="CalendarDays" />
+        <div class="toolbar-heading"><strong>执行记录</strong><span>按账号、状态和时间定位每次轮询结果</span></div>
         <el-tooltip content="刷新记录"><el-button circle :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" /></el-button></el-tooltip>
       </header>
+
+      <div class="log-filter-grid">
+        <label class="field field--compact"><span class="field__label">监听账号</span><el-select v-model="filters.monitored_user_id" filterable clearable placeholder="全部账号"><el-option v-for="account in accounts" :key="account.id" :label="`@${account.username}`" :value="String(account.id)" /></el-select></label>
+        <label class="field field--compact"><span class="field__label">执行状态</span>
+        <el-select v-model="filters.status" class="element-filter-select"><el-option label="全部状态" value="all" /><el-option label="成功" value="success" /><el-option label="失败" value="error" /><el-option label="限流" value="rate_limited" /><el-option label="执行中" value="running" /><el-option label="已跳过" value="skipped" /></el-select>
+        </label>
+        <label class="field field--compact"><span class="field__label">触发方式</span>
+        <el-select v-model="filters.trigger" class="element-filter-select"><el-option label="全部方式" value="all" /><el-option label="定时调度" value="scheduled" /><el-option label="手动触发" value="manual" /></el-select>
+        </label>
+        <label class="field field--compact"><span class="field__label">起始日期</span><el-date-picker v-model="filters.date_from" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" :prefix-icon="CalendarDays" /></label>
+        <label class="field field--compact"><span class="field__label">结束日期</span><el-date-picker v-model="filters.date_to" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" :prefix-icon="CalendarDays" /></label>
+        <el-button class="log-filter-grid__clear" :disabled="!hasFilters" @click="clearFilters">清空筛选</el-button>
+      </div>
 
       <div class="content-result-bar"><span>共 <strong>{{ total }}</strong> 次执行记录</span><span>时间按浏览器本地时区显示</span></div>
 
@@ -88,7 +116,7 @@ onMounted(async () => {
           <tbody>
             <template v-for="run in runs" :key="run.id">
               <tr :class="{ 'is-expanded': expanded === String(run.id) }">
-                <td data-label="任务 / 账号"><div class="run-id-cell"><span><TerminalSquare :size="16" /></span><div><strong>@{{ run.username || '未知账号' }}</strong><small>#{{ run.id }}<template v-if="run.worker_id"> · {{ run.worker_id }}</template></small></div></div></td>
+                <td data-label="任务 / 账号"><div class="run-id-cell"><span><TerminalSquare :size="16" /></span><div><strong>@{{ run.username || '未知账号' }}</strong><small>#{{ run.id }}</small><small v-if="run.worker_id" class="worker-id">{{ run.worker_id }}</small></div></div></td>
                 <td data-label="触发方式"><span class="trigger-label"><component :is="run.trigger === 'manual' ? RefreshCw : Clock3" :size="14" />{{ run.trigger === 'manual' ? '手动触发' : '定时调度' }}</span></td>
                 <td data-label="开始时间"><span class="date-cell"><strong>{{ formatDateTime(run.started_at) }}</strong><small v-if="run.finished_at">结束于 {{ formatDateTime(run.finished_at) }}</small></span></td>
                 <td data-label="耗时">{{ formatDuration(run.duration_ms) }}</td>

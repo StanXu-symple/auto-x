@@ -4081,3 +4081,113 @@ body { font-variant-numeric: tabular-nums; }
   .summary-strip__action { width: 100%; margin-left: 0; }
   .summary-strip__action .el-button { width: 100%; }
 }
+
+/* Monitoring workspace pages */
+.summary-strip__icon.is-neutral {
+  color: #596574;
+  background: #eef1f4;
+}
+
+.summary-strip__icon.is-danger {
+  color: var(--red);
+  background: #fff0f2;
+}
+
+.toolbar-heading {
+  display: flex;
+  min-width: 180px;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.toolbar-heading strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.toolbar-heading span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.toolbar-controls {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.toolbar-controls .element-segmented { margin-left: 0; }
+.toolbar-controls .el-button { flex: 0 0 auto; white-space: nowrap; }
+
+.accounts-view .content-result-bar,
+.tweets-view .content-result-bar,
+.logs-view .content-result-bar {
+  min-height: 38px;
+  padding-inline: 14px;
+}
+
+.accounts-view .sentinel-table { min-width: 900px; }
+.accounts-view .avatar--account { overflow: hidden; border-radius: var(--radius-md); }
+.accounts-view .avatar--account img { width: 100%; height: 100%; object-fit: cover; }
+.accounts-view .account-id,
+.logs-view .worker-id { color: var(--muted-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.tweets-view .tweet-list { padding-inline: 14px; }
+.tweets-view .tweet-card { padding: 16px 4px; }
+.tweets-view .tweet-card--selected { background: var(--primary-soft); }
+.tweets-view .tweet-card__text { color: var(--text-soft); font-size: 12px; line-height: 1.65; }
+.tweets-view .tweet-card__body header strong { color: var(--text); font-size: 11px; }
+.tweets-view .meta-separator { width: 1px; height: 11px; background: var(--border-strong); }
+.tweets-view .tweet-media { border-radius: var(--radius-md); }
+
+.log-filter-grid {
+  display: grid;
+  align-items: end;
+  padding: 12px 14px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  grid-template-columns: minmax(170px, 1.35fr) repeat(2, minmax(130px, 0.8fr)) repeat(2, minmax(145px, 1fr)) auto;
+  gap: 10px;
+}
+
+.log-filter-grid .field { min-width: 0; }
+.log-filter-grid .field__label { color: var(--text-soft); font-size: 10px; font-weight: 600; }
+.log-filter-grid .el-select,
+.log-filter-grid .el-date-editor,
+.log-filter-grid .element-filter-select { width: 100% !important; }
+.log-filter-grid__clear { margin-bottom: 1px; white-space: nowrap; }
+.logs-view .data-toolbar--logs { justify-content: space-between; }
+.logs-view .logs-table { min-width: 940px; }
+.logs-view .run-id-cell > span { border-radius: var(--radius-md); color: var(--primary); background: var(--primary-soft); }
+.logs-view .trigger-label { border-radius: var(--radius-sm); background: var(--surface-2); }
+
+@media (max-width: 1180px) {
+  .toolbar-heading { width: 100%; }
+  .data-toolbar:has(.toolbar-controls) { align-items: stretch; flex-wrap: wrap; }
+  .toolbar-controls { justify-content: flex-start; }
+  .toolbar-controls .element-search { flex: 1; }
+  .log-filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .log-filter-grid__clear { justify-self: start; }
+}
+
+@media (max-width: 720px) {
+  .summary-strip > i { display: none; }
+  .summary-strip > div:not(.summary-strip__action) { flex: 1 1 calc(50% - 12px); }
+  .toolbar-controls { flex-wrap: wrap; }
+  .toolbar-controls .element-search { width: 100%; flex-basis: 100%; }
+  .toolbar-controls .element-segmented { min-width: 0; flex: 1; overflow-x: auto; }
+  .toolbar-controls .element-segmented .el-radio-button { flex: 1; }
+  .log-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .log-filter-grid__clear { width: 100%; }
+}
+
+@media (max-width: 480px) {
+  .summary-strip > div:not(.summary-strip__action) { flex-basis: 100%; }
+  .log-filter-grid { grid-template-columns: minmax(0, 1fr); }
+  .tweets-view .tweet-list { padding-inline: 10px; }
+  .tweets-view .tweet-select { flex-basis: 22px; }
+}
