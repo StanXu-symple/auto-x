@@ -33,6 +33,8 @@ import type {
   QQBotAccount,
   QQBotPayload,
   QQBotTestResult,
+  QQBatchPushPayload,
+  QQBatchPushResult,
   QQDelivery,
   QQJoinedGroup,
   QQNotificationTarget,
@@ -151,6 +153,9 @@ export const systemApi = {
 }
 
 export const qqApi = {
+  async batchPush(payload: QQBatchPushPayload) {
+    return dataOf(await http.post<Wrapped<QQBatchPushResult>>('/qq/batch-push', payload))
+  },
   async overview() {
     return dataOf(await http.get<Wrapped<QQOverview>>('/qq/overview'))
   },

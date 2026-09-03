@@ -15,11 +15,13 @@ import {
   Repeat2,
   Search,
   Sparkles,
+  Send,
 } from 'lucide-vue-next'
-import { aiApi, monitoredUsersApi, tweetsApi } from '@/services/api'
+import { aiApi, monitoredUsersApi, qqApi, tweetsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import { useUiStore } from '@/stores/ui'
 import type { MonitoredUser, Tweet } from '@/types'
+import type { QQBotAccount, QQJoinedGroup } from '@/types'
 import { formatDateTime, formatNumber, formatRelative, tweetTime } from '@/utils/format'
 import EmptyState from '@/components/EmptyState.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
@@ -33,6 +35,13 @@ const loading = ref(true)
 const error = ref('')
 const filtersOpen = ref(false)
 const generatingTweetId = ref<string | null>(null)
+const selectedTweetIds = ref<number[]>([])
+const qqDialogOpen = ref(false)
+const qqSending = ref(false)
+const qqBots = ref<QQBotAccount[]>([])
+const qqGroups = ref<QQJoinedGroup[]>([])
+const qqBotId = ref<number | null>(null)
+const qqGroupOpenids = ref<string[]>([])
 const filters = reactive({
   page: 1,
   page_size: 15,
@@ -108,6 +117,33 @@ function changePage(page: number) {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
+async function openQqPush() {
+  try {
+    qqBots.value = await qqApi.bots()
+    qqBotId.value = qqBots.value.find((bot) => bot.is_enabled)?.id || null
+    qqGroupOpenids.value = []
+    qqGroups.value = qqBotId.value ? await qqApi.joinedGroups(qqBotId.value) : []
+    qqDialogOpen.value = true
+  } catch (requestError) { ui.toast('无法读取 QQ 账号', 'error', getErrorMessage(requestError)) }
+}
+
+async function changeQqBot(id: number) {
+  qqGroupOpenids.value = []
+  qqGroups.value = await qqApi.joinedGroups(id)
+}
+
+async function sendQqBatch() {
+  if (!qqBotId.value || !qqGroupOpenids.value.length) return
+  qqSending.value = true
+  try {
+    const result = await qqApi.batchPush({ bot_id: qqBotId.value, group_openids: qqGroupOpenids.value, tweet_ids: selectedTweetIds.value })
+    ui.toast('QQ 推送已提交', 'success', result.message)
+    qqDialogOpen.value = false
+    selectedTweetIds.value = []
+  } catch (requestError) { ui.toast('QQ 推送失败', 'error', getErrorMessage(requestError)) }
+  finally { qqSending.value = false }
+}
+
 async function generateWithAi(tweet: Tweet) {
   generatingTweetId.value = String(tweet.id)
   try {
@@ -169,6 +205,7 @@ onMounted(async () => {
 
       <div v-else-if="tweets.length" class="tweet-list">
         <article v-for="tweet in tweets" :key="tweet.id" class="tweet-card">
+          <el-checkbox v-model="selectedTweetIds" :value="Number(tweet.id)" class="tweet-select" />
           <span class="avatar avatar--tweet">{{ (tweet.username || 'X').slice(0, 1).toUpperCase() }}</span>
           <div class="tweet-card__body">
             <header>
@@ -200,10 +237,21 @@ onMounted(async () => {
       </EmptyState>
 
       <PaginationBar v-if="total > filters.page_size" :page="filters.page" :page-size="filters.page_size" :total="total" @change="changePage" />
+      <div v-if="selectedTweetIds.length" class="batch-toolbar"><span>已选择 {{ selectedTweetIds.length }} 条</span><el-button type="primary" @click="openQqPush"><Send :size="15" />QQ 批量推送</el-button></div>
     </section>
+    <el-dialog v-model="qqDialogOpen" title="发送到 QQ 群" width="460px">
+      <el-form label-position="top">
+        <el-form-item label="QQ 机器人账号"><el-select v-model="qqBotId" placeholder="选择机器人" @change="changeQqBot"><el-option v-for="bot in qqBots.filter((item) => item.is_enabled)" :key="bot.id" :label="bot.name" :value="bot.id" /></el-select></el-form-item>
+        <el-form-item label="发送到群"><el-select v-model="qqGroupOpenids" multiple collapse-tags placeholder="选择已加入的群"><el-option v-for="group in qqGroups" :key="group.group_openid" :label="group.name || group.group_openid" :value="group.group_openid" /></el-select></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="qqDialogOpen = false">取消</el-button><el-button type="primary" :loading="qqSending" :disabled="!qqBotId || !qqGroupOpenids.length" @click="sendQqBatch">确认发送</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
 .tweet-ai-button { margin-left: 2px; }
+.tweet-select { position:absolute; top:14px; left:12px; }
+.tweet-card { position:relative; }
+.batch-toolbar { position:sticky; bottom:12px; display:flex; align-items:center; justify-content:flex-end; gap:14px; margin-top:14px; padding:10px 14px; border:1px solid #dfe3f5; border-radius:12px; background:#fff; box-shadow:0 8px 24px rgba(20,25,38,.12); }
 </style>

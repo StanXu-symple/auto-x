@@ -170,3 +170,28 @@ class QQOverview(APIModel):
 class QQDeliveryAccepted(APIModel):
     message: str
     delivery_id: int
+
+
+class QQBatchPushCreate(APIModel):
+    bot_id: int = Field(gt=0)
+    group_openids: list[str] = Field(min_length=1, max_length=100)
+    tweet_ids: list[int] = Field(min_length=1, max_length=100)
+
+    @field_validator("group_openids")
+    @classmethod
+    def unique_groups(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value if item.strip()]
+        if not cleaned:
+            raise ValueError("请选择至少一个群")
+        return list(dict.fromkeys(cleaned))
+
+    @field_validator("tweet_ids")
+    @classmethod
+    def unique_tweets(cls, value: list[int]) -> list[int]:
+        return list(dict.fromkeys(value))
+
+
+class QQBatchPushAccepted(APIModel):
+    message: str
+    delivery_ids: list[int]
+    batch_count: int

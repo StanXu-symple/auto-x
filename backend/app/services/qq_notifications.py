@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 QQ_DELIVERY_QUEUE = "xsentinel:qq:delivery-queue"
 QQ_WORKER_HEARTBEAT = "xsentinel:qq-worker:heartbeat"
 QQ_BOT_STATUS = "xsentinel:qq-worker:bot-status"
+QQ_MESSAGE_MAX_CHARS = 2000
 
 
 class QQCredentialUnavailableError(RuntimeError):
@@ -66,7 +67,22 @@ def render_qq_message(template: str, *, tweet: Tweet, user: MonitoredUser) -> st
         "posted_at": tweet.posted_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC"),
     }
     message = template.format_map(values).strip()
-    return message if len(message) <= 3800 else message[:3797].rstrip() + "..."
+    return message if len(message) <= QQ_MESSAGE_MAX_CHARS else message[: QQ_MESSAGE_MAX_CHARS - 3].rstrip() + "..."
+
+
+def chunk_qq_messages(messages: list[str], *, max_chars: int = QQ_MESSAGE_MAX_CHARS) -> list[str]:
+    chunks: list[str] = []
+    current = ""
+    for message in messages:
+        candidate = message if not current else f"{current}\n\n{message}"
+        if current and len(candidate) > max_chars:
+            chunks.append(current)
+            current = message
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 async def validate_qq_credentials(

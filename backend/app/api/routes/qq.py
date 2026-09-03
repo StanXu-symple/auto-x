@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query, status
@@ -18,12 +19,15 @@ from app.models.qq import (
     QQNotificationTarget,
     QQTargetSubscription,
 )
+from app.models.tweet import Tweet
 from app.schemas.common import MessageResponse, Page
 from app.schemas.qq import (
     QQBotCreate,
     QQBotOut,
     QQBotTestResult,
     QQBotUpdate,
+    QQBatchPushAccepted,
+    QQBatchPushCreate,
     QQDeliveryAccepted,
     QQDeliveryOut,
     QQJoinedGroupOut,
@@ -40,9 +44,12 @@ from app.services.qq_notifications import (
     decrypt_app_secret,
     encrypt_app_secret,
     enqueue_qq_delivery_ids,
+    chunk_qq_messages,
     secret_fingerprint,
     secret_hint,
+    render_qq_message,
     validate_qq_credentials,
+    chunk_qq_messages,
 )
 
 router = APIRouter(prefix="/qq", tags=["QQ Notifications"])
@@ -445,6 +452,41 @@ async def test_target(
     await db.commit()
     await enqueue_qq_delivery_ids(redis, [row.id])
     return QQDeliveryAccepted(message="测试消息已进入 QQ 投递队列", delivery_id=row.id)
+
+
+@router.post("/batch-push", response_model=QQBatchPushAccepted)
+async def batch_push(
+    payload: QQBatchPushCreate, db: DbSession, redis: RedisClient, _: CurrentAdmin
+) -> QQBatchPushAccepted:
+    bot = await _get_bot(db, payload.bot_id)
+    if not bot.is_enabled:
+        raise APIError(409, "qq_bot_disabled", "请先启用 QQ 机器人")
+    groups = set(payload.group_openids)
+    joined = set(await db.scalars(select(QQJoinedGroup.group_openid).where(
+        QQJoinedGroup.bot_id == bot.id, QQJoinedGroup.app_id == bot.app_id,
+        QQJoinedGroup.is_joined.is_(True), QQJoinedGroup.group_openid.in_(groups),
+    )))
+    missing = groups - joined
+    if missing:
+        raise APIError(422, "qq_group_not_joined", "机器人尚未加入所选群", sorted(missing))
+    rows = list(await db.scalars(select(Tweet).where(Tweet.id.in_(payload.tweet_ids)).order_by(Tweet.posted_at.asc())))
+    if not rows:
+        raise APIError(404, "tweets_not_found", "未找到可推送的内容")
+    users = {u.id: u for u in await db.scalars(select(MonitoredUser).where(MonitoredUser.id.in_({t.monitored_user_id for t in rows})))}
+    messages = [render_qq_message("【X Sentinel】@{username} 发布了新内容\n{text}\n{url}", tweet=tweet, user=users[tweet.monitored_user_id]) for tweet in rows if tweet.monitored_user_id in users]
+    if not messages:
+        raise APIError(404, "tweets_not_found", "所选内容缺少来源账号，无法推送")
+    chunks = chunk_qq_messages(messages)
+    now = datetime.now(UTC)
+    deliveries = []
+    for group in sorted(joined):
+        for body in chunks:
+            deliveries.append(QQDelivery(target_id=None, source_tweet_id=None, kind="batch", idempotency_key=f"batch:{uuid.uuid4()}", bot_name=bot.name, bot_app_id=bot.app_id, bot_version=bot.version, target_name=group, group_openid=group, message_body=body, status="queued", attempts=0, max_attempts=get_settings().qq_worker_max_attempts, next_attempt_at=now))
+    db.add_all(deliveries)
+    await db.commit()
+    ids = [row.id for row in deliveries]
+    await enqueue_qq_delivery_ids(redis, ids)
+    return QQBatchPushAccepted(message=f"已合并为 {len(chunks)} 条消息并进入投递队列", delivery_ids=ids, batch_count=len(chunks))
 
 
 @router.get("/deliveries", response_model=Page[QQDeliveryOut])

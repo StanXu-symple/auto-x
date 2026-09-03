@@ -385,6 +385,18 @@ export interface QQDelivery {
   updated_at: string
 }
 
+export interface QQBatchPushPayload {
+  bot_id: EntityId
+  group_openids: string[]
+  tweet_ids: EntityId[]
+}
+
+export interface QQBatchPushResult {
+  message: string
+  delivery_ids: EntityId[]
+  batch_count: number
+}
+
 export interface SystemSettings {
   global_poll_interval_seconds: number
   max_concurrency: number
