@@ -16,6 +16,7 @@ import {
   Search,
   Sparkles,
   Send,
+  Play,
 } from 'lucide-vue-next'
 import { aiApi, monitoredUsersApi, qqApi, tweetsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
@@ -108,7 +109,11 @@ function mediaFor(tweet: Tweet) {
   if (!Array.isArray(media)) return []
   return media
     .map((item) => item as Record<string, unknown>)
-    .map((item) => ({ type: String(item.type || 'media'), url: String(item.url || item.preview_image_url || '') }))
+    .map((item) => ({
+      type: String(item.type || 'media'),
+      url: String(item.url || ''),
+      poster: String(item.preview_image_url || ''),
+    }))
 }
 
 function changePage(page: number) {
@@ -204,8 +209,8 @@ onMounted(async () => {
       </div>
 
       <div v-else-if="tweets.length" class="tweet-list">
-        <article v-for="tweet in tweets" :key="tweet.id" class="tweet-card">
-          <el-checkbox v-model="selectedTweetIds" :value="Number(tweet.id)" class="tweet-select" />
+        <article v-for="tweet in tweets" :key="tweet.id" class="tweet-card" :class="{ 'tweet-card--selected': selectedTweetIds.includes(Number(tweet.id)) }">
+          <div class="tweet-select"><el-checkbox v-model="selectedTweetIds" :value="Number(tweet.id)" /></div>
           <span class="avatar avatar--tweet">{{ (tweet.username || 'X').slice(0, 1).toUpperCase() }}</span>
           <div class="tweet-card__body">
             <header>
@@ -216,7 +221,8 @@ onMounted(async () => {
             <p class="tweet-card__text">{{ tweet.text }}</p>
             <div v-if="mediaFor(tweet).length" class="tweet-media" :class="{ 'tweet-media--grid': mediaFor(tweet).length > 1 }">
               <template v-for="(media, index) in mediaFor(tweet).slice(0, 4)" :key="index">
-                <img v-if="media.url" :src="media.url" :alt="`推文媒体 ${index + 1}`" loading="lazy" />
+                <a v-if="media.type === 'video' && media.poster" :href="media.url || media.poster" target="_blank" rel="noopener noreferrer" class="tweet-media__video-poster"><img :src="media.poster" :alt="`推文视频 ${index + 1}`" loading="lazy" referrerpolicy="no-referrer" /><span><Play :size="20" fill="currentColor" />视频</span></a>
+                <img v-else-if="media.url && media.type !== 'video'" :src="media.url" :alt="`推文媒体 ${index + 1}`" loading="lazy" referrerpolicy="no-referrer" />
                 <span v-else><Image :size="22" />{{ media.type }}</span>
               </template>
             </div>
@@ -251,7 +257,9 @@ onMounted(async () => {
 
 <style scoped>
 .tweet-ai-button { margin-left: 2px; }
-.tweet-select { position:absolute; top:14px; left:12px; }
-.tweet-card { position:relative; }
+.tweet-select { display:flex; flex:0 0 28px; align-items:flex-start; justify-content:center; padding-top:7px; }
+.tweet-card--selected { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.tweet-media__video-poster { position:relative; display:block; overflow:hidden; }
+.tweet-media__video-poster span { position:absolute; top:50%; left:50%; display:flex; align-items:center; padding:7px 10px; border-radius:999px; color:#fff; background:rgba(20,24,35,.75); font-size:10px; gap:5px; transform:translate(-50%,-50%); }
 .batch-toolbar { position:sticky; bottom:12px; display:flex; align-items:center; justify-content:flex-end; gap:14px; margin-top:14px; padding:10px 14px; border:1px solid #dfe3f5; border-radius:12px; background:#fff; box-shadow:0 8px 24px rgba(20,25,38,.12); }
 </style>
