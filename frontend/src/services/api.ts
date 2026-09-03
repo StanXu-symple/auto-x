@@ -203,11 +203,12 @@ export const qqApi = {
   async removeTarget(id: EntityId) {
     await http.delete(`/qq/targets/${id}`)
   },
-  async deliveries(params: { page?: number; page_size?: number; status?: string } = {}) {
+  async deliveries(params: { page?: number; page_size?: number; status?: string; task_id?: EntityId } = {}) {
     return pageOf(
       await http.get<Wrapped<PaginatedResponse<QQDelivery>>>('/qq/deliveries', { params }),
     )
   },
+  async clearTaskHistory(id: EntityId) { await http.delete(`/qq/tasks/${id}/history`) },
   async retryDelivery(id: EntityId) {
     return dataOf(
       await http.post<Wrapped<{ message: string; delivery_id: number }>>(
@@ -344,7 +345,7 @@ export const xiaohongshuApi = {
   async saveSettings(payload: Omit<XhsPublishSettings, 'worker_status' | 'worker_last_heartbeat' | 'updated_at'>) {
     return dataOf(await http.put<Wrapped<XhsPublishSettings>>('/xiaohongshu/settings', payload))
   },
-  async jobs(params: { page?: number; page_size?: number; status?: string } = {}) {
+  async jobs(params: { page?: number; page_size?: number; status?: string; task_id?: EntityId } = {}) {
     return pageOf(await http.get<Wrapped<PaginatedResponse<XhsPublishJob>>>('/xiaohongshu/jobs', { params }))
   },
   async createJob(payload: XhsPublishJobCreatePayload) {

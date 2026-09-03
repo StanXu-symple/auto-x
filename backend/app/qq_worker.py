@@ -348,14 +348,14 @@ class QQDeliveryWorker:
                     if bot_id not in bots: continue
                     bot = await session.get(QQBotAccount, bot_id)
                     if bot and bot.is_enabled:
-                        session.add(QQDelivery(target_id=None, source_tweet_id=None, kind="scheduled", idempotency_key=f"scheduled:{task.id}:{now.isoformat()}:{bot_id}:{group}", bot_name=bot.name, bot_app_id=bot.app_id, bot_version=bot.version, target_name=group, group_openid=group, message_body=task.message, status="queued", attempts=0, max_attempts=self.settings.qq_worker_max_attempts, next_attempt_at=now))
+                        session.add(QQDelivery(task_id=task.id, target_id=None, source_tweet_id=None, kind="scheduled", idempotency_key=f"scheduled:{task.id}:{now.isoformat()}:{bot_id}:{group}", bot_name=bot.name, bot_app_id=bot.app_id, bot_version=bot.version, target_name=group, group_openid=group, message_body=task.message, status="queued", attempts=0, max_attempts=self.settings.qq_worker_max_attempts, next_attempt_at=now))
                 task.last_run_at = now
                 task.next_run_at = self._next_task_run(task, now)
 
     @staticmethod
     def _next_task_run(task: QQScheduledTask, now: datetime) -> datetime:
-        hour, minute = map(int, task.run_time.split(":"))
-        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        hour, minute, second = map(int, task.run_time.split(":"))
+        candidate = now.replace(hour=hour, minute=minute, second=second, microsecond=0)
         if task.frequency == "weekly":
             days = {int(item) for item in task.weekdays.split(",") if item}
             days = days or {candidate.isoweekday()}

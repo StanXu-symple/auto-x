@@ -101,7 +101,7 @@ class QQScheduledTask(Base):
     name: Mapped[str] = mapped_column(String(100))
     message: Mapped[str] = mapped_column(Text)
     frequency: Mapped[str] = mapped_column(String(16))  # daily, weekly, monthly
-    run_time: Mapped[str] = mapped_column(String(5))
+    run_time: Mapped[str] = mapped_column(String(8))
     weekdays: Mapped[str] = mapped_column(String(32), default="")
     month_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
@@ -132,6 +132,7 @@ class QQDelivery(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("qq_scheduled_tasks.id", ondelete="SET NULL"), nullable=True, index=True)
     target_id: Mapped[int | None] = mapped_column(
         ForeignKey("qq_notification_targets.id", ondelete="SET NULL"), nullable=True, index=True
     )

@@ -145,7 +145,7 @@ onMounted(loadStatus)
       <section class="panel credential-panel">
         <div class="panel__head"><div><span class="step">02</span><h3>Bearer Token</h3></div><KeyRound :size="20" /></div>
         <div class="status-strip"><span><Database :size="16" /><small>MySQL</small><strong>{{ official?.configured ? official.token_hint : '未保存' }}</strong></span><span><Unplug :size="16" /><small>Redis</small><strong>{{ official?.cache_active ? `${official.cache_ttl_seconds}s` : '未缓存' }}</strong></span><span><CheckCircle2 :size="16" /><small>状态</small><strong>{{ verificationText(official?.verification_status) }}</strong></span></div>
-        <el-input v-model="bearerToken" type="password" show-password clearable size="large" placeholder="粘贴 App-only Bearer Token" />
+        <el-input v-model="bearerToken" type="password" show-password clearable size="large" autocomplete="new-password" :placeholder="official?.configured ? `•••••••• ${official.token_hint}（留空保留现有 Token）` : '粘贴 App-only Bearer Token'" />
         <el-checkbox v-model="officialAcknowledged">确认这是 App-only Bearer Token，保存后旧版本立即失效</el-checkbox>
         <button class="primary-button" type="button" :disabled="actionLoading || !bearerToken.trim()" @click="saveOfficial"><ShieldCheck :size="17" />{{ official?.configured ? '轮换并保存 Token' : '加密保存 Token' }}</button>
         <div v-if="official?.configured" class="manage-actions"><button type="button" :disabled="actionLoading" @click="testOfficial"><RefreshCw :size="16" />测试官方 API</button><span>版本 v{{ official.version }} · {{ official.updated_at ? formatDateTime(official.updated_at) : '—' }}</span></div>
@@ -165,8 +165,8 @@ onMounted(loadStatus)
         <div class="panel__head"><div><span class="step warning">02</span><h3>twscrape 凭据</h3></div><ShieldCheck :size="20" /></div>
         <div class="status-strip"><span><Database :size="16" /><small>MySQL</small><strong>{{ twscrape?.configured ? twscrape.account_hint : '未保存' }}</strong></span><span><Unplug :size="16" /><small>Redis</small><strong>{{ twscrape?.cache_active ? `${twscrape.cache_ttl_seconds}s` : '未缓存' }}</strong></span><span><CheckCircle2 :size="16" /><small>状态</small><strong>{{ verificationText(twscrape?.verification_status) }}</strong></span></div>
         <el-input v-model="accountLabel" size="large" maxlength="64" placeholder="账号标识，例如 x-reader" />
-        <el-input v-model="authToken" type="password" show-password clearable size="large" placeholder="auth_token Cookie Value" />
-        <el-input v-model="ct0" type="password" show-password clearable size="large" placeholder="ct0 Cookie Value" />
+        <el-input v-model="authToken" type="password" show-password clearable size="large" autocomplete="new-password" :placeholder="twscrape?.configured ? '••••••••（已配置，填写新值可轮换）' : 'auth_token Cookie Value'" />
+        <el-input v-model="ct0" type="password" show-password clearable size="large" autocomplete="new-password" :placeholder="twscrape?.configured ? '••••••••（已配置，填写新值可轮换）' : 'ct0 Cookie Value'" />
         <p class="security-copy"><ShieldCheck :size="16" />Cookie 加密持久化到 MySQL；Redis 仅缓存密文。Worker 临时 SQLite 权限为 600，退出即删除。</p>
         <el-checkbox v-model="twscrapeAcknowledged">我了解非官方抓取可能违反 X 条款并导致账号受限</el-checkbox>
         <button class="primary-button experimental" type="button" :disabled="actionLoading || !authToken.trim() || !ct0.trim()" @click="saveTwscrape"><Cookie :size="17" />{{ twscrape?.configured ? '轮换并保存 Cookies' : '加密保存 Cookies' }}</button>

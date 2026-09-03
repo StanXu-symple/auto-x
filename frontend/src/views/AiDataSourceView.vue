@@ -125,7 +125,7 @@ onMounted(loadStatus)
           <span><Unplug :size="16" /><small>Redis 密文缓存</small><b>{{ status?.cache_active ? `${status.cache_ttl_seconds}s` : '未缓存' }}</b></span>
           <span><Activity :size="16" /><small>连接状态</small><b>{{ ready ? '已验证' : status?.verification_status === 'invalid' ? 'Key 无效' : '待验证' }}</b></span>
         </div>
-        <el-input v-model="form.api_key" type="password" show-password clearable size="large" autocomplete="new-password" :placeholder="status?.configured ? `留空则保留 ${status.key_hint}` : 'sk-...'" />
+        <el-input v-model="form.api_key" type="password" show-password clearable size="large" autocomplete="new-password" :placeholder="status?.configured ? `•••••••• ${status.key_hint}（留空保留）` : 'sk-...'" />
         <p class="security-note"><ShieldCheck :size="15" />API Key 使用服务端密钥加密后写入 MySQL，Redis 只缓存密文。</p>
         <el-button type="primary" size="large" :loading="saving" @click="saveSource"><Save v-if="!saving" :size="16" />{{ status?.configured ? '保存并更新统一账号' : '创建统一账号' }}</el-button>
         <div v-if="status?.configured" class="actions"><el-button :loading="testing" @click="testSource"><CheckCircle2 :size="15" />连通测试</el-button><el-button :loading="testing" @click="loadModels"><RefreshCw :size="15" />读取模型</el-button><el-button type="danger" plain @click="removeSource"><Trash2 :size="15" />删除</el-button></div>

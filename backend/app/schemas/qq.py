@@ -137,6 +137,7 @@ class QQTargetOut(APIModel):
 
 class QQDeliveryOut(APIModel):
     id: int
+    task_id: int | None = None
     target_id: int | None
     source_tweet_id: int | None
     kind: str
@@ -200,10 +201,11 @@ class QQScheduledTaskCreate(APIModel):
     name: str = Field(min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=2000)
     frequency: Literal["daily", "weekly", "monthly"] = "daily"
-    run_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    run_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$")
     weekdays: list[int] = Field(default_factory=list, max_length=7)
     month_day: int | None = Field(default=None, ge=1, le=31)
     is_enabled: bool = True
+    send_immediately: bool = False
     bot_ids: list[int] = Field(min_length=1, max_length=50)
     groups: list[dict[str, int | str]] = Field(min_length=1, max_length=100)
 
