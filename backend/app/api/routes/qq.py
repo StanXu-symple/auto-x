@@ -571,7 +571,7 @@ async def list_tasks(db: DbSession, _: CurrentAdmin):
 @router.post("/tasks", response_model=QQScheduledTaskOut, status_code=201)
 async def create_task(payload: QQScheduledTaskCreate, db: DbSession, _: CurrentAdmin):
     now = datetime.now(UTC)
-    task = QQScheduledTask(name=payload.name.strip(), message=payload.message.strip(), frequency=payload.frequency, run_time=payload.run_time, weekdays=','.join(map(str, payload.weekdays)), month_day=payload.month_day, is_enabled=payload.is_enabled, next_run_at=now, created_at=now, updated_at=now)
+    task = QQScheduledTask(name=payload.name.strip(), message=payload.message.strip(), frequency=payload.frequency, run_time=payload.run_time, weekdays=','.join(map(str, payload.weekdays)), month_day=payload.month_day, is_enabled=payload.is_enabled, next_run_at=now if payload.send_immediately else now + timedelta(days=1), created_at=now, updated_at=now)
     db.add(task); await db.flush()
     db.add_all([QQScheduledTaskBot(task_id=task.id, bot_id=i) for i in set(payload.bot_ids)])
     db.add_all([QQScheduledTaskGroup(task_id=task.id, bot_id=int(g["bot_id"]), group_openid=str(g["group_openid"])) for g in payload.groups])
@@ -602,8 +602,11 @@ async def list_deliveries(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     delivery_status: str | None = Query(default=None, alias="status", max_length=24),
+    task_id: int | None = Query(default=None, ge=1),
 ) -> Page[QQDeliveryOut]:
     conditions = [QQDelivery.status == delivery_status] if delivery_status else []
+    if task_id is not None:
+        conditions.append(QQDelivery.task_id == task_id)
     total = int(await db.scalar(select(func.count(QQDelivery.id)).where(*conditions)) or 0)
     rows = list(
         await db.scalars(
@@ -620,6 +623,15 @@ async def list_deliveries(
         page=page,
         page_size=page_size,
     )
+
+
+@router.delete("/tasks/{task_id}/history", response_model=MessageResponse)
+async def clear_task_history(task_id: int, db: DbSession, _: CurrentAdmin) -> MessageResponse:
+    if await db.get(QQScheduledTask, task_id) is None:
+        raise APIError(404, "qq_task_not_found", "QQ 定时任务不存在")
+    await db.execute(delete(QQDelivery).where(QQDelivery.task_id == task_id))
+    await db.commit()
+    return MessageResponse(message="该任务的推送历史已清除")
 
 
 @router.post("/deliveries/{delivery_id}/retry", response_model=QQDeliveryAccepted)

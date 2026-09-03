@@ -384,7 +384,7 @@ export interface QQDelivery {
   created_at: string
   updated_at: string
 }
-export interface QQScheduledTask { id:number; name:string; message:string; frequency:'daily'|'weekly'|'monthly'; run_time:string; weekdays:number[]; month_day:number|null; is_enabled:boolean; bot_ids:number[]; groups:Array<{bot_id:number;group_openid:string}>; last_run_at:string|null; next_run_at:string; created_at:string; updated_at:string }
+export interface QQScheduledTask { id:number; name:string; message:string; frequency:'daily'|'weekly'|'monthly'; run_time:string; weekdays:number[]; month_day:number|null; is_enabled:boolean; send_immediately?:boolean; bot_ids:number[]; groups:Array<{bot_id:number;group_openid:string}>; last_run_at:string|null; next_run_at:string; created_at:string; updated_at:string }
 
 export interface QQBatchPushPayload {
   bot_id: EntityId
