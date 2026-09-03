@@ -285,6 +285,95 @@ export interface SystemMetrics {
   worker: WorkerRuntimeMetric
   ai_worker?: WorkerRuntimeMetric
   xhs_worker?: WorkerRuntimeMetric
+  qq_worker?: WorkerRuntimeMetric
+}
+
+export type QQVerificationStatus = 'unverified' | 'valid' | 'invalid' | 'error'
+export type QQDeliveryStatus = 'queued' | 'sending' | 'retry_wait' | 'sent' | 'failed' | 'cancelled'
+
+export interface QQOverview {
+  total_bots: number
+  enabled_bots: number
+  enabled_targets: number
+  queued_deliveries: number
+  failed_deliveries: number
+  worker_status: string
+  worker_last_heartbeat: string | null
+}
+
+export interface QQBotAccount {
+  id: number
+  name: string
+  app_id: string
+  secret_hint: string
+  is_enabled: boolean
+  verification_status: QQVerificationStatus | string
+  last_verified_at: string | null
+  last_error: string | null
+  version: number
+  target_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface QQBotPayload {
+  name: string
+  app_id: string
+  app_secret?: string
+  is_enabled: boolean
+}
+
+export interface QQBotTestResult {
+  valid: boolean
+  verification_status: 'valid' | 'invalid' | 'error'
+  message: string
+  checked_at: string
+}
+
+export interface QQNotificationTarget {
+  id: number
+  bot_id: number
+  bot_name: string
+  name: string
+  group_openid: string
+  is_enabled: boolean
+  all_monitored_users: boolean
+  monitored_user_ids: number[]
+  message_template: string
+  created_at: string
+  updated_at: string
+}
+
+export interface QQTargetPayload {
+  bot_id: number
+  name: string
+  group_openid: string
+  is_enabled: boolean
+  all_monitored_users: boolean
+  monitored_user_ids: number[]
+  message_template: string
+}
+
+export interface QQDelivery {
+  id: number
+  target_id: number | null
+  source_tweet_id: number | null
+  kind: 'tweet' | 'test' | string
+  bot_name: string
+  bot_app_id: string
+  target_name: string
+  group_openid: string
+  message_body: string
+  status: QQDeliveryStatus | string
+  attempts: number
+  max_attempts: number
+  next_attempt_at: string
+  provider_message_id: string | null
+  last_error: string | null
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface SystemSettings {

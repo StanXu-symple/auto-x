@@ -30,6 +30,13 @@ import type {
   PaginatedResponse,
   PollingRun,
   PollingRunQuery,
+  QQBotAccount,
+  QQBotPayload,
+  QQBotTestResult,
+  QQDelivery,
+  QQNotificationTarget,
+  QQOverview,
+  QQTargetPayload,
   SystemMetrics,
   SystemSettings,
   Tweet,
@@ -139,6 +146,60 @@ export const systemApi = {
   },
   async updateSettings(payload: Partial<SystemSettings>) {
     return dataOf(await http.put<Wrapped<SystemSettings>>('/settings', payload))
+  },
+}
+
+export const qqApi = {
+  async overview() {
+    return dataOf(await http.get<Wrapped<QQOverview>>('/qq/overview'))
+  },
+  async bots() {
+    return dataOf(await http.get<Wrapped<QQBotAccount[]>>('/qq/bots'))
+  },
+  async createBot(payload: QQBotPayload & { app_secret: string }) {
+    return dataOf(await http.post<Wrapped<QQBotAccount>>('/qq/bots', payload))
+  },
+  async updateBot(id: EntityId, payload: Partial<QQBotPayload>) {
+    return dataOf(await http.patch<Wrapped<QQBotAccount>>(`/qq/bots/${id}`, payload))
+  },
+  async testBot(id: EntityId) {
+    return dataOf(await http.post<Wrapped<QQBotTestResult>>(`/qq/bots/${id}/test`))
+  },
+  async removeBot(id: EntityId) {
+    await http.delete(`/qq/bots/${id}`)
+  },
+  async targets() {
+    return dataOf(await http.get<Wrapped<QQNotificationTarget[]>>('/qq/targets'))
+  },
+  async createTarget(payload: QQTargetPayload) {
+    return dataOf(await http.post<Wrapped<QQNotificationTarget>>('/qq/targets', payload))
+  },
+  async updateTarget(id: EntityId, payload: Partial<QQTargetPayload>) {
+    return dataOf(
+      await http.patch<Wrapped<QQNotificationTarget>>(`/qq/targets/${id}`, payload),
+    )
+  },
+  async testTarget(id: EntityId) {
+    return dataOf(
+      await http.post<Wrapped<{ message: string; delivery_id: number }>>(
+        `/qq/targets/${id}/test`,
+      ),
+    )
+  },
+  async removeTarget(id: EntityId) {
+    await http.delete(`/qq/targets/${id}`)
+  },
+  async deliveries(params: { page?: number; page_size?: number; status?: string } = {}) {
+    return pageOf(
+      await http.get<Wrapped<PaginatedResponse<QQDelivery>>>('/qq/deliveries', { params }),
+    )
+  },
+  async retryDelivery(id: EntityId) {
+    return dataOf(
+      await http.post<Wrapped<{ message: string; delivery_id: number }>>(
+        `/qq/deliveries/${id}/retry`,
+      ),
+    )
   },
 }
 

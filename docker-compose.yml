@@ -55,6 +55,17 @@ x-backend: &backend-common
     XHS_WORKER_LOCK_TTL_SECONDS: ${XHS_WORKER_LOCK_TTL_SECONDS:-300}
     XHS_WORKER_HEARTBEAT_TTL_SECONDS: ${XHS_WORKER_HEARTBEAT_TTL_SECONDS:-30}
     XHS_REQUEST_TIMEOUT_SECONDS: ${XHS_REQUEST_TIMEOUT_SECONDS:-180}
+    QQ_AUTH_URL: ${QQ_AUTH_URL:-https://bots.qq.com/app/getAppAccessToken}
+    QQ_API_BASE_URL: ${QQ_API_BASE_URL:-https://api.sgroup.qq.com/}
+    QQ_REQUEST_TIMEOUT_SECONDS: ${QQ_REQUEST_TIMEOUT_SECONDS:-20}
+    QQ_WORKER_SCAN_INTERVAL_SECONDS: ${QQ_WORKER_SCAN_INTERVAL_SECONDS:-2}
+    QQ_WORKER_MAX_CONCURRENCY: ${QQ_WORKER_MAX_CONCURRENCY:-5}
+    QQ_WORKER_BATCH_SIZE: ${QQ_WORKER_BATCH_SIZE:-100}
+    QQ_WORKER_MAX_ATTEMPTS: ${QQ_WORKER_MAX_ATTEMPTS:-3}
+    QQ_WORKER_LOCK_TTL_SECONDS: ${QQ_WORKER_LOCK_TTL_SECONDS:-60}
+    QQ_WORKER_HEARTBEAT_TTL_SECONDS: ${QQ_WORKER_HEARTBEAT_TTL_SECONDS:-30}
+    QQ_WORKER_PORT: "8003"
+    QQ_WORKER_METRICS_PORT: "8004"
     DEFAULT_POLL_INTERVAL_SECONDS: ${DEFAULT_POLL_INTERVAL_SECONDS:-300}
     WORKER_SCAN_INTERVAL_SECONDS: ${WORKER_SCAN_INTERVAL_SECONDS:-2}
     WORKER_MAX_CONCURRENCY: ${WORKER_MAX_CONCURRENCY:-5}
@@ -313,6 +324,37 @@ services:
       retries: 5
       start_period: 20s
     stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512m
+        reservations:
+          memory: 128m
+
+  qq-worker:
+    <<: *backend-common
+    command:
+      - python
+      - -m
+      - app.qq_worker
+    expose:
+      - "8003"
+      - "8004"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, redis, urllib.request; u=os.getenv('REDIS_URL'); c=redis.Redis.from_url(u, socket_timeout=3) if u else redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), db=int(os.getenv('REDIS_DB', '0')), password=os.getenv('REDIS_PASSWORD') or None, socket_timeout=3); assert c.get('xsentinel:qq-worker:heartbeat'); urllib.request.urlopen('http://127.0.0.1:8004/metrics', timeout=3)"
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 45s
     deploy:
       resources:
         limits:

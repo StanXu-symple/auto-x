@@ -139,6 +139,12 @@ async def collect_system_metrics(session: AsyncSession, redis: Redis) -> dict[st
     except Exception as exc:
         xhs_worker_status = {"status": "unknown", "error": str(exc)[:300]}
 
+    qq_worker_status: dict[str, Any] = {"status": "offline"}
+    try:
+        qq_worker_status = await _worker_status(redis, "xsentinel:qq-worker:heartbeat")
+    except Exception as exc:
+        qq_worker_status = {"status": "unknown", "error": str(exc)[:300]}
+
     with process.oneshot():
         process_metrics = {
             "pid": process.pid,
@@ -171,4 +177,5 @@ async def collect_system_metrics(session: AsyncSession, redis: Redis) -> dict[st
         "worker": worker_status,
         "ai_worker": ai_worker_status,
         "xhs_worker": xhs_worker_status,
+        "qq_worker": qq_worker_status,
     }

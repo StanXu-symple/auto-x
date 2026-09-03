@@ -18,8 +18,9 @@ Browser -> Nginx / Vue -> FastAPI ---------> MySQL 8
                             +---- AI Worker ---+
                                      |
                                      +---------> 统一 AI 数据源
+                            +---- QQ Worker ----> NoneBot2 ----> 腾讯 QQ 开放平台
 
-Prometheus -> Nginx + FastAPI + both Workers + exporters -> Grafana
+Prometheus -> Nginx + FastAPI + Workers + exporters -> Grafana
 ```
 
 ## 为什么 API 与 Worker 分离
@@ -53,6 +54,14 @@ Prometheus -> Nginx + FastAPI + both Workers + exporters -> Grafana
 5. Worker 动态读取唯一 AI 数据源，把功能点与管理员维护的 Skill 作为可信编辑指令，把原 Post 和作者近期动态放入明确标记的不可信数据区，再调用 OpenAI Responses 兼容端点。
 6. 返回内容必须通过结构化输出校验；成功结果写入可编辑草稿，并保守更新作者身份、近期关注、动态关联、长期主题、证据与置信度；失败任务按配置退避重试，达到上限后保留错误状态供审计。
 7. 草稿始终需要人工核验和后续操作，系统不包含自动发布到 X 的步骤。
+
+## QQ 通知流程
+
+1. 管理员在 Sentinel 配置一个或多个 QQ 机器人，并为每个机器人创建多个群目标。
+2. 群目标可以订阅全部监听账号或指定账号；AppSecret 加密写入 MySQL，API 永不返回明文。
+3. 新推文入库时，同一 MySQL 事务创建幂等 QQ Delivery Outbox 行；提交后将 Delivery ID 写入 Redis List 唤醒 Worker。
+4. 独立 QQ Worker 同时消费 Redis 通知并扫描数据库到期任务，Redis 短暂故障不会丢失投递。
+5. Worker 使用数据库 claim token、Redis 锁和租约避免重复发送，通过 NoneBot2 官方 QQ 适配器投递，并持久化成功、失败和指数退避重试状态。
 
 ## 数据模型
 

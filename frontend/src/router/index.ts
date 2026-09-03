@@ -60,6 +60,12 @@ const router = createRouter({
           meta: { title: '小红书发布', description: '管理登录连接、图文内容与自动或延迟发布策略' },
         },
         {
+          path: 'qq-notifications',
+          name: 'qq-notifications',
+          component: () => import('@/views/QQNotificationsView.vue'),
+          meta: { title: 'QQ 推送', description: '管理腾讯 QQ 官方机器人、群目标与投递记录' },
+        },
+        {
           path: 'polling-logs',
           name: 'polling-logs',
           component: () => import('@/views/PollingLogsView.vue'),

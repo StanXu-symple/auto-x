@@ -25,6 +25,7 @@ from app.models.polling_log import PollingLog
 from app.models.tweet import Tweet
 from app.services.ai_jobs import enqueue_jobs_for_x_tweet_ids
 from app.services.metrics import POLL_DURATION, POLL_RUNS, TWEETS_INGESTED
+from app.services.qq_notifications import create_tweet_deliveries, enqueue_qq_delivery_ids
 from app.services.settings_service import effective_interval, get_polling_settings
 from app.services.x_client import TweetBatch, XAPIError, XRateLimitError, XUser
 from app.services.x_source_client import XSourceClient
@@ -80,6 +81,7 @@ class CommitResult:
     status: str
     tweets_inserted: int = 0
     applied: bool = False
+    qq_delivery_ids: list[int] | None = None
 
 
 @dataclass(slots=True)
@@ -202,6 +204,8 @@ class PollingService:
                 lock_token=lock_token,
                 lost_lock=lost_lock,
             )
+            if result.qq_delivery_ids:
+                await enqueue_qq_delivery_ids(self.redis, result.qq_delivery_ids)
             self._observe_result(result.status, claim.trigger, started_perf)
             if result.tweets_inserted:
                 TWEETS_INGESTED.inc(result.tweets_inserted)
@@ -424,6 +428,11 @@ class PollingService:
             # The generation job is an idempotent DB outbox row committed atomically
             # with tweet ingestion; a crash cannot leave a persisted tweet half-enqueued.
             await enqueue_jobs_for_x_tweet_ids(session, newly_inserted_x_ids)
+            qq_delivery_ids = await create_tweet_deliveries(
+                session,
+                newly_inserted_x_ids,
+                max_attempts=self.settings.qq_worker_max_attempts,
+            )
             if resolved_user is not None:
                 user.x_user_id = resolved_user.id
                 user.display_name = resolved_user.name
@@ -462,7 +471,12 @@ class PollingService:
                 tweets_fetched=batch.result_count,
                 tweets_inserted=inserted,
             )
-            return CommitResult(status="success", tweets_inserted=inserted, applied=True)
+            return CommitResult(
+                status="success",
+                tweets_inserted=inserted,
+                applied=True,
+                qq_delivery_ids=qq_delivery_ids,
+            )
 
     async def _handle_failure(
         self,

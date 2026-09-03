@@ -23,6 +23,8 @@ dependencies = [
   "prometheus-client>=0.21,<1.0",
   "psutil>=6.1,<8.0",
   "python-multipart>=0.0.20,<1.0",
+  "nonebot2[fastapi,httpx]>=2.5,<3.0",
+  "nonebot-adapter-qq>=1.7,<2.0",
 ]
 
 [project.optional-dependencies]

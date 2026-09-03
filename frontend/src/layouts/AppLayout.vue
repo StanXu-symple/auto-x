@@ -5,6 +5,7 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   Activity,
   Bell,
+  Bot,
   BrainCircuit,
   ChevronDown,
   FileClock,
@@ -51,6 +52,7 @@ const navigation = [
   { label: 'AI 数据源', to: '/ai-data-source', icon: BrainCircuit },
   { label: 'AI 创作', to: '/ai-writing', icon: Sparkles },
   { label: '小红书发布', to: '/xiaohongshu', icon: NotebookPen },
+  { label: 'QQ 推送', to: '/qq-notifications', icon: Bot },
   { label: '轮询记录', to: '/polling-logs', icon: FileClock },
   { label: '系统与设置', to: '/settings', icon: Settings },
 ]

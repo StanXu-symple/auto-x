@@ -8,12 +8,13 @@
 | API | `backend` | 仅容器网络 `8000` | FastAPI 与 API Prometheus 指标 |
 | 轮询进程 | `worker` | 仅容器网络 `8001` | 调度、X 请求、Worker 指标 |
 | AI 生成进程 | `ai-worker` | 仅容器网络 `8002` | AI 任务、provider 请求与 Worker 指标 |
+| QQ 投递进程 | `qq-worker` | 仅容器网络 `8003` / `8004` | NoneBot2 运行端点与 QQ 投递指标 |
 | MySQL | `mysql` | 不映射 | 持久业务数据 |
 | Redis | `redis` | 不映射 | 锁、心跳、触发标记 |
 | Prometheus | `prometheus` | `127.0.0.1:9090` | monitoring profile |
 | Grafana | `grafana` | `127.0.0.1:3000` | monitoring profile |
 
-管理台、Prometheus 与 Grafana 的宿主机端口可通过 `.env` 调整；API 和两个 Worker 的容器内指标端口固定为 `8000`、`8001`、`8002`。除非已有防火墙、认证和 TLS 保护，不要把 MySQL、Redis、Worker 指标或 Prometheus 暴露到公网。
+管理台、Prometheus 与 Grafana 的宿主机端口可通过 `.env` 调整；API、轮询、AI 与 QQ Worker 的容器内端口固定为 `8000`、`8001`、`8002`、`8003/8004`。除非已有防火墙、认证和 TLS 保护，不要把 MySQL、Redis、Worker 指标或 Prometheus 暴露到公网。
 
 ## 上线流程
 
@@ -31,10 +32,10 @@ make prod-up
 docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml ps
 curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/api/v1/health/ready
-docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml logs --tail=100 backend worker ai-worker
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml logs --tail=100 backend worker ai-worker qq-worker
 ```
 
-`docker-compose.prod.yml` 会启用生产环境密钥校验和更严格的资源配置。每次启动都会先运行一次性 `migrate` 服务；只有 `alembic upgrade head` 成功后 API、轮询 Worker 与 AI Worker 才会启动。生产升级前先执行备份，再构建新镜像：
+`docker-compose.prod.yml` 会启用生产环境密钥校验和更严格的资源配置。每次启动都会先运行一次性 `migrate` 服务；只有 `alembic upgrade head` 成功后 API 与各 Worker 才会启动。生产升级前先执行备份，再构建新镜像：
 
 ```bash
 make prod-backup
@@ -67,11 +68,11 @@ make external-down ENV_FILE=.env.external
 
 - `/api/v1/health/live`：API 进程是否存活。
 - `/api/v1/health/ready`：API、MySQL 与 Redis 是否可服务。
-- 管理台“系统设置”页：CPU、内存、磁盘、进程、MySQL、Redis、轮询 Worker 与 AI Worker 心跳。
-- Prometheus：抓取前端 Nginx、API、两个 Worker、MySQL、Redis 和宿主机 exporter。
+- 管理台“系统设置”页：CPU、内存、磁盘、进程、MySQL、Redis、轮询 Worker、AI Worker 与 QQ Worker 心跳；页面每分钟自动刷新。
+- Prometheus：抓取前端 Nginx、API、轮询/AI/QQ Worker、MySQL、Redis 和宿主机 exporter。
 - Grafana：预置 `X Sentinel Overview` Dashboard。
 
-预置 Prometheus 规则覆盖目标离线、两个 Worker 心跳、轮询失败率/积压、AI 失败率/队列积压、API 5xx、主机内存/磁盘、MySQL 连接数和 Redis 内存。规则会出现在 Prometheus/Grafana，但项目没有预设外部通知接收方；生产环境应配置 Alertmanager 或 Grafana Contact Point。管理台的系统页仍会直接检查 API 所连接的 MySQL、Redis 和 Worker。
+预置 Prometheus 规则覆盖目标离线、Worker 心跳、轮询/AI/QQ 失败率与积压、API 5xx、主机内存/磁盘、MySQL 连接数和 Redis 内存。规则会出现在 Prometheus/Grafana，但项目没有预设外部通知接收方；生产环境应配置 Alertmanager 或 Grafana Contact Point。管理台的系统页仍会直接检查 API 所连接的 MySQL、Redis 和 Worker。
 
 Worker 容器还在运行但管理台显示心跳过期时，优先查看：
 
@@ -147,11 +148,11 @@ make prod-restore BACKUP=backups/20260831T120000Z CONFIRM_RESTORE=yes
 4. 重建目标 MySQL 数据库并导入 dump，把 Redis RDB 安装为 Redis 7 AOF base 文件。
 5. 验证 Redis 备份标记，应用当前 Alembic 迁移，再重启应用。
 
-恢复完成后检查账号数量、最近 Post、AI 任务/草稿、最近轮询记录和两个 Worker 心跳。
+恢复完成后检查账号数量、最近 Post、AI 任务/草稿、QQ 投递、最近轮询记录和各 Worker 心跳。
 
 ## 数据库迁移
 
-项目同时提供开发期自动建表和 Alembic。开发环境可保留 `AUTO_CREATE_TABLES=true`；生产覆盖配置强制关闭自动建表，并在启动 API/两个 Worker 前通过 `migrate` 一次性服务执行迁移：
+项目同时提供开发期自动建表和 Alembic。开发环境可保留 `AUTO_CREATE_TABLES=true`；生产覆盖配置强制关闭自动建表，并在启动 API/Worker 前通过 `migrate` 一次性服务执行迁移：
 
 ```bash
 make migrate
@@ -178,7 +179,7 @@ MySQL 官方镜像的 `MYSQL_*` 初始化变量只在空数据目录第一次启
 
 ```bash
 # 应用日志
-docker compose logs -f --tail=200 backend worker ai-worker frontend
+docker compose logs -f --tail=200 backend worker ai-worker qq-worker frontend
 
 # 数据库日志
 docker compose logs --tail=200 mysql

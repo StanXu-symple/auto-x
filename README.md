@@ -13,6 +13,7 @@
 - 内置 AI Skill、手动/自动生成队列与可编辑草稿，统一使用一个 OpenAI 兼容账号
 - AI 任务幂等、重试、请求/响应审计和独立 Worker，不会自动发布到 X
 - 小红书 MCP 扫码登录、图文编辑，以及手动、立即自动和延迟发布队列
+- 腾讯 QQ 官方机器人适配，支持多机器人、多群目标和按监听账号分流
 - 每次轮询的状态、耗时、读取数、新增数和错误审计
 - CPU、内存、磁盘、负载、进程运行时间监控
 - MySQL、Redis、API、Worker 心跳状态监控
@@ -30,8 +31,9 @@ Vue 3 / Nginx -> FastAPI -----------> MySQL
                     ^                  |
                     +---- AI Worker ---+----> 统一 AI 数据源
                     +---- XHS Worker ------> xiaohongshu-mcp -> 小红书
+                    +---- QQ Worker -------> NoneBot2 -> 腾讯 QQ 开放平台
 
-Prometheus -> Nginx + API + both Workers + exporters -> Grafana
+Prometheus -> Nginx + API + Workers + exporters -> Grafana
 ```
 
 详细设计见 [架构说明](docs/ARCHITECTURE.md)，X 官方接口见 [X API 接入说明](docs/X_API.md)，小红书部署和账号风险见 [小红书接入说明](docs/XIAOHONGSHU.md)。
@@ -106,6 +108,12 @@ AI API Key 使用服务端凭据加密密钥持久化到 MySQL，Redis 只缓存
 
 小红书功能默认关闭。先启动开源 `xiaohongshu-mcp` 执行端，再进入“小红书发布”配置 MCP 地址、可选访问令牌并扫码登录。系统支持文章草稿、立即自动发布和延迟发布，独立 `xhs-worker` 负责重试、每日上限与审计。Cookie 只保存在 MCP 执行端，不会写入本项目的 MySQL 或 Redis。Docker 用户可执行 `docker compose --profile xiaohongshu up -d`，详细步骤见 [小红书接入说明](docs/XIAOHONGSHU.md)。
 
+## QQ 群推送
+
+进入“QQ 推送”添加腾讯 QQ 开放平台 AppID/AppSecret，再创建一个或多个群目标。AppSecret 使用 `X_TOKEN_ENCRYPTION_KEY` 加密写入 MySQL；新推文与 QQ 投递 Outbox 在同一事务提交，独立 `qq-worker` 通过 Redis 唤醒并使用 NoneBot2 `nonebot-adapter-qq` 发送，Redis 故障时会扫描 MySQL 恢复。投递状态、平台错误和重试过程可在管理台追踪。
+
+腾讯 QQ 开放平台自 2025-04-21 起不再提供通用主动消息能力。只有实际获得对应群主动消息权限的机器人才能完成自动投递；AppID/AppSecret 验证通过不代表该权限已开通。
+
 ## 使用外部 MySQL 与 Redis
 
 项目包含专用覆盖配置，示例已填写 `10.211.55.30:3306` 和 `10.211.55.30:6537`，Redis 密码留空：
@@ -161,8 +169,8 @@ Worker 会在每次用户名解析和时间线读取前从 MySQL 获取当前数
 # 查看状态
 docker compose ps
 
-# 跟踪 API 与两个 Worker 日志
-docker compose logs -f backend worker ai-worker
+# 跟踪 API 与 Worker 日志
+docker compose logs -f backend worker ai-worker qq-worker
 
 # 重启 Worker
 docker compose restart worker
@@ -246,7 +254,7 @@ make logs
 ## 目录结构
 
 ```text
-backend/                  FastAPI、数据模型、X/AI 适配器与两个 Worker
+backend/                  FastAPI、数据模型、X/AI/QQ 适配器与独立 Worker
 frontend/                 Vue 3 管理台与生产 Nginx 镜像
 infra/
   grafana/                数据源与 Dashboard provisioning

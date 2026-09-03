@@ -55,3 +55,21 @@ AI_WORKER_HEARTBEAT = Gauge(
     "x_sentinel_ai_worker_heartbeat_timestamp_seconds",
     "Unix timestamp of the AI worker's latest heartbeat",
 )
+QQ_DELIVERIES = Counter(
+    "x_sentinel_qq_deliveries_total",
+    "QQ notification delivery outcomes",
+    ["status"],
+)
+QQ_DELIVERY_DURATION = Histogram(
+    "x_sentinel_qq_delivery_duration_seconds",
+    "Duration of QQ notification delivery attempts",
+    ["status"],
+)
+QQ_QUEUE_DUE = Gauge(
+    "x_sentinel_qq_queue_due",
+    "Number of QQ notification deliveries due at the last worker scan",
+)
+QQ_WORKER_HEARTBEAT_METRIC = Gauge(
+    "x_sentinel_qq_worker_heartbeat_timestamp_seconds",
+    "Unix timestamp of the QQ worker's latest heartbeat",
+)

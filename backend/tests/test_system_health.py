@@ -71,6 +71,7 @@ async def test_system_metrics_degrade_without_crashing() -> None:
     assert result["worker"]["status"] == "unknown"
     assert result["ai_worker"]["status"] == "unknown"
     assert result["xhs_worker"]["status"] == "unknown"
+    assert result["qq_worker"]["status"] == "unknown"
     assert result["memory"]["total_bytes"] > 0
 
 
@@ -93,3 +94,4 @@ async def test_system_metrics_include_service_and_worker_resources() -> None:
     assert result["worker"]["cpu_percent"] == 12.5
     assert result["ai_worker"]["memory_percent"] == 25
     assert result["xhs_worker"]["status"] == "online"
+    assert result["qq_worker"]["status"] == "online"

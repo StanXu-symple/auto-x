@@ -43,11 +43,15 @@ const trend = computed<PollingTrendPoint[]>(() => {
 })
 const services = computed<ServiceHealth[]>(() => {
   const server = summary.value?.server
-  if (server) return [
-    { name: 'MySQL 数据库', status: server.database.status, latency_ms: server.database.latency_ms, message: server.database.error },
-    { name: 'Redis 缓存', status: server.redis.status, latency_ms: server.redis.latency_ms, message: server.redis.error },
-    { name: '轮询 Worker', status: server.worker.status, message: server.worker.error },
-  ]
+  if (server) {
+    const values = [
+      { name: 'MySQL 数据库', status: server.database.status, latency_ms: server.database.latency_ms, message: server.database.error },
+      { name: 'Redis 缓存', status: server.redis.status, latency_ms: server.redis.latency_ms, message: server.redis.error },
+      { name: '轮询 Worker', status: server.worker.status, message: server.worker.error },
+    ]
+    if (server.qq_worker) values.push({ name: 'QQ Worker', status: server.qq_worker.status, message: server.qq_worker.error })
+    return values
+  }
   return [
     { name: 'API 服务', status: summary.value ? 'healthy' : 'unknown' },
     { name: '任务调度器', status: summary.value ? 'healthy' : 'unknown' },

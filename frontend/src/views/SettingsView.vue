@@ -6,6 +6,7 @@ import {
   Clock3,
   Cpu,
   Database,
+  Bot,
   FileCode2,
   HardDrive,
   MemoryStick,
@@ -55,6 +56,7 @@ const services = computed<ServiceHealth[]>(() => {
   ]
   if (metrics.value.ai_worker) values.push({ name: 'AI Worker', status: metrics.value.ai_worker.status, message: metrics.value.ai_worker.error })
   if (metrics.value.xhs_worker) values.push({ name: '小红书 Worker', status: metrics.value.xhs_worker.status, message: metrics.value.xhs_worker.error })
+  if (metrics.value.qq_worker) values.push({ name: 'QQ Worker', status: metrics.value.qq_worker.status, message: metrics.value.qq_worker.error })
   return values
 })
 
@@ -67,6 +69,7 @@ const serviceResources = computed(() => {
     { name: '轮询 Worker', description: '进程 RSS 内存', icon: Workflow, metric: current.worker },
     ...(current.ai_worker ? [{ name: 'AI Worker', description: '进程 RSS 内存', icon: Sparkles, metric: current.ai_worker }] : []),
     ...(current.xhs_worker ? [{ name: '小红书 Worker', description: '进程 RSS 内存', icon: Activity, metric: current.xhs_worker }] : []),
+    ...(current.qq_worker ? [{ name: 'QQ Worker', description: '进程 RSS 内存', icon: Bot, metric: current.qq_worker }] : []),
   ]
 })
 
@@ -278,6 +281,11 @@ onBeforeUnmount(() => window.clearInterval(timer))
             <span><Activity :size="17" /></span>
             <div><strong>小红书 Worker</strong><small>最后心跳 {{ formatDateTime(metrics.xhs_worker.last_heartbeat || metrics.xhs_worker.timestamp) }}<template v-if="metrics.xhs_worker.ttl_seconds != null"> · TTL {{ metrics.xhs_worker.ttl_seconds }} 秒</template><template v-if="metrics.xhs_worker.active_tasks != null"> · 活跃任务 {{ metrics.xhs_worker.active_tasks }}</template></small></div>
             <StatusBadge :status="metrics.xhs_worker.status || 'unknown'" />
+          </div>
+          <div v-if="metrics?.qq_worker" class="worker-heartbeat">
+            <span><Bot :size="17" /></span>
+            <div><strong>QQ Worker</strong><small>最后心跳 {{ formatDateTime(metrics.qq_worker.last_heartbeat || metrics.qq_worker.timestamp) }}<template v-if="metrics.qq_worker.ttl_seconds != null"> · TTL {{ metrics.qq_worker.ttl_seconds }} 秒</template><template v-if="metrics.qq_worker.active_tasks != null"> · 活跃任务 {{ metrics.qq_worker.active_tasks }}</template></small></div>
+            <StatusBadge :status="metrics.qq_worker.status || 'unknown'" />
           </div>
         </article>
       </div>

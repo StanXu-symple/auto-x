@@ -25,3 +25,4 @@ class SystemMetricsResponse(APIModel):
     worker: dict[str, Any]
     ai_worker: dict[str, Any]
     xhs_worker: dict[str, Any]
+    qq_worker: dict[str, Any]

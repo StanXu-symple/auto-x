@@ -72,6 +72,26 @@ services:
         reservations:
           memory: 192m
 
+  qq-worker:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      STARTUP_STRICT: "true"
+      AUTO_CREATE_TABLES: "false"
+      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
+      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
+      REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD-}
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512m
+        reservations:
+          memory: 128m
+
   frontend:
     restart: always
     deploy:

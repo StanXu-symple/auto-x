@@ -17,6 +17,10 @@ from app.models import (  # noqa: F401
     AppSetting,
     MonitoredUser,
     PollingLog,
+    QQBotAccount,
+    QQDelivery,
+    QQNotificationTarget,
+    QQTargetSubscription,
     Tweet,
     XCredential,
 )

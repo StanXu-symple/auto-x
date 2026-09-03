@@ -87,6 +87,18 @@ class Settings(BaseSettings):
     xhs_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
     xhs_request_timeout_seconds: float = Field(default=180.0, ge=10, le=600)
 
+    qq_auth_url: str = "https://bots.qq.com/app/getAppAccessToken"
+    qq_api_base_url: str = "https://api.sgroup.qq.com/"
+    qq_request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    qq_worker_scan_interval_seconds: float = Field(default=2.0, ge=0.5, le=60)
+    qq_worker_max_concurrency: int = Field(default=5, ge=1, le=50)
+    qq_worker_batch_size: int = Field(default=100, ge=1, le=1000)
+    qq_worker_max_attempts: int = Field(default=3, ge=1, le=10)
+    qq_worker_lock_ttl_seconds: int = Field(default=60, ge=15, le=600)
+    qq_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
+    qq_worker_port: int = Field(default=8003, ge=0, le=65535)
+    qq_worker_metrics_port: int = Field(default=8004, ge=0, le=65535)
+
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
     @model_validator(mode="after")
