@@ -15,6 +15,11 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Development deployments may have created this table through
+    # SQLAlchemy's AUTO_CREATE_TABLES before the migration container ran.
+    # Treat that state as already applied so it cannot block the backend.
+    if sa.inspect(op.get_bind()).has_table("qq_joined_groups"):
+        return
     op.create_table(
         "qq_joined_groups",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
