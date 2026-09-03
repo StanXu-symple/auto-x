@@ -354,7 +354,8 @@ class QQDeliveryWorker:
 
     @staticmethod
     def _next_task_run(task: QQScheduledTask, now: datetime) -> datetime:
-        hour, minute, second = map(int, task.run_time.split(":"))
+        time_parts = [int(part) for part in task.run_time.split(":")]
+        hour, minute, second = (*time_parts, 0)[:3]
         candidate = now.replace(hour=hour, minute=minute, second=second, microsecond=0)
         if task.frequency == "secondly": return now + timedelta(seconds=task.interval_value)
         if task.frequency == "minutely": return now.replace(second=second, microsecond=0) + timedelta(minutes=task.interval_value)

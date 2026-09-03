@@ -549,9 +549,11 @@ async def batch_push(
     )
 
 def _task_out(task: QQScheduledTask, bot_ids: list[int], groups: list[dict]) -> QQScheduledTaskOut:
+    run_time = task.run_time if task.run_time.count(":") == 2 else f"{task.run_time}:00"
     return QQScheduledTaskOut.model_validate(
         {
             **task.__dict__,
+            "run_time": run_time,
             "weekdays": [int(item) for item in task.weekdays.split(",") if item],
             "bot_ids": bot_ids,
             "groups": groups,
