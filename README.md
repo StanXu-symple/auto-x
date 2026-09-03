@@ -118,7 +118,7 @@ AI API Key 使用服务端凭据加密密钥持久化到 MySQL，Redis 只缓存
 
 添加群目标时，先选择发送机器人，再从“选择已加入的群”下拉框选择群；OpenID 自动填入，群名称可作为本地备注修改。列表按 AppID 隔离，来自 MySQL 保存的入群和群消息事件，收到退群事件后移除，重复或乱序事件不会恢复旧状态。它是已观察到的群列表，不是 QQ 全量历史群列表；此前已加入的群可在群里 @ 一次机器人后刷新，也可切换“手动填写”。入群事件不包含群名，未命名的群显示 OpenID。
 
-事件接入：每个机器人的 QQ 开放平台后台需配置公网 HTTPS 回调地址 `https://你的域名/qq/webhook`，完成平台验证，并订阅机器人入群、退群和群 @ 消息事件。前端 Nginx 已将该路径转发到 `qq-worker:8003`，NoneBot QQ 适配器按 AppID 和 AppSecret 验签。需运行 `qq-worker`；新增、停用或修改机器人的接入配置约 15 秒内同步。部署更新时执行 `alembic upgrade head`（新增 `0010_qq_joined_groups`），再更新后端、QQ Worker 和前端；本地开发的同一路径代理到 `localhost:8003`。
+事件接入：每个机器人的 QQ 开放平台后台需配置公网 HTTPS 回调地址 `https://你的域名/qq/webhook`，完成平台验证，并订阅机器人入群、退群和群 @ 消息事件。前端 Nginx 已将该路径转发到 `qq-worker:8003`，NoneBot QQ 适配器按 AppID 和 AppSecret 验签。`qq-worker` 使用 QQ Gateway WebSocket 保持已启用机器人在线，并同时提供 Webhook；新增、停用或修改机器人的接入配置约 15 秒内同步。若 QQ 后台仍显示离线，先确认 `qq-worker` 正常运行、开放平台已开启对应 Gateway 事件权限，以及容器可以访问 `api.sgroup.qq.com`。部署更新时执行 `alembic upgrade head`（新增 `0010_qq_joined_groups`），再更新后端、QQ Worker 和前端；本地开发的同一路径代理到 `localhost:8003`。
 
 ## 使用外部 MySQL 与 Redis
 

@@ -118,14 +118,18 @@ async def load_inbound_bot_infos() -> list[BotInfo]:
                 id=row.app_id,
                 token="",
                 secret=secret,
-                use_websocket=False,
+                # Keep the long-lived gateway connection online. The same
+                # BotInfo is also accepted by the webhook handler.
+                use_websocket=True,
                 intent=Intents(c2c_group_at_messages=True),
             )
         )
     return result
 
 
-async def refresh_inbound_bots(adapter: QQAdapter) -> None:
+async def refresh_inbound_bots(
+    adapter: QQAdapter, websocket_started: set[str] | None = None
+) -> None:
     infos = await load_inbound_bot_infos()
     configured = {info.id: info for info in infos}
     adapter.qq_config.qq_bots = infos
@@ -135,6 +139,18 @@ async def refresh_inbound_bots(adapter: QQAdapter) -> None:
         info = configured.get(bot.self_id)
         if info is None or bot.bot_info.secret != info.secret:
             adapter.bot_disconnect(bot)
+    if websocket_started is None:
+        return
+    for info in infos:
+        if info.id in websocket_started:
+            continue
+        before = set(adapter.tasks)
+        await adapter.run_bot_websocket(info)
+        # run_bot_websocket creates one or more reconnecting tasks. Mark the
+        # AppID only when at least one task was actually created, so a failed
+        # gateway lookup is retried by the next sync pass.
+        if set(adapter.tasks) - before:
+            websocket_started.add(info.id)
 
 
 RELEASE_LOCK_SCRIPT = """
@@ -500,7 +516,9 @@ def main() -> None:
     if settings.qq_worker_metrics_port:
         start_http_server(settings.qq_worker_metrics_port, addr="0.0.0.0")
     nonebot.init(
-        driver="~fastapi+~httpx",
+        # FastAPI serves QQ webhooks; httpx handles REST calls and the
+        # websockets driver keeps each authorized bot online on the gateway.
+        driver="~fastapi+~httpx+~websockets",
         host="0.0.0.0",
         port=settings.qq_worker_port,
         qq_api_base=settings.qq_api_base_url,
@@ -515,13 +533,14 @@ def main() -> None:
     worker = QQDeliveryWorker(settings, sender)
     worker_task: asyncio.Task[None] | None = None
     inbound_sync_task: asyncio.Task[None] | None = None
+    websocket_started: set[str] = set()
 
     @driver.on_startup
     async def start_worker() -> None:
         nonlocal inbound_sync_task, worker_task
         await worker.check_dependencies()
         try:
-            await refresh_inbound_bots(get_adapter(QQAdapter))
+            await refresh_inbound_bots(get_adapter(QQAdapter), websocket_started)
         except Exception:
             logger.exception("Unable to load QQ bot accounts for inbound events")
         # Keep the adapter's webhook allow-list in sync with the UI-managed
@@ -529,7 +548,7 @@ def main() -> None:
         async def sync_inbound_bots() -> None:
             while not worker.stop_event.is_set():
                 try:
-                    await refresh_inbound_bots(get_adapter(QQAdapter))
+                    await refresh_inbound_bots(get_adapter(QQAdapter), websocket_started)
                 except Exception:
                     logger.exception("Unable to load QQ bot accounts for inbound events")
                 try:
