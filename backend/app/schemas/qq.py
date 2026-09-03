@@ -200,7 +200,7 @@ class QQBatchPushAccepted(APIModel):
 class QQScheduledTaskCreate(APIModel):
     name: str = Field(min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=2000)
-    frequency: Literal["daily", "weekly", "monthly"] = "daily"
+    frequency: Literal["secondly", "minutely", "hourly", "daily", "weekly", "monthly"] = "daily"
     run_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$")
     weekdays: list[int] = Field(default_factory=list, max_length=7)
     month_day: int | None = Field(default=None, ge=1, le=31)
