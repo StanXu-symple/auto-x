@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     startup_strict: bool = False
     auto_create_tables: bool = True
+    app_timezone: str = "Asia/Shanghai"
 
     mysql_dsn: str = ""
     mysql_host: str = "mysql"

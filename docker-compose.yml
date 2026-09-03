@@ -18,6 +18,7 @@ x-backend: &backend-common
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
     STARTUP_STRICT: ${STARTUP_STRICT:-true}
     AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-true}
+    APP_TIMEZONE: ${TZ:-Asia/Shanghai}
     MYSQL_DSN: ${MYSQL_DSN:-}
     MYSQL_HOST: ${MYSQL_HOST:-mysql}
     MYSQL_PORT: ${MYSQL_PORT:-3306}

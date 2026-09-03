@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import calendar
 import json
 import logging
 import os
@@ -36,7 +35,15 @@ from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
 from app.core.time import as_utc
 from app.db.session import AsyncSessionFactory, engine
-from app.models.qq import QQBotAccount, QQDelivery, QQJoinedGroup, QQNotificationTarget, QQScheduledTask, QQScheduledTaskBot, QQScheduledTaskGroup
+from app.models.qq import (
+    QQBotAccount,
+    QQDelivery,
+    QQJoinedGroup,
+    QQNotificationTarget,
+    QQScheduledTask,
+    QQScheduledTaskBot,
+    QQScheduledTaskGroup,
+)
 from app.services.metrics import (
     QQ_DELIVERIES,
     QQ_DELIVERY_DURATION,
@@ -51,6 +58,7 @@ from app.services.qq_notifications import (
     decrypt_app_secret,
     delivery_message_id,
 )
+from app.services.qq_schedule import next_qq_task_run
 
 logger = logging.getLogger(__name__)
 
@@ -340,40 +348,71 @@ class QQDeliveryWorker:
     async def _schedule_tasks(self) -> None:
         now = datetime.now(UTC)
         async with AsyncSessionFactory() as session, session.begin():
-            tasks = list(await session.scalars(select(QQScheduledTask).where(QQScheduledTask.is_enabled.is_(True), QQScheduledTask.next_run_at <= now).with_for_update()))
+            tasks = list(
+                await session.scalars(
+                    select(QQScheduledTask)
+                    .where(
+                        QQScheduledTask.is_enabled.is_(True),
+                        QQScheduledTask.next_run_at <= now,
+                    )
+                    .with_for_update()
+                )
+            )
             for task in tasks:
-                bots = list(await session.scalars(select(QQScheduledTaskBot.bot_id).where(QQScheduledTaskBot.task_id == task.id)))
-                groups = list((await session.execute(select(QQScheduledTaskGroup.bot_id, QQScheduledTaskGroup.group_openid).where(QQScheduledTaskGroup.task_id == task.id))).tuples())
+                bots = set(
+                    await session.scalars(
+                        select(QQScheduledTaskBot.bot_id).where(
+                            QQScheduledTaskBot.task_id == task.id
+                        )
+                    )
+                )
+                groups = list(
+                    (
+                        await session.execute(
+                            select(
+                                QQScheduledTaskGroup.bot_id,
+                                QQScheduledTaskGroup.group_openid,
+                            ).where(QQScheduledTaskGroup.task_id == task.id)
+                        )
+                    ).tuples()
+                )
                 for bot_id, group in groups:
-                    if bot_id not in bots: continue
+                    if bot_id not in bots:
+                        continue
                     bot = await session.get(QQBotAccount, bot_id)
                     if bot and bot.is_enabled:
-                        session.add(QQDelivery(task_id=task.id, target_id=None, source_tweet_id=None, kind="scheduled", idempotency_key=f"scheduled:{task.id}:{now.isoformat()}:{bot_id}:{group}", bot_name=bot.name, bot_app_id=bot.app_id, bot_version=bot.version, target_name=group, group_openid=group, message_body=task.message, status="queued", attempts=0, max_attempts=self.settings.qq_worker_max_attempts, next_attempt_at=now))
+                        session.add(
+                            QQDelivery(
+                                task_id=task.id,
+                                target_id=None,
+                                source_tweet_id=None,
+                                kind="scheduled",
+                                idempotency_key=(
+                                    f"scheduled:{task.id}:{now.isoformat()}:"
+                                    f"{bot_id}:{group}"
+                                ),
+                                bot_name=bot.name,
+                                bot_app_id=bot.app_id,
+                                bot_version=bot.version,
+                                target_name=group,
+                                group_openid=group,
+                                message_body=task.message,
+                                status="queued",
+                                attempts=0,
+                                max_attempts=self.settings.qq_worker_max_attempts,
+                                next_attempt_at=now,
+                            )
+                        )
                 task.last_run_at = now
-                task.next_run_at = self._next_task_run(task, now)
-
-    @staticmethod
-    def _next_task_run(task: QQScheduledTask, now: datetime) -> datetime:
-        time_parts = [int(part) for part in task.run_time.split(":")]
-        hour, minute, second = (*time_parts, 0)[:3]
-        candidate = now.replace(hour=hour, minute=minute, second=second, microsecond=0)
-        if task.frequency == "secondly": return now + timedelta(seconds=task.interval_value)
-        if task.frequency == "minutely": return now.replace(second=second, microsecond=0) + timedelta(minutes=task.interval_value)
-        if task.frequency == "hourly": return now.replace(minute=minute, second=second, microsecond=0) + timedelta(hours=task.interval_value)
-        if task.frequency == "weekly":
-            days = {int(item) for item in task.weekdays.split(",") if item}
-            days = days or {candidate.isoweekday()}
-            for offset in range(1, 8):
-                value = candidate + timedelta(days=offset)
-                if value.isoweekday() in days:
-                    return value
-        if task.frequency == "monthly":
-            month = candidate.month + (1 if candidate <= now else 0)
-            year = candidate.year + (month - 1) // 12
-            month = (month - 1) % 12 + 1
-            day = min(task.month_day or 1, calendar.monthrange(year, month)[1])
-            return candidate.replace(year=year, month=month, day=day)
-        return candidate + timedelta(days=1 if candidate <= now else 0)
+                task.next_run_at = next_qq_task_run(
+                    frequency=task.frequency,
+                    interval_value=task.interval_value,
+                    run_time=task.run_time,
+                    weekdays=task.weekdays,
+                    month_day=task.month_day,
+                    now=now,
+                    timezone_name=self.settings.app_timezone,
+                )
 
     async def process_delivery(self, delivery_id: int) -> bool:
         lock_key = f"xsentinel:qq:lock:{delivery_id}"

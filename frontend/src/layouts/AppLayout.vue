@@ -45,17 +45,27 @@ const passwordForm = reactive({ current: '', next: '', confirm: '' })
 const now = ref(new Date())
 
 const navigation = [
-  { label: '仪表盘', to: '/dashboard', icon: Gauge },
-  { label: '监听账号', to: '/accounts', icon: UsersRound },
-  { label: '内容流', to: '/tweets', icon: MessageSquareText },
-  { label: 'X 数据源', to: '/x-authorization', icon: KeyRound },
-  { label: 'AI 数据源', to: '/ai-data-source', icon: BrainCircuit },
-  { label: 'AI 创作', to: '/ai-writing', icon: Sparkles },
-  { label: '小红书发布', to: '/xiaohongshu', icon: NotebookPen },
-  { label: 'QQ 推送', to: '/qq-notifications', icon: Bot },
-  { label: 'QQ 任务', to: '/qq-tasks', icon: Bell },
-  { label: '轮询记录', to: '/polling-logs', icon: FileClock },
-  { label: '系统与设置', to: '/settings', icon: Settings },
+  { label: '概览', items: [{ label: '仪表盘', to: '/dashboard', icon: Gauge }] },
+  {
+    label: '监听',
+    items: [
+      { label: '监听账号', to: '/accounts', icon: UsersRound },
+      { label: '内容流', to: '/tweets', icon: MessageSquareText },
+      { label: '轮询记录', to: '/polling-logs', icon: FileClock },
+    ],
+  },
+  {
+    label: '内容与渠道',
+    items: [
+      { label: 'X 数据源', to: '/x-authorization', icon: KeyRound },
+      { label: 'AI 数据源', to: '/ai-data-source', icon: BrainCircuit },
+      { label: 'AI 创作', to: '/ai-writing', icon: Sparkles },
+      { label: '小红书发布', to: '/xiaohongshu', icon: NotebookPen },
+      { label: 'QQ 推送', to: '/qq-notifications', icon: Bot },
+      { label: 'QQ 任务', to: '/qq-tasks', icon: Bell },
+    ],
+  },
+  { label: '系统', items: [{ label: '系统与设置', to: '/settings', icon: Settings }] },
 ]
 
 const initials = computed(() => {
@@ -157,18 +167,20 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
       </div>
 
       <nav class="sidebar__nav" aria-label="主导航">
-        <span class="sidebar__section-label sidebar-label">管理</span>
-        <RouterLink
-          v-for="item in navigation"
-          :key="item.to"
-          :to="item.to"
-          class="nav-item"
-          :title="collapsed ? item.label : undefined"
-          @click="ui.sidebarOpen = false"
-        >
-          <component :is="item.icon" :size="19" />
-          <span class="sidebar-label">{{ item.label }}</span>
-        </RouterLink>
+        <div v-for="group in navigation" :key="group.label" class="nav-group">
+          <span class="sidebar__section-label sidebar-label">{{ group.label }}</span>
+          <RouterLink
+            v-for="item in group.items"
+            :key="item.to"
+            :to="item.to"
+            class="nav-item"
+            :title="collapsed ? item.label : undefined"
+            @click="ui.sidebarOpen = false"
+          >
+            <component :is="item.icon" :size="18" />
+            <span class="sidebar-label">{{ item.label }}</span>
+          </RouterLink>
+        </div>
       </nav>
 
       <div class="sidebar__footer">

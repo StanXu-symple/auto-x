@@ -17,8 +17,10 @@ from app.models.qq import (
     QQDelivery,
     QQJoinedGroup,
     QQNotificationTarget,
+    QQScheduledTask,
+    QQScheduledTaskBot,
+    QQScheduledTaskGroup,
     QQTargetSubscription,
-    QQScheduledTask, QQScheduledTaskBot, QQScheduledTaskGroup,
 )
 from app.models.tweet import Tweet
 from app.schemas.common import MessageResponse, Page
@@ -34,10 +36,11 @@ from app.schemas.qq import (
     QQDeliveryOut,
     QQJoinedGroupOut,
     QQOverview,
+    QQScheduledTaskCreate,
+    QQScheduledTaskOut,
     QQTargetCreate,
     QQTargetOut,
     QQTargetUpdate,
-    QQScheduledTaskCreate, QQScheduledTaskOut,
 )
 from app.services.qq_notifications import (
     QQ_BOT_STATUS,
@@ -53,6 +56,7 @@ from app.services.qq_notifications import (
     secret_hint,
     validate_qq_credentials,
 )
+from app.services.qq_schedule import next_qq_task_run
 
 router = APIRouter(prefix="/qq", tags=["QQ Notifications"])
 
@@ -548,7 +552,9 @@ async def batch_push(
         batch_count=batch_count,
     )
 
-def _task_out(task: QQScheduledTask, bot_ids: list[int], groups: list[dict]) -> QQScheduledTaskOut:
+def _task_out(
+    task: QQScheduledTask, bot_ids: list[int], groups: list[dict]
+) -> QQScheduledTaskOut:
     run_time = task.run_time if task.run_time.count(":") == 2 else f"{task.run_time}:00"
     return QQScheduledTaskOut.model_validate(
         {
@@ -562,39 +568,139 @@ def _task_out(task: QQScheduledTask, bot_ids: list[int], groups: list[dict]) -> 
 
 @router.get("/tasks", response_model=list[QQScheduledTaskOut])
 async def list_tasks(db: DbSession, _: CurrentAdmin):
-    tasks = list(await db.scalars(select(QQScheduledTask).order_by(QQScheduledTask.created_at.desc())))
+    tasks = list(
+        await db.scalars(
+            select(QQScheduledTask).order_by(QQScheduledTask.created_at.desc())
+        )
+    )
     result = []
     for task in tasks:
-        bot_ids = list(await db.scalars(select(QQScheduledTaskBot.bot_id).where(QQScheduledTaskBot.task_id == task.id)))
-        groups = [dict(bot_id=bot_id, group_openid=group) for bot_id, group in (await db.execute(select(QQScheduledTaskGroup.bot_id, QQScheduledTaskGroup.group_openid).where(QQScheduledTaskGroup.task_id == task.id))).tuples()]
+        bot_ids = list(
+            await db.scalars(
+                select(QQScheduledTaskBot.bot_id).where(
+                    QQScheduledTaskBot.task_id == task.id
+                )
+            )
+        )
+        group_rows = (
+            await db.execute(
+                select(
+                    QQScheduledTaskGroup.bot_id,
+                    QQScheduledTaskGroup.group_openid,
+                ).where(QQScheduledTaskGroup.task_id == task.id)
+            )
+        ).tuples()
+        groups = [
+            {"bot_id": bot_id, "group_openid": group}
+            for bot_id, group in group_rows
+        ]
         result.append(_task_out(task, bot_ids, groups))
     return result
 
 @router.post("/tasks", response_model=QQScheduledTaskOut, status_code=201)
 async def create_task(payload: QQScheduledTaskCreate, db: DbSession, _: CurrentAdmin):
     now = datetime.now(UTC)
-    task = QQScheduledTask(name=payload.name.strip(), message=payload.message.strip(), frequency=payload.frequency, interval_value=payload.interval_value, run_time=payload.run_time, weekdays=','.join(map(str, payload.weekdays)), month_day=payload.month_day, is_enabled=payload.is_enabled, next_run_at=now if payload.send_immediately else now + timedelta(days=1), created_at=now, updated_at=now)
-    db.add(task); await db.flush()
-    db.add_all([QQScheduledTaskBot(task_id=task.id, bot_id=i) for i in set(payload.bot_ids)])
-    db.add_all([QQScheduledTaskGroup(task_id=task.id, bot_id=int(g["bot_id"]), group_openid=str(g["group_openid"])) for g in payload.groups])
-    await db.commit(); await db.refresh(task)
+    next_run_at = now if payload.send_immediately else next_qq_task_run(
+        frequency=payload.frequency,
+        interval_value=payload.interval_value,
+        run_time=payload.run_time,
+        weekdays=payload.weekdays,
+        month_day=payload.month_day,
+        now=now,
+        timezone_name=get_settings().app_timezone,
+    )
+    task = QQScheduledTask(
+        name=payload.name.strip(),
+        message=payload.message.strip(),
+        frequency=payload.frequency,
+        interval_value=payload.interval_value,
+        run_time=payload.run_time,
+        weekdays=",".join(map(str, payload.weekdays)),
+        month_day=payload.month_day,
+        is_enabled=payload.is_enabled,
+        next_run_at=next_run_at,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(task)
+    await db.flush()
+    db.add_all(
+        [QQScheduledTaskBot(task_id=task.id, bot_id=i) for i in set(payload.bot_ids)]
+    )
+    db.add_all(
+        [
+            QQScheduledTaskGroup(
+                task_id=task.id,
+                bot_id=int(group["bot_id"]),
+                group_openid=str(group["group_openid"]),
+            )
+            for group in payload.groups
+        ]
+    )
+    await db.commit()
+    await db.refresh(task)
     return _task_out(task, payload.bot_ids, payload.groups)
 
 @router.patch("/tasks/{task_id}", response_model=QQScheduledTaskOut)
-async def update_task(task_id: int, payload: QQScheduledTaskCreate, db: DbSession, _: CurrentAdmin):
+async def update_task(
+    task_id: int, payload: QQScheduledTaskCreate, db: DbSession, _: CurrentAdmin
+):
     task = await db.get(QQScheduledTask, task_id)
-    if not task: raise APIError(404, "qq_task_not_found", "QQ 定时任务不存在")
-    for key in ("name", "message", "frequency", "interval_value", "run_time", "month_day", "is_enabled"): setattr(task, key, getattr(payload, key))
-    task.weekdays = ','.join(map(str, payload.weekdays)); task.updated_at = datetime.now(UTC)
-    await db.execute(delete(QQScheduledTaskBot).where(QQScheduledTaskBot.task_id == task.id)); await db.execute(delete(QQScheduledTaskGroup).where(QQScheduledTaskGroup.task_id == task.id))
-    db.add_all([QQScheduledTaskBot(task_id=task.id, bot_id=i) for i in set(payload.bot_ids)]); db.add_all([QQScheduledTaskGroup(task_id=task.id, bot_id=int(g["bot_id"]), group_openid=str(g["group_openid"])) for g in payload.groups]); await db.commit(); await db.refresh(task)
+    if not task:
+        raise APIError(404, "qq_task_not_found", "QQ 定时任务不存在")
+    for key in (
+        "name",
+        "message",
+        "frequency",
+        "interval_value",
+        "run_time",
+        "month_day",
+        "is_enabled",
+    ):
+        setattr(task, key, getattr(payload, key))
+    now = datetime.now(UTC)
+    task.weekdays = ",".join(map(str, payload.weekdays))
+    task.updated_at = now
+    task.next_run_at = next_qq_task_run(
+        frequency=payload.frequency,
+        interval_value=payload.interval_value,
+        run_time=payload.run_time,
+        weekdays=payload.weekdays,
+        month_day=payload.month_day,
+        now=now,
+        timezone_name=get_settings().app_timezone,
+    )
+    await db.execute(
+        delete(QQScheduledTaskBot).where(QQScheduledTaskBot.task_id == task.id)
+    )
+    await db.execute(
+        delete(QQScheduledTaskGroup).where(QQScheduledTaskGroup.task_id == task.id)
+    )
+    db.add_all(
+        [QQScheduledTaskBot(task_id=task.id, bot_id=i) for i in set(payload.bot_ids)]
+    )
+    db.add_all(
+        [
+            QQScheduledTaskGroup(
+                task_id=task.id,
+                bot_id=int(group["bot_id"]),
+                group_openid=str(group["group_openid"]),
+            )
+            for group in payload.groups
+        ]
+    )
+    await db.commit()
+    await db.refresh(task)
     return _task_out(task, payload.bot_ids, payload.groups)
 
 @router.delete("/tasks/{task_id}", response_model=MessageResponse)
 async def delete_task(task_id: int, db: DbSession, _: CurrentAdmin):
     task = await db.get(QQScheduledTask, task_id)
-    if not task: raise APIError(404, "qq_task_not_found", "QQ 定时任务不存在")
-    await db.delete(task); await db.commit(); return MessageResponse(message="QQ 定时任务已删除")
+    if not task:
+        raise APIError(404, "qq_task_not_found", "QQ 定时任务不存在")
+    await db.delete(task)
+    await db.commit()
+    return MessageResponse(message="QQ 定时任务已删除")
 
 
 @router.get("/deliveries", response_model=Page[QQDeliveryOut])
