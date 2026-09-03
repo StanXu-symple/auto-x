@@ -33,7 +33,7 @@ import type {
 } from '@/types'
 import { formatDateTime } from '@/utils/format'
 
-const DEFAULT_TEMPLATE = '【X Sentinel】@{username} 发布了新内容\n{text}\n{url}'
+const DEFAULT_TEMPLATE = '{title}\n@{username} · {posted_at}\n{text}\n{url}'
 const loading = ref(true)
 const refreshing = ref(false)
 const overview = ref<QQOverview | null>(null)
@@ -447,7 +447,7 @@ onBeforeUnmount(() => window.clearInterval(statusTimer))
         </el-form-item>
         <div class="form-switch"><div><strong>接收全部监听账号</strong><small>关闭后可选择需要推送的特定 X 账号。</small></div><el-switch v-model="targetForm.all_monitored_users" /></div>
         <el-form-item v-if="!targetForm.all_monitored_users" label="监听账号"><el-select v-model="targetForm.monitored_user_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择一个或多个账号"><el-option v-for="user in monitoredUsers" :key="user.id" :label="`@${user.username}${user.display_name ? ` · ${user.display_name}` : ''}`" :value="Number(user.id)" /></el-select></el-form-item>
-        <el-form-item label="消息模板"><el-input v-model="targetForm.message_template" type="textarea" :rows="5" maxlength="2000" show-word-limit /><small class="template-help">可用字段：{author}、{username}、{text}、{url}、{posted_at}</small></el-form-item>
+        <el-form-item label="消息模板"><el-input v-model="targetForm.message_template" type="textarea" :rows="5" maxlength="2000" show-word-limit /><small class="template-help">可用变量：<code>{title}</code> 标题块（每条单推出现一次；批量推送只在整批最上方出现一次）；<code>{author}</code> 显示名称；<code>{username}</code> X 用户名；<code>{text}</code> 正文；<code>{url}</code> 原文链接；<code>{posted_at}</code> 发布时间（yyyy-MM-dd HH:mm:ss）。批量推送会读取所选机器人和群的这条单条模板，将多条正文合并后按 QQ 2000 字符限制拆分。</small></el-form-item>
         <div class="form-switch"><div><strong>启用群推送</strong><small>关闭后保留配置，但不再创建新投递。</small></div><el-switch v-model="targetForm.is_enabled" /></div>
       </el-form>
       <template #footer><el-button @click="targetModalOpen = false">取消</el-button><el-button type="primary" :loading="actionKey === 'save-target'" @click="saveTarget"><Send v-if="actionKey !== 'save-target'" :size="16" />保存目标</el-button></template>

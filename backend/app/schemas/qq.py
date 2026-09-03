@@ -8,8 +8,8 @@ from pydantic import Field, field_validator, model_validator
 
 from app.schemas.common import APIModel
 
-DEFAULT_QQ_MESSAGE_TEMPLATE = "【X Sentinel】@{username} 发布了新内容\n{text}\n{url}"
-ALLOWED_TEMPLATE_FIELDS = {"author", "username", "text", "url", "posted_at"}
+DEFAULT_QQ_MESSAGE_TEMPLATE = "{title}\n@{username} · {posted_at}\n{text}\n{url}"
+ALLOWED_TEMPLATE_FIELDS = {"title", "author", "username", "text", "url", "posted_at"}
 
 
 def validate_message_template(value: str) -> str:
@@ -195,3 +195,21 @@ class QQBatchPushAccepted(APIModel):
     message: str
     delivery_ids: list[int]
     batch_count: int
+
+class QQScheduledTaskCreate(APIModel):
+    name: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=2000)
+    frequency: Literal["daily", "weekly", "monthly"] = "daily"
+    run_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    weekdays: list[int] = Field(default_factory=list, max_length=7)
+    month_day: int | None = Field(default=None, ge=1, le=31)
+    is_enabled: bool = True
+    bot_ids: list[int] = Field(min_length=1, max_length=50)
+    groups: list[dict[str, int | str]] = Field(min_length=1, max_length=100)
+
+class QQScheduledTaskOut(QQScheduledTaskCreate):
+    id: int
+    last_run_at: datetime | None
+    next_run_at: datetime
+    created_at: datetime
+    updated_at: datetime

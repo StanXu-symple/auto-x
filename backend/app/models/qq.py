@@ -95,6 +95,35 @@ class QQTargetSubscription(Base):
     target: Mapped[QQNotificationTarget] = relationship(back_populates="subscriptions")
 
 
+class QQScheduledTask(Base):
+    __tablename__ = "qq_scheduled_tasks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100))
+    message: Mapped[str] = mapped_column(Text)
+    frequency: Mapped[str] = mapped_column(String(16))  # daily, weekly, monthly
+    run_time: Mapped[str] = mapped_column(String(5))
+    weekdays: Mapped[str] = mapped_column(String(32), default="")
+    month_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class QQScheduledTaskBot(Base):
+    __tablename__ = "qq_scheduled_task_bots"
+    task_id: Mapped[int] = mapped_column(ForeignKey("qq_scheduled_tasks.id", ondelete="CASCADE"), primary_key=True)
+    bot_id: Mapped[int] = mapped_column(ForeignKey("qq_bot_accounts.id", ondelete="CASCADE"), primary_key=True)
+
+
+class QQScheduledTaskGroup(Base):
+    __tablename__ = "qq_scheduled_task_groups"
+    task_id: Mapped[int] = mapped_column(ForeignKey("qq_scheduled_tasks.id", ondelete="CASCADE"), primary_key=True)
+    bot_id: Mapped[int] = mapped_column(ForeignKey("qq_bot_accounts.id", ondelete="CASCADE"), primary_key=True)
+    group_openid: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+
 class QQDelivery(Base):
     __tablename__ = "qq_deliveries"
     __table_args__ = (

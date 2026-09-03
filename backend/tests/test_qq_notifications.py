@@ -76,7 +76,7 @@ def test_render_qq_message_includes_tweet_url_and_truncates() -> None:
         user=user,  # type: ignore[arg-type]
     )
 
-    assert len(message) == 3800
+    assert len(message) == 2000
     assert message.startswith("Sentinel @sentinel")
     assert message.endswith("...")
 

@@ -18,16 +18,18 @@ from app.models.qq import (
     QQJoinedGroup,
     QQNotificationTarget,
     QQTargetSubscription,
+    QQScheduledTask, QQScheduledTaskBot, QQScheduledTaskGroup,
 )
 from app.models.tweet import Tweet
 from app.schemas.common import MessageResponse, Page
 from app.schemas.qq import (
+    DEFAULT_QQ_MESSAGE_TEMPLATE,
+    QQBatchPushAccepted,
+    QQBatchPushCreate,
     QQBotCreate,
     QQBotOut,
     QQBotTestResult,
     QQBotUpdate,
-    QQBatchPushAccepted,
-    QQBatchPushCreate,
     QQDeliveryAccepted,
     QQDeliveryOut,
     QQJoinedGroupOut,
@@ -35,21 +37,21 @@ from app.schemas.qq import (
     QQTargetCreate,
     QQTargetOut,
     QQTargetUpdate,
+    QQScheduledTaskCreate, QQScheduledTaskOut,
 )
 from app.services.qq_notifications import (
     QQ_BOT_STATUS,
     QQ_WORKER_HEARTBEAT,
     QQCredentialValidationError,
+    chunk_qq_messages,
     create_test_delivery,
     decrypt_app_secret,
     encrypt_app_secret,
     enqueue_qq_delivery_ids,
-    chunk_qq_messages,
+    render_qq_message,
     secret_fingerprint,
     secret_hint,
-    render_qq_message,
     validate_qq_credentials,
-    chunk_qq_messages,
 )
 
 router = APIRouter(prefix="/qq", tags=["QQ Notifications"])
@@ -469,24 +471,128 @@ async def batch_push(
     missing = groups - joined
     if missing:
         raise APIError(422, "qq_group_not_joined", "机器人尚未加入所选群", sorted(missing))
-    rows = list(await db.scalars(select(Tweet).where(Tweet.id.in_(payload.tweet_ids)).order_by(Tweet.posted_at.asc())))
+    rows = list(
+        await db.scalars(
+            select(Tweet).where(Tweet.id.in_(payload.tweet_ids)).order_by(Tweet.posted_at.asc())
+        )
+    )
     if not rows:
         raise APIError(404, "tweets_not_found", "未找到可推送的内容")
-    users = {u.id: u for u in await db.scalars(select(MonitoredUser).where(MonitoredUser.id.in_({t.monitored_user_id for t in rows})))}
-    messages = [render_qq_message("【X Sentinel】@{username} 发布了新内容\n{text}\n{url}", tweet=tweet, user=users[tweet.monitored_user_id]) for tweet in rows if tweet.monitored_user_id in users]
-    if not messages:
+    users = {
+        u.id: u
+        for u in await db.scalars(
+            select(MonitoredUser).where(
+                MonitoredUser.id.in_({t.monitored_user_id for t in rows})
+            )
+        )
+    }
+    targets = {
+        target.group_openid: target
+        for target in await db.scalars(
+            select(QQNotificationTarget).where(
+                QQNotificationTarget.bot_id == bot.id,
+                QQNotificationTarget.group_openid.in_(groups),
+            )
+        )
+    }
+    messages_by_group = {}
+    for group in sorted(joined):
+        target = targets.get(group)
+        template = target.message_template if target else DEFAULT_QQ_MESSAGE_TEMPLATE
+        # {title} is a batch header and must only be emitted once per QQ message.
+        body_template = template.replace("{title}", "").strip()
+        entries = [
+            render_qq_message(
+                body_template, tweet=tweet, user=users[tweet.monitored_user_id], title=""
+            )
+            for tweet in rows
+            if tweet.monitored_user_id in users
+        ]
+        header = "【X Sentinel】内容推送" if "{title}" in template else ""
+        messages_by_group[group] = ([header] if header else []) + entries
+    if not any(messages_by_group.values()):
         raise APIError(404, "tweets_not_found", "所选内容缺少来源账号，无法推送")
-    chunks = chunk_qq_messages(messages)
+    chunks_by_group = {
+        group: chunk_qq_messages(items) for group, items in messages_by_group.items()
+    }
     now = datetime.now(UTC)
     deliveries = []
     for group in sorted(joined):
-        for body in chunks:
-            deliveries.append(QQDelivery(target_id=None, source_tweet_id=None, kind="batch", idempotency_key=f"batch:{uuid.uuid4()}", bot_name=bot.name, bot_app_id=bot.app_id, bot_version=bot.version, target_name=group, group_openid=group, message_body=body, status="queued", attempts=0, max_attempts=get_settings().qq_worker_max_attempts, next_attempt_at=now))
+        for body in chunks_by_group[group]:
+            deliveries.append(
+                QQDelivery(
+                    target_id=None,
+                    source_tweet_id=None,
+                    kind="batch",
+                    idempotency_key=f"batch:{uuid.uuid4()}",
+                    bot_name=bot.name,
+                    bot_app_id=bot.app_id,
+                    bot_version=bot.version,
+                    target_name=group,
+                    group_openid=group,
+                    message_body=body,
+                    status="queued",
+                    attempts=0,
+                    max_attempts=get_settings().qq_worker_max_attempts,
+                    next_attempt_at=now,
+                )
+            )
     db.add_all(deliveries)
     await db.commit()
     ids = [row.id for row in deliveries]
     await enqueue_qq_delivery_ids(redis, ids)
-    return QQBatchPushAccepted(message=f"已合并为 {len(chunks)} 条消息并进入投递队列", delivery_ids=ids, batch_count=len(chunks))
+    batch_count = sum(len(items) for items in chunks_by_group.values())
+    return QQBatchPushAccepted(
+        message=f"已按单条模板合并为 {batch_count} 条消息并进入投递队列",
+        delivery_ids=ids,
+        batch_count=batch_count,
+    )
+
+def _task_out(task: QQScheduledTask, bot_ids: list[int], groups: list[dict]) -> QQScheduledTaskOut:
+    return QQScheduledTaskOut.model_validate(
+        {
+            **task.__dict__,
+            "weekdays": [int(item) for item in task.weekdays.split(",") if item],
+            "bot_ids": bot_ids,
+            "groups": groups,
+        }
+    )
+
+@router.get("/tasks", response_model=list[QQScheduledTaskOut])
+async def list_tasks(db: DbSession, _: CurrentAdmin):
+    tasks = list(await db.scalars(select(QQScheduledTask).order_by(QQScheduledTask.created_at.desc())))
+    result = []
+    for task in tasks:
+        bot_ids = list(await db.scalars(select(QQScheduledTaskBot.bot_id).where(QQScheduledTaskBot.task_id == task.id)))
+        groups = [dict(bot_id=bot_id, group_openid=group) for bot_id, group in (await db.execute(select(QQScheduledTaskGroup.bot_id, QQScheduledTaskGroup.group_openid).where(QQScheduledTaskGroup.task_id == task.id))).tuples()]
+        result.append(_task_out(task, bot_ids, groups))
+    return result
+
+@router.post("/tasks", response_model=QQScheduledTaskOut, status_code=201)
+async def create_task(payload: QQScheduledTaskCreate, db: DbSession, _: CurrentAdmin):
+    now = datetime.now(UTC)
+    task = QQScheduledTask(name=payload.name.strip(), message=payload.message.strip(), frequency=payload.frequency, run_time=payload.run_time, weekdays=','.join(map(str, payload.weekdays)), month_day=payload.month_day, is_enabled=payload.is_enabled, next_run_at=now, created_at=now, updated_at=now)
+    db.add(task); await db.flush()
+    db.add_all([QQScheduledTaskBot(task_id=task.id, bot_id=i) for i in set(payload.bot_ids)])
+    db.add_all([QQScheduledTaskGroup(task_id=task.id, bot_id=int(g["bot_id"]), group_openid=str(g["group_openid"])) for g in payload.groups])
+    await db.commit(); await db.refresh(task)
+    return _task_out(task, payload.bot_ids, payload.groups)
+
+@router.patch("/tasks/{task_id}", response_model=QQScheduledTaskOut)
+async def update_task(task_id: int, payload: QQScheduledTaskCreate, db: DbSession, _: CurrentAdmin):
+    task = await db.get(QQScheduledTask, task_id)
+    if not task: raise APIError(404, "qq_task_not_found", "QQ 定时任务不存在")
+    for key in ("name", "message", "frequency", "run_time", "month_day", "is_enabled"): setattr(task, key, getattr(payload, key))
+    task.weekdays = ','.join(map(str, payload.weekdays)); task.updated_at = datetime.now(UTC)
+    await db.execute(delete(QQScheduledTaskBot).where(QQScheduledTaskBot.task_id == task.id)); await db.execute(delete(QQScheduledTaskGroup).where(QQScheduledTaskGroup.task_id == task.id))
+    db.add_all([QQScheduledTaskBot(task_id=task.id, bot_id=i) for i in set(payload.bot_ids)]); db.add_all([QQScheduledTaskGroup(task_id=task.id, bot_id=int(g["bot_id"]), group_openid=str(g["group_openid"])) for g in payload.groups]); await db.commit(); await db.refresh(task)
+    return _task_out(task, payload.bot_ids, payload.groups)
+
+@router.delete("/tasks/{task_id}", response_model=MessageResponse)
+async def delete_task(task_id: int, db: DbSession, _: CurrentAdmin):
+    task = await db.get(QQScheduledTask, task_id)
+    if not task: raise APIError(404, "qq_task_not_found", "QQ 定时任务不存在")
+    await db.delete(task); await db.commit(); return MessageResponse(message="QQ 定时任务已删除")
 
 
 @router.get("/deliveries", response_model=Page[QQDeliveryOut])

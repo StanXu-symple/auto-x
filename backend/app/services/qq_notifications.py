@@ -58,16 +58,21 @@ def secret_fingerprint(secret: str) -> str:
     return token_fingerprint(secret)
 
 
-def render_qq_message(template: str, *, tweet: Tweet, user: MonitoredUser) -> str:
+def render_qq_message(
+    template: str, *, tweet: Tweet, user: MonitoredUser, title: str = "【X Sentinel】内容推送"
+) -> str:
     values = {
         "author": user.display_name or user.username,
         "username": user.username,
         "text": tweet.text.strip(),
         "url": f"https://x.com/{user.username}/status/{tweet.tweet_id}",
-        "posted_at": tweet.posted_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC"),
+        "posted_at": tweet.posted_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+        "title": title,
     }
     message = template.format_map(values).strip()
-    return message if len(message) <= QQ_MESSAGE_MAX_CHARS else message[: QQ_MESSAGE_MAX_CHARS - 3].rstrip() + "..."
+    if len(message) <= QQ_MESSAGE_MAX_CHARS:
+        return message
+    return message[: QQ_MESSAGE_MAX_CHARS - 3].rstrip() + "..."
 
 
 def chunk_qq_messages(messages: list[str], *, max_chars: int = QQ_MESSAGE_MAX_CHARS) -> list[str]:

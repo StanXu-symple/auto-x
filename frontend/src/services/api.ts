@@ -40,6 +40,7 @@ import type {
   QQNotificationTarget,
   QQOverview,
   QQTargetPayload,
+  QQScheduledTask,
   SystemMetrics,
   SystemSettings,
   Tweet,
@@ -153,6 +154,10 @@ export const systemApi = {
 }
 
 export const qqApi = {
+  async tasks() { return dataOf(await http.get<Wrapped<QQScheduledTask[]>>('/qq/tasks')) },
+  async createTask(payload: Omit<QQScheduledTask,'id'|'last_run_at'|'next_run_at'|'created_at'|'updated_at'>) { return dataOf(await http.post<Wrapped<QQScheduledTask>>('/qq/tasks', payload)) },
+  async updateTask(id: EntityId, payload: Omit<QQScheduledTask,'id'|'last_run_at'|'next_run_at'|'created_at'|'updated_at'>) { return dataOf(await http.patch<Wrapped<QQScheduledTask>>(`/qq/tasks/${id}`, payload)) },
+  async removeTask(id: EntityId) { await http.delete(`/qq/tasks/${id}`) },
   async batchPush(payload: QQBatchPushPayload) {
     return dataOf(await http.post<Wrapped<QQBatchPushResult>>('/qq/batch-push', payload))
   },

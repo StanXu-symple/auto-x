@@ -21,6 +21,9 @@ from app.models import (  # noqa: F401
     QQDelivery,
     QQNotificationTarget,
     QQTargetSubscription,
+    QQScheduledTask,
+    QQScheduledTaskBot,
+    QQScheduledTaskGroup,
     Tweet,
     XCredential,
 )

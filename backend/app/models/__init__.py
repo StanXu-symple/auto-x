@@ -17,6 +17,9 @@ from app.models.qq import (
     QQJoinedGroup,
     QQNotificationTarget,
     QQTargetSubscription,
+    QQScheduledTask,
+    QQScheduledTaskBot,
+    QQScheduledTaskGroup,
 )
 from app.models.setting import AppSetting
 from app.models.tweet import Tweet
@@ -45,6 +48,9 @@ __all__ = [
     "QQJoinedGroup",
     "QQNotificationTarget",
     "QQTargetSubscription",
+    "QQScheduledTask",
+    "QQScheduledTaskBot",
+    "QQScheduledTaskGroup",
     "Tweet",
     "XCredential",
     "XiaohongshuConnection",

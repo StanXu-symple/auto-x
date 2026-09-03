@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import json
 import logging
 import os
@@ -35,7 +36,7 @@ from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
 from app.core.time import as_utc
 from app.db.session import AsyncSessionFactory, engine
-from app.models.qq import QQBotAccount, QQDelivery, QQJoinedGroup, QQNotificationTarget
+from app.models.qq import QQBotAccount, QQDelivery, QQJoinedGroup, QQNotificationTarget, QQScheduledTask, QQScheduledTaskBot, QQScheduledTaskGroup
 from app.services.metrics import (
     QQ_DELIVERIES,
     QQ_DELIVERY_DURATION,
@@ -273,6 +274,7 @@ class QQDeliveryWorker:
 
     async def run_once(self) -> int:
         await self._heartbeat()
+        await self._schedule_tasks()
         now = datetime.now(UTC)
         due_condition = or_(
             and_(
@@ -334,6 +336,40 @@ class QQDeliveryWorker:
                 )
         await self._heartbeat()
         return len(delivery_ids)
+
+    async def _schedule_tasks(self) -> None:
+        now = datetime.now(UTC)
+        async with AsyncSessionFactory() as session, session.begin():
+            tasks = list(await session.scalars(select(QQScheduledTask).where(QQScheduledTask.is_enabled.is_(True), QQScheduledTask.next_run_at <= now).with_for_update()))
+            for task in tasks:
+                bots = list(await session.scalars(select(QQScheduledTaskBot.bot_id).where(QQScheduledTaskBot.task_id == task.id)))
+                groups = list((await session.execute(select(QQScheduledTaskGroup.bot_id, QQScheduledTaskGroup.group_openid).where(QQScheduledTaskGroup.task_id == task.id))).tuples())
+                for bot_id, group in groups:
+                    if bot_id not in bots: continue
+                    bot = await session.get(QQBotAccount, bot_id)
+                    if bot and bot.is_enabled:
+                        session.add(QQDelivery(target_id=None, source_tweet_id=None, kind="scheduled", idempotency_key=f"scheduled:{task.id}:{now.isoformat()}:{bot_id}:{group}", bot_name=bot.name, bot_app_id=bot.app_id, bot_version=bot.version, target_name=group, group_openid=group, message_body=task.message, status="queued", attempts=0, max_attempts=self.settings.qq_worker_max_attempts, next_attempt_at=now))
+                task.last_run_at = now
+                task.next_run_at = self._next_task_run(task, now)
+
+    @staticmethod
+    def _next_task_run(task: QQScheduledTask, now: datetime) -> datetime:
+        hour, minute = map(int, task.run_time.split(":"))
+        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if task.frequency == "weekly":
+            days = {int(item) for item in task.weekdays.split(",") if item}
+            days = days or {candidate.isoweekday()}
+            for offset in range(1, 8):
+                value = candidate + timedelta(days=offset)
+                if value.isoweekday() in days:
+                    return value
+        if task.frequency == "monthly":
+            month = candidate.month + (1 if candidate <= now else 0)
+            year = candidate.year + (month - 1) // 12
+            month = (month - 1) % 12 + 1
+            day = min(task.month_day or 1, calendar.monthrange(year, month)[1])
+            return candidate.replace(year=year, month=month, day=day)
+        return candidate + timedelta(days=1 if candidate <= now else 0)
 
     async def process_delivery(self, delivery_id: int) -> bool:
         lock_key = f"xsentinel:qq:lock:{delivery_id}"
@@ -397,7 +433,7 @@ class QQDeliveryWorker:
             if not due and not stale:
                 return None
             cancel_reason = None
-            if delivery.kind == "batch":
+            if delivery.kind in {"batch", "scheduled"}:
                 # Manual batches select a joined group without a subscription target.
                 bot = await session.scalar(select(QQBotAccount).where(
                     QQBotAccount.app_id == delivery.bot_app_id,

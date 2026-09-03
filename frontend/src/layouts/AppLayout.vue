@@ -53,6 +53,7 @@ const navigation = [
   { label: 'AI 创作', to: '/ai-writing', icon: Sparkles },
   { label: '小红书发布', to: '/xiaohongshu', icon: NotebookPen },
   { label: 'QQ 推送', to: '/qq-notifications', icon: Bot },
+  { label: 'QQ 任务', to: '/qq-tasks', icon: Bell },
   { label: '轮询记录', to: '/polling-logs', icon: FileClock },
   { label: '系统与设置', to: '/settings', icon: Settings },
 ]
