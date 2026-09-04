@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from string import Formatter
 from typing import Literal
 
@@ -10,6 +11,16 @@ from app.schemas.common import APIModel
 
 DEFAULT_QQ_MESSAGE_TEMPLATE = "{title}\n@{username} · {posted_at}\n{text}\n{url}"
 ALLOWED_TEMPLATE_FIELDS = {"title", "author", "username", "text", "url", "posted_at"}
+RESERVED_TEMPLATE_FIELDS = ALLOWED_TEMPLATE_FIELDS
+
+
+def validate_template_variables(value: dict[str, str]) -> dict[str, str]:
+    cleaned: dict[str, str] = {}
+    for key, item in value.items():
+        if key in RESERVED_TEMPLATE_FIELDS or not re.fullmatch(r"[a-z][a-z0-9_]{1,31}", key):
+            raise ValueError(f"Invalid template variable: {key}")
+        cleaned[key] = str(item)
+    return cleaned
 
 
 def validate_message_template(value: str) -> str:
@@ -77,11 +88,12 @@ class QQTargetCreate(APIModel):
     all_monitored_users: bool = False
     monitored_user_ids: list[int] = Field(default_factory=list, max_length=1000)
     message_template: str = Field(default=DEFAULT_QQ_MESSAGE_TEMPLATE, max_length=2000)
+    template_variables: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("message_template")
     @classmethod
     def validate_template(cls, value: str) -> str:
-        return validate_message_template(value)
+        return value.strip()
 
     @field_validator("monitored_user_ids")
     @classmethod
@@ -96,6 +108,17 @@ class QQTargetCreate(APIModel):
             raise ValueError("Select at least one monitored account")
         return self
 
+    @model_validator(mode="after")
+    def validate_variables(self) -> QQTargetCreate:
+        if not self.message_template:
+            raise ValueError("Message template cannot be empty")
+        self.template_variables = validate_template_variables(self.template_variables)
+        fields = {field for _, field, _, _ in Formatter().parse(self.message_template) if field}
+        unknown = fields - ALLOWED_TEMPLATE_FIELDS - set(self.template_variables)
+        if unknown:
+            raise ValueError(f"Unsupported template fields: {', '.join(sorted(unknown))}")
+        return self
+
 
 class QQTargetUpdate(APIModel):
     bot_id: int | None = Field(default=None, gt=0)
@@ -105,11 +128,12 @@ class QQTargetUpdate(APIModel):
     all_monitored_users: bool | None = None
     monitored_user_ids: list[int] | None = Field(default=None, max_length=1000)
     message_template: str | None = Field(default=None, max_length=2000)
+    template_variables: dict[str, str] | None = None
 
     @field_validator("message_template")
     @classmethod
     def validate_template(cls, value: str | None) -> str | None:
-        return validate_message_template(value) if value is not None else None
+        return value.strip() if value is not None else None
 
     @field_validator("monitored_user_ids")
     @classmethod
@@ -119,6 +143,19 @@ class QQTargetUpdate(APIModel):
         if any(item <= 0 for item in value):
             raise ValueError("Monitored user ids must be positive")
         return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def validate_variables(self) -> QQTargetUpdate:
+        if self.template_variables is not None:
+            self.template_variables = validate_template_variables(self.template_variables)
+        if self.message_template is not None:
+            if not self.message_template:
+                raise ValueError("Message template cannot be empty")
+            fields = {field for _, field, _, _ in Formatter().parse(self.message_template) if field}
+            unknown = fields - ALLOWED_TEMPLATE_FIELDS - set(self.template_variables or {})
+            if unknown:
+                raise ValueError(f"Unsupported template fields: {', '.join(sorted(unknown))}")
+        return self
 
 
 class QQTargetOut(APIModel):
@@ -131,6 +168,7 @@ class QQTargetOut(APIModel):
     all_monitored_users: bool
     monitored_user_ids: list[int]
     message_template: str
+    template_variables: dict[str, str]
     created_at: datetime
     updated_at: datetime
 

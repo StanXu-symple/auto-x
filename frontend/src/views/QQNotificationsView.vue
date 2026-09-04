@@ -47,6 +47,7 @@ const deliveryStatus = ref('')
 const actionKey = ref('')
 const botModalOpen = ref(false)
 const targetModalOpen = ref(false)
+const templateVariablesOpen = ref(false)
 const editingBotId = ref<number | null>(null)
 const editingTargetId = ref<number | null>(null)
 const joinedGroups = ref<QQJoinedGroup[]>([])
@@ -64,7 +65,17 @@ const targetForm = reactive({
   all_monitored_users: true,
   monitored_user_ids: [] as number[],
   message_template: DEFAULT_TEMPLATE,
+  template_variables: { title: '【X Sentinel】内容推送' } as Record<string, string>,
 })
+const variableRows = ref<Array<{ key: string; value: string }>>([])
+const builtInVariables = [
+  { key: 'title', label: '标题块', source: '群目标变量配置', editable: true },
+  { key: 'author', label: '显示名称', source: '监听账号 display_name', editable: false },
+  { key: 'username', label: 'X 用户名', source: '监听账号 username', editable: false },
+  { key: 'text', label: '正文', source: '推文 text', editable: false },
+  { key: 'url', label: '原文链接', source: 'tweet_id 拼接', editable: false },
+  { key: 'posted_at', label: '发布时间', source: '推文 posted_at', editable: false },
+]
 
 const deliveryPages = computed(() => Math.max(1, Math.ceil(deliveryTotal.value / 20)))
 const hasBots = computed(() => bots.value.length > 0)
@@ -199,9 +210,30 @@ function openTarget(target?: QQNotificationTarget) {
   targetForm.all_monitored_users = target?.all_monitored_users ?? true
   targetForm.monitored_user_ids = [...(target?.monitored_user_ids ?? [])]
   targetForm.message_template = target?.message_template ?? DEFAULT_TEMPLATE
+  targetForm.template_variables = { title: '【X Sentinel】内容推送', ...(target?.template_variables ?? {}) }
   groupInputMode.value = target ? 'manual' : 'select'
   targetModalOpen.value = true
   void loadJoinedGroups(true)
+}
+
+function openTemplateVariables() {
+  variableRows.value = Object.entries(targetForm.template_variables).map(([key, value]) => ({ key, value }))
+  if (!variableRows.value.some((row) => row.key === 'title')) variableRows.value.unshift({ key: 'title', value: '【X Sentinel】内容推送' })
+  templateVariablesOpen.value = true
+}
+
+function addTemplateVariable() { variableRows.value.push({ key: '', value: '' }) }
+
+function removeTemplateVariable(index: number) { variableRows.value.splice(index, 1) }
+
+function saveTemplateVariables() {
+  const next: Record<string, string> = {}
+  for (const row of variableRows.value) {
+    const key = row.key.trim()
+    if (key) next[key] = row.value
+  }
+  targetForm.template_variables = next
+  templateVariablesOpen.value = false
 }
 
 async function loadJoinedGroups(onOpen = false) {
@@ -257,6 +289,7 @@ async function saveTarget() {
       all_monitored_users: targetForm.all_monitored_users,
       monitored_user_ids: targetForm.all_monitored_users ? [] : targetForm.monitored_user_ids,
       message_template: targetForm.message_template.trim(),
+      template_variables: targetForm.template_variables,
     }
     if (editingTargetId.value) await qqApi.updateTarget(editingTargetId.value, payload)
     else await qqApi.createTarget(payload)
@@ -447,10 +480,22 @@ onBeforeUnmount(() => window.clearInterval(statusTimer))
         </el-form-item>
         <div class="form-switch"><div><strong>接收全部监听账号</strong><small>关闭后可选择需要推送的特定 X 账号。</small></div><el-switch v-model="targetForm.all_monitored_users" /></div>
         <el-form-item v-if="!targetForm.all_monitored_users" label="监听账号"><el-select v-model="targetForm.monitored_user_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择一个或多个账号"><el-option v-for="user in monitoredUsers" :key="user.id" :label="`@${user.username}${user.display_name ? ` · ${user.display_name}` : ''}`" :value="Number(user.id)" /></el-select></el-form-item>
-        <el-form-item label="消息模板"><el-input v-model="targetForm.message_template" type="textarea" :rows="5" maxlength="2000" show-word-limit /><small class="template-help">可用变量：<code>{title}</code> 标题块（每条单推出现一次；批量推送只在整批最上方出现一次）；<code>{author}</code> 显示名称；<code>{username}</code> X 用户名；<code>{text}</code> 正文；<code>{url}</code> 原文链接；<code>{posted_at}</code> 发布时间（yyyy-MM-dd HH:mm:ss）。批量推送会读取所选机器人和群的这条单条模板，将多条正文合并后按 QQ 2000 字符限制拆分。</small></el-form-item>
+        <el-form-item label="消息模板"><div class="template-editor"><el-input v-model="targetForm.message_template" type="textarea" :rows="5" maxlength="2000" show-word-limit /><el-button plain @click="openTemplateVariables">模板变量配置</el-button></div></el-form-item>
         <div class="form-switch"><div><strong>启用群推送</strong><small>关闭后保留配置，但不再创建新投递。</small></div><el-switch v-model="targetForm.is_enabled" /></div>
       </el-form>
       <template #footer><el-button @click="targetModalOpen = false">取消</el-button><el-button type="primary" :loading="actionKey === 'save-target'" @click="saveTarget"><Send v-if="actionKey !== 'save-target'" :size="16" />保存目标</el-button></template>
+    </BaseModal>
+    <BaseModal :open="templateVariablesOpen" title="模板变量配置" description="管理当前群目标模板使用的变量和值。" width="large" @close="templateVariablesOpen = false">
+      <div class="template-variable-note"><strong>变量说明</strong><span>内置变量会在投递时从监听账号和推文实时生成；标题块与自定义变量使用这里保存的值。模板中引用自定义变量时，请使用对应的英文键名，例如 <code>{source}</code>。</span></div>
+      <div class="template-variable-list">
+        <div v-for="(row, index) in variableRows" :key="`${row.key}-${index}`" class="template-variable-row">
+          <div class="template-variable-row__key"><el-input v-model="row.key" placeholder="变量键名" :disabled="builtInVariables.some((item) => item.key === row.key)" /><small>{{ builtInVariables.find((item) => item.key === row.key)?.label || '自定义变量' }}</small></div>
+          <div class="template-variable-row__value"><el-input v-model="row.value" placeholder="变量值" :disabled="row.key !== 'title' && builtInVariables.some((item) => item.key === row.key)" /><small>{{ builtInVariables.find((item) => item.key === row.key)?.source || '固定文本，供模板引用' }}</small></div>
+          <el-button circle plain type="danger" :disabled="builtInVariables.some((item) => item.key === row.key)" title="删除变量" @click="removeTemplateVariable(index)"><Trash2 :size="14" /></el-button>
+        </div>
+      </div>
+      <button class="template-variable-add" type="button" @click="addTemplateVariable"><CirclePlus :size="16" />新增自定义变量</button>
+      <template #footer><el-button @click="templateVariablesOpen = false">取消</el-button><el-button type="primary" @click="saveTemplateVariables">保存变量配置</el-button></template>
     </BaseModal>
   </div>
 </template>
@@ -458,4 +503,15 @@ onBeforeUnmount(() => window.clearInterval(statusTimer))
 <style scoped>
 .group-picker{display:flex;flex-direction:column;gap:9px;width:100%}.group-picker__toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}.group-picker__error{color:#b33d4d;font-size:12px;line-height:1.5}.online-status{display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border-radius:999px;color:#707783;background:#f1f2f5;font-size:9px;font-weight:700;white-space:nowrap}.online-status i{width:6px;height:6px;border-radius:50%;background:currentColor}.online-status.online{color:#087855;background:#eaf8f2}.online-status.connecting{color:#9a6800;background:#fff7df}.online-status.offline,.online-status.disabled{color:#9a626b;background:#fff0f2}
 .qq-page{display:flex;flex-direction:column;gap:18px;max-width:1320px;margin:0 auto;color:#17191c}.qq-toolbar{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:6px 0 2px}.qq-toolbar h2{margin:7px 0 5px;font-size:24px;font-weight:680;letter-spacing:0}.qq-toolbar p,.qq-section header p{margin:0;color:#727986;font-size:13px;line-height:1.6}.qq-eyebrow{display:flex;align-items:center;gap:7px;color:#635bff;font-size:10px;font-weight:750;letter-spacing:.12em}.qq-toolbar__actions{display:flex;gap:9px;flex-shrink:0}.qq-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.qq-summary article{display:flex;align-items:center;min-height:92px;padding:18px;border:1px solid #e7e9ee;border-radius:16px;background:#fff;box-shadow:0 6px 22px rgba(20,25,38,.045);gap:13px}.qq-summary article>span,.bot-avatar,.target-icon,.qq-empty>span{display:grid;place-items:center;flex:0 0 auto;width:40px;height:40px;border:1px solid #e9e7ff;border-radius:12px;color:#635bff;background:#f8f7ff}.qq-summary article>div{display:flex;flex-direction:column;gap:3px}.qq-summary small,.bot-meta small,.target-scope small{color:#858b96;font-size:10px}.qq-summary strong{font-size:23px;font-weight:680}.qq-summary strong em{color:#a2a7af;font-size:12px;font-style:normal;font-weight:500}.status-text{font-size:15px!important}.status-text.online{color:#07865e}.status-text.offline{color:#d04c5b}.platform-notice{display:grid;grid-template-columns:auto 1fr auto;align-items:start;padding:15px 17px;border:1px solid #eadfac;border-radius:16px;color:#755b00;background:#fffdf4;gap:11px}.platform-notice strong{font-size:12px}.platform-notice p{margin:3px 0 0;color:#756a42;font-size:11px;line-height:1.65}.platform-notice a{display:flex;align-items:center;gap:5px;color:#635bff;font-size:11px;white-space:nowrap}.qq-section{overflow:hidden;border:1px solid #e7e9ee;border-radius:16px;background:#fff;box-shadow:0 8px 28px rgba(20,25,38,.045)}.qq-section>header{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:19px 20px;border-bottom:1px solid #eceef2}.qq-section>header h3{margin:0 0 4px;font-size:15px}.qq-section>header>span{color:#858b96;font-size:12px}.bot-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px}.bot-card{display:flex;flex-direction:column;min-width:0;padding:16px;border:1px solid #e8eaf0;border-radius:14px;background:#fff;transition:border-color .18s,box-shadow .18s}.bot-card:hover{border-color:#d5d0ff;box-shadow:0 8px 24px rgba(42,40,70,.06)}.bot-card__top{display:flex;align-items:center;min-width:0;gap:11px}.bot-card__top>div{display:flex;overflow:hidden;flex:1;flex-direction:column;gap:3px}.bot-card__top strong,.target-main strong{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.bot-card__top small,.target-main small{overflow:hidden;color:#7d838e;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.verification{padding:5px 8px;border-radius:999px;color:#716b7f;background:#f1f2f5;font-size:9px;font-weight:700;white-space:nowrap}.verification.valid{color:#087855;background:#eaf8f2}.verification.invalid,.verification.error{color:#b63f50;background:#fff0f2}.verification.unverified{color:#9a6800;background:#fff7df}.bot-meta{display:grid;grid-template-columns:repeat(3,1fr);margin:15px 0;padding:12px 0;border-top:1px solid #eff0f3;border-bottom:1px solid #eff0f3}.bot-meta span{display:grid;grid-template-columns:auto 1fr;min-width:0;padding:0 10px;border-right:1px solid #eff0f3;gap:2px 7px}.bot-meta span:first-child{padding-left:0}.bot-meta span:last-child{padding-right:0;border:0}.bot-meta svg{grid-row:1/3;color:#8d879c}.bot-meta strong{overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.row-error{display:flex;align-items:flex-start;margin:0 0 12px;padding:8px 10px;border-radius:8px;color:#b33d4d;background:#fff2f3;font-size:10px;line-height:1.5;gap:6px}.row-error svg{flex:0 0 auto}.bot-card footer{display:flex;align-items:center;justify-content:space-between;margin-top:auto}.bot-card footer>div,.target-actions{display:flex;gap:5px}.target-list{display:flex;flex-direction:column}.target-row{display:grid;grid-template-columns:auto minmax(180px,1.5fr) minmax(130px,1fr) auto auto;align-items:center;padding:14px 18px;border-bottom:1px solid #eff0f3;gap:14px}.target-row:last-child{border:0}.target-icon{width:38px;height:38px;border-radius:11px}.target-main,.target-scope{display:flex;min-width:0;flex-direction:column;gap:4px}.target-scope strong{font-size:11px}.qq-empty{display:flex;align-items:center;justify-content:center;min-height:220px;flex-direction:column;padding:32px;text-align:center}.qq-empty>span{margin-bottom:12px}.qq-empty strong{font-size:13px}.qq-empty p{margin:5px 0 15px;color:#858b96;font-size:11px}.qq-empty--compact{min-height:160px}.status-filter{width:150px}.delivery-table-wrap{overflow-x:auto}.delivery-table{width:100%;min-width:870px;border-collapse:collapse}.delivery-table th{padding:11px 15px;color:#9298a3;background:#fafbfc;font-size:9px;font-weight:700;text-align:left;text-transform:uppercase}.delivery-table td{padding:13px 15px;border-top:1px solid #eff0f3;font-size:11px;vertical-align:middle}.delivery-table td>strong,.delivery-table td>small{display:block}.delivery-table td>small{margin-top:3px;color:#9298a3;font-size:9px}.delivery-table td p{display:-webkit-box;overflow:hidden;max-width:390px;margin:0;color:#4d525b;line-height:1.45;-webkit-box-orient:vertical;-webkit-line-clamp:2}.delivery-table .error-copy{color:#bb5360}.delivery-status{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;color:#666d78;background:#f1f2f5;font-size:9px;font-weight:700;white-space:nowrap}.delivery-status i{width:5px;height:5px;border-radius:50%;background:currentColor}.delivery-status.sent{color:#087855;background:#eaf8f2}.delivery-status.failed,.delivery-status.cancelled{color:#ba4051;background:#fff0f2}.delivery-status.queued,.delivery-status.sending{color:#554ac7;background:#f0efff}.delivery-status.retry_wait{color:#9a6800;background:#fff7df}.table-empty{display:flex;align-items:center;justify-content:center;min-height:110px;color:#8a909a;gap:8px}.pagination{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-top:1px solid #eff0f3;color:#8b919b;font-size:10px}.pagination>div{display:flex;align-items:center;gap:10px}.pagination strong{color:#515660;font-size:10px}.qq-form{display:flex;flex-direction:column}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.form-switch{display:flex;align-items:center;justify-content:space-between;margin-bottom:17px;padding:12px 13px;border:1px solid #e8eaf0;border-radius:12px;background:#fafbfc;gap:16px}.form-switch>div{display:flex;flex-direction:column;gap:3px}.form-switch strong{font-size:12px}.form-switch small,.template-help{color:#858b96;font-size:10px;line-height:1.5}.qq-form :deep(.el-select){width:100%}.qq-form :deep(.el-textarea__inner){line-height:1.55}.target-form :deep(.el-form-item){margin-bottom:17px}.delivery-section{margin-bottom:20px}@media(max-width:900px){.qq-summary{grid-template-columns:repeat(2,1fr)}.bot-grid{grid-template-columns:1fr}.target-row{grid-template-columns:auto minmax(0,1fr) auto auto}.target-scope{grid-column:2/3}.target-actions{grid-column:4;grid-row:1/3}}@media(max-width:620px){.qq-page{gap:13px}.qq-toolbar{align-items:flex-start;flex-direction:column}.qq-toolbar__actions{width:100%}.qq-toolbar__actions .el-button{flex:1}.qq-summary{grid-template-columns:1fr 1fr;gap:8px}.qq-summary article{min-height:80px;padding:12px;border-radius:14px}.qq-summary article>span{display:none}.platform-notice{grid-template-columns:auto 1fr}.platform-notice a{grid-column:2}.qq-section{border-radius:14px}.qq-section>header{align-items:flex-start;padding:16px;flex-direction:column}.bot-grid{padding:10px}.bot-meta{grid-template-columns:1fr}.bot-meta span{grid-template-columns:auto 1fr;padding:7px 0;border-right:0;border-bottom:1px solid #eff0f3}.target-row{grid-template-columns:auto minmax(0,1fr) auto;padding:13px}.target-scope{grid-column:2}.target-actions{grid-column:2/4;grid-row:auto;justify-content:flex-end}.form-grid{grid-template-columns:1fr}.status-filter{width:100%}}
+.template-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; }
+.template-variable-note { display: flex; padding: 12px 14px; border: 1px solid #dfe6f5; border-radius: 8px; background: #f7f9ff; flex-direction: column; gap: 5px; }
+.template-variable-note strong { color: var(--text); font-size: 12px; }
+.template-variable-note span { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.template-variable-note code { color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.template-variable-list { display: flex; margin-top: 14px; flex-direction: column; gap: 9px; }
+.template-variable-row { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(0, 1.3fr) auto; align-items: start; gap: 9px; }
+.template-variable-row__key, .template-variable-row__value { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.template-variable-row small { color: var(--muted); font-size: 10px; }
+.template-variable-add { display: inline-flex; align-items: center; margin-top: 12px; padding: 0; border: 0; color: var(--primary); background: transparent; cursor: pointer; font-size: 11px; gap: 5px; }
+@media (max-width: 620px) { .template-editor { grid-template-columns: 1fr; } .template-editor .el-button { justify-self: start; } .template-variable-row { grid-template-columns: minmax(0, 1fr) auto; } .template-variable-row__value { grid-column: 1 / -1; } }
 </style>

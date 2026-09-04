@@ -97,6 +97,7 @@ async def _target_out(db: DbSession, row: QQNotificationTarget) -> QQTargetOut:
         all_monitored_users=row.all_monitored_users,
         monitored_user_ids=user_ids,
         message_template=row.message_template,
+        template_variables=row.template_variables or {},
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -376,6 +377,7 @@ async def create_target(payload: QQTargetCreate, db: DbSession, _: CurrentAdmin)
         is_enabled=payload.is_enabled,
         all_monitored_users=payload.all_monitored_users,
         message_template=payload.message_template,
+        template_variables=payload.template_variables,
         created_at=now,
         updated_at=now,
     )
@@ -408,7 +410,7 @@ async def update_target(
     for field in ("name", "group_openid"):
         if field in updates:
             setattr(row, field, updates[field].strip())
-    for field in ("is_enabled", "all_monitored_users", "message_template"):
+    for field in ("is_enabled", "all_monitored_users", "message_template", "template_variables"):
         if field in updates:
             setattr(row, field, updates[field])
     final_all = row.all_monitored_users
@@ -507,12 +509,18 @@ async def batch_push(
         body_template = template.replace("{title}", "").strip()
         entries = [
             render_qq_message(
-                body_template, tweet=tweet, user=users[tweet.monitored_user_id], title=""
+                body_template,
+                tweet=tweet,
+                user=users[tweet.monitored_user_id],
+                title="",
+                template_variables=target.template_variables if target else None,
             )
             for tweet in rows
             if tweet.monitored_user_id in users
         ]
-        header = "【X Sentinel】内容推送" if "{title}" in template else ""
+        header = ""
+        if "{title}" in template:
+            header = (target.template_variables.get("title") if target else None) or "【X Sentinel】内容推送"
         messages_by_group[group] = ([header] if header else []) + entries
     if not any(messages_by_group.values()):
         raise APIError(404, "tweets_not_found", "所选内容缺少来源账号，无法推送")

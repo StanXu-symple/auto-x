@@ -59,7 +59,12 @@ def secret_fingerprint(secret: str) -> str:
 
 
 def render_qq_message(
-    template: str, *, tweet: Tweet, user: MonitoredUser, title: str = "【X Sentinel】内容推送"
+    template: str,
+    *,
+    tweet: Tweet,
+    user: MonitoredUser,
+    title: str = "【X Sentinel】内容推送",
+    template_variables: dict[str, str] | None = None,
 ) -> str:
     values = {
         "author": user.display_name or user.username,
@@ -69,6 +74,8 @@ def render_qq_message(
         "posted_at": tweet.posted_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S"),
         "title": title,
     }
+    if template_variables:
+        values.update(template_variables)
     message = template.format_map(values).strip()
     if len(message) <= QQ_MESSAGE_MAX_CHARS:
         return message
@@ -214,7 +221,12 @@ async def create_tweet_deliveries(
                     bot_version=bot.version,
                     target_name=target.name,
                     group_openid=target.group_openid,
-                    message_body=render_qq_message(target.message_template, tweet=tweet, user=user),
+                    message_body=render_qq_message(
+                        target.message_template,
+                        tweet=tweet,
+                        user=user,
+                        template_variables=target.template_variables,
+                    ),
                     status="queued",
                     attempts=0,
                     max_attempts=max_attempts,

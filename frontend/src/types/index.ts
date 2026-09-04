@@ -348,6 +348,7 @@ export interface QQNotificationTarget {
   all_monitored_users: boolean
   monitored_user_ids: number[]
   message_template: string
+  template_variables: Record<string, string>
   created_at: string
   updated_at: string
 }
@@ -360,6 +361,7 @@ export interface QQTargetPayload {
   all_monitored_users: boolean
   monitored_user_ids: number[]
   message_template: string
+  template_variables: Record<string, string>
 }
 
 export interface QQDelivery {
