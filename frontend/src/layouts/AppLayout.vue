@@ -45,7 +45,13 @@ const passwordForm = reactive({ current: '', next: '', confirm: '' })
 const now = ref(new Date())
 
 const navigation = [
-  { label: '概览', items: [{ label: '仪表盘', to: '/dashboard', icon: Gauge }] },
+  {
+    label: '概览',
+    items: [
+      { label: '仪表盘', to: '/dashboard', icon: Gauge },
+      { label: '运行监控', to: '/monitoring', icon: Activity },
+    ],
+  },
   {
     label: '监听',
     items: [

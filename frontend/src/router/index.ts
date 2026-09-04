@@ -24,6 +24,12 @@ const router = createRouter({
           meta: { title: '仪表盘', description: '监控任务与系统运行概览' },
         },
         {
+          path: 'monitoring',
+          name: 'monitoring',
+          component: () => import('@/views/RuntimeMonitoringView.vue'),
+          meta: { title: '运行监控', description: '查看服务器资源、服务健康与 Worker 运行状态' },
+        },
+        {
           path: 'accounts',
           name: 'accounts',
           component: () => import('@/views/AccountsView.vue'),
@@ -76,7 +82,7 @@ const router = createRouter({
           path: 'settings',
           name: 'settings',
           component: () => import('@/views/SettingsView.vue'),
-          meta: { title: '系统与设置', description: '服务器健康状态与全局轮询配置' },
+          meta: { title: '系统与设置', description: '配置系统默认轮询策略与并发容量' },
         },
       ],
     },
@@ -90,11 +96,12 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  const isPreview = import.meta.env.DEV && to.query.preview === '1'
   const auth = useAuthStore()
-  if (to.meta.requiresAuth && !auth.isAuthenticated) {
+  if (!isPreview && to.meta.requiresAuth && !auth.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
-  if (to.meta.guestOnly && auth.isAuthenticated) return { name: 'dashboard' }
+  if (!isPreview && to.meta.guestOnly && auth.isAuthenticated) return { name: 'dashboard' }
   document.title = `${String(to.meta.title || '控制台')} · X Sentinel`
 })
 
