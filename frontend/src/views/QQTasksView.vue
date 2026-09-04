@@ -60,6 +60,8 @@ function scheduleLabel(task: QQScheduledTask) {
 
 function formatDateTime(value: string | null) {
   if (!value) return '尚未执行'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '时间无效'
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
@@ -67,7 +69,8 @@ function formatDateTime(value: string | null) {
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
-  }).format(new Date(value))
+    timeZone: 'Asia/Shanghai',
+  }).format(date)
 }
 
 async function load() {
@@ -172,7 +175,7 @@ onMounted(load)
     </section>
 
     <el-dialog v-model="historyOpen" title="推送历史" width="760px">
-      <div v-loading="historyLoading"><el-table :data="history" max-height="420"><el-table-column label="时间" prop="created_at" width="180"/><el-table-column label="目标" prop="target_name"/><el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'sent' ? 'success' : row.status === 'failed' ? 'danger' : 'warning'">{{ row.status === 'sent' ? '成功' : row.status === 'failed' ? '失败' : row.status }}</el-tag></template></el-table-column><el-table-column label="失败原因" prop="last_error"/></el-table><el-empty v-if="!history.length" description="暂无推送历史"/></div>
+      <div v-loading="historyLoading"><el-table :data="history" max-height="420"><el-table-column label="时间（GMT+8）" width="180"><template #default="{ row }">{{ formatDateTime(row.created_at) }}</template></el-table-column><el-table-column label="目标" prop="target_name"/><el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'sent' ? 'success' : row.status === 'failed' ? 'danger' : 'warning'">{{ row.status === 'sent' ? '成功' : row.status === 'failed' ? '失败' : row.status }}</el-tag></template></el-table-column><el-table-column label="失败原因" prop="last_error"/></el-table><el-empty v-if="!history.length" description="暂无推送历史"/></div>
       <template #footer><el-button type="danger" plain :disabled="!history.length" @click="clearHistory">清除历史</el-button><el-button @click="historyOpen = false">关闭</el-button></template>
     </el-dialog>
 
