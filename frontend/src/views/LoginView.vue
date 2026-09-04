@@ -65,45 +65,57 @@ async function submit() {
     </section>
 
     <section class="login-panel">
-      <form class="login-card" novalidate @submit.prevent="submit">
-        <div class="login-card__mobile-brand">
-          <span class="brand-mark"><Radio :size="20" /></span><strong>Auto-X</strong>
+      <div class="login-panel__orb login-panel__orb--one" aria-hidden="true" />
+      <div class="login-panel__orb login-panel__orb--two" aria-hidden="true" />
+      <div class="login-panel__content">
+        <div class="login-panel__context">
+          <div><span>CONTROL ROOM ACCESS</span><strong>进入管理控制台</strong></div>
+          <span class="login-panel__state"><i />系统在线</span>
         </div>
-        <header>
-          <span class="login-card__shield"><ShieldCheck :size="22" /></span>
-          <h2>欢迎回来</h2>
-          <p>登录你的管理员账号以继续</p>
-        </header>
+        <form class="login-card" novalidate @submit.prevent="submit">
+          <div class="login-card__mobile-brand">
+            <span class="brand-mark"><Radio :size="20" /></span><strong>Auto-X</strong>
+          </div>
+          <header>
+            <span class="login-card__shield"><ShieldCheck :size="22" /></span>
+            <h2>欢迎回来</h2>
+            <p>登录你的管理员账号以继续</p>
+          </header>
 
-        <div v-if="error" class="form-alert form-alert--error" role="alert">{{ error }}</div>
+          <div v-if="error" class="form-alert form-alert--error" role="alert">{{ error }}</div>
 
-        <label class="field">
-          <span class="field__label">用户名</span>
-          <span class="input-shell" :class="{ 'is-invalid': invalid && !form.username.trim() }">
-            <UserRound :size="18" />
-            <input v-model="form.username" autocomplete="username" placeholder="请输入用户名" autofocus />
-          </span>
-          <small v-if="invalid && !form.username.trim()" class="field__error">请输入用户名</small>
-        </label>
+          <label class="field">
+            <span class="field__label">用户名</span>
+            <span class="input-shell" :class="{ 'is-invalid': invalid && !form.username.trim() }">
+              <UserRound :size="18" />
+              <input v-model="form.username" autocomplete="username" placeholder="请输入用户名" autofocus />
+            </span>
+            <small v-if="invalid && !form.username.trim()" class="field__error">请输入用户名</small>
+          </label>
 
-        <label class="field">
-          <span class="field__label">密码</span>
-          <span class="input-shell" :class="{ 'is-invalid': invalid && !form.password }">
-            <LockKeyhole :size="18" />
-            <input v-model="form.password" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" placeholder="请输入密码" />
-            <button type="button" aria-label="显示或隐藏密码" @click="showPassword = !showPassword">
-              <component :is="showPassword ? EyeOff : Eye" :size="18" />
-            </button>
-          </span>
-          <small v-if="invalid && !form.password" class="field__error">请输入密码</small>
-        </label>
+          <label class="field">
+            <span class="field__label">密码</span>
+            <span class="input-shell" :class="{ 'is-invalid': invalid && !form.password }">
+              <LockKeyhole :size="18" />
+              <input v-model="form.password" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" placeholder="请输入密码" />
+              <button type="button" aria-label="显示或隐藏密码" @click="showPassword = !showPassword">
+                <component :is="showPassword ? EyeOff : Eye" :size="18" />
+              </button>
+            </span>
+            <small v-if="invalid && !form.password" class="field__error">请输入密码</small>
+          </label>
 
-        <button class="button button--primary button--large login-submit" type="submit" :disabled="auth.loading">
-          <span v-if="auth.loading" class="spinner spinner--small" />
-          <template v-else>安全登录 <ArrowRight :size="18" /></template>
-        </button>
-        <p class="login-card__secure"><LockKeyhole :size="13" />连接受 TLS 加密保护</p>
-      </form>
+          <button class="button button--primary button--large login-submit" type="submit" :disabled="auth.loading">
+            <span v-if="auth.loading" class="spinner spinner--small" />
+            <template v-else>安全登录 <ArrowRight :size="18" /></template>
+          </button>
+          <p class="login-card__secure"><LockKeyhole :size="13" />连接受 TLS 加密保护</p>
+        </form>
+        <div class="login-panel__notes" aria-label="登录安全说明">
+          <div><span><ShieldCheck :size="15" /></span><p><strong>安全会话</strong><small>登录凭据仅用于当前控制台会话</small></p></div>
+          <div><span><LockKeyhole :size="15" /></span><p><strong>传输加密</strong><small>连接由 TLS 保护，降低凭据泄露风险</small></p></div>
+        </div>
+      </div>
     </section>
   </main>
 </template>
