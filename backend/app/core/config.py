@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     qq_worker_scan_interval_seconds: float = Field(default=2.0, ge=0.5, le=60)
     qq_worker_max_concurrency: int = Field(default=5, ge=1, le=50)
     qq_worker_batch_size: int = Field(default=100, ge=1, le=1000)
+    qq_worker_send_interval_seconds: float = Field(default=5.0, ge=0.0, le=300)
     qq_worker_max_attempts: int = Field(default=3, ge=1, le=10)
     qq_worker_lock_ttl_seconds: int = Field(default=60, ge=15, le=600)
     qq_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)

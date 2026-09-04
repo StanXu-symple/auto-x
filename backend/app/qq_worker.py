@@ -62,6 +62,9 @@ from app.services.qq_schedule import next_qq_task_run
 
 logger = logging.getLogger(__name__)
 
+QQ_SEND_GATE = "xsentinel:qq:send-gate"
+QQ_LAST_SENT_AT = "xsentinel:qq:last-sent-at"
+
 GROUP_ADD_ROBOT_ACK = "机器人已入群，请在 X Sentinel 中选择本群并配置推送目标。"
 
 
@@ -415,6 +418,15 @@ class QQDeliveryWorker:
                 )
 
     async def process_delivery(self, delivery_id: int) -> bool:
+        gate_token = await self._acquire_send_gate()
+        try:
+            await self._wait_for_send_interval()
+            return await self._process_delivery_locked(delivery_id)
+        finally:
+            with suppress(Exception):
+                await self.redis.eval(RELEASE_LOCK_SCRIPT, 1, QQ_SEND_GATE, gate_token)
+
+    async def _process_delivery_locked(self, delivery_id: int) -> bool:
         lock_key = f"xsentinel:qq:lock:{delivery_id}"
         claim_token = str(uuid.uuid4())
         try:
@@ -435,6 +447,7 @@ class QQDeliveryWorker:
             claim = await self._claim(delivery_id, claim_token)
             if claim is None:
                 return False
+            await self.redis.set(QQ_LAST_SENT_AT, str(time.time()), ex=3600)
             provider_message_id = await self.sender.send_group(claim)
             applied = await self._commit_success(claim, provider_message_id)
             outcome = "sent" if applied else "superseded"
@@ -457,6 +470,36 @@ class QQDeliveryWorker:
         finally:
             with suppress(Exception):
                 await self.redis.eval(RELEASE_LOCK_SCRIPT, 1, lock_key, claim_token)
+
+    async def _acquire_send_gate(self) -> str:
+        token = f"{self.worker_id}:{uuid.uuid4().hex}"
+        ttl = max(30, int(self.settings.qq_worker_send_interval_seconds) + 30)
+        while not self.stop_event.is_set():
+            try:
+                if await self.redis.set(QQ_SEND_GATE, token, nx=True, ex=ttl):
+                    return token
+            except Exception:
+                logger.warning("QQ send gate unavailable; retrying", exc_info=True)
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=0.2)
+            except TimeoutError:
+                pass
+        raise asyncio.CancelledError
+
+    async def _wait_for_send_interval(self) -> None:
+        interval = self.settings.qq_worker_send_interval_seconds
+        if interval <= 0:
+            return
+        try:
+            last_sent = await self.redis.get(QQ_LAST_SENT_AT)
+            remaining = interval - (time.time() - float(last_sent)) if last_sent else 0
+        except (TypeError, ValueError, OSError):
+            remaining = 0
+        if remaining > 0:
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=remaining)
+            except TimeoutError:
+                pass
 
     async def _claim(self, delivery_id: int, claim_token: str) -> QQDeliveryClaim | None:
         now = datetime.now(UTC)
