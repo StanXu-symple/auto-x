@@ -177,6 +177,11 @@ function changePage(page: number) {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
+function nextPollLabel(value?: string | null) {
+  const relative = formatRelative(value)
+  return relative.includes('前') ? `已逾期 ${relative}` : relative
+}
+
 onMounted(load)
 </script>
 
@@ -221,7 +226,7 @@ onMounted(load)
           <el-table-column label="状态" width="130"><template #default="{ row: account }"><StatusBadge :status="account.is_active ? account.status || 'active' : 'paused'" /><small v-if="account.last_error" class="row-error" :title="account.last_error">{{ account.last_error }}</small></template></el-table-column>
           <el-table-column label="轮询频率" min-width="130"><template #default="{ row: account }"><span class="interval-cell"><Clock3 :size="15" />{{ formatInterval(account.effective_poll_interval_seconds) }}<el-tag v-if="account.poll_interval_seconds == null" size="small" effect="plain">默认</el-tag></span></template></el-table-column>
           <el-table-column label="上次轮询" min-width="150"><template #default="{ row: account }"><span class="date-cell"><strong>{{ formatRelative(account.last_polled_at) }}</strong><small>{{ formatDateTime(account.last_polled_at) }}</small></span></template></el-table-column>
-          <el-table-column label="下次轮询" min-width="150"><template #default="{ row: account }"><span class="date-cell"><strong>{{ account.is_active ? formatRelative(account.next_poll_at) : '不适用' }}</strong><small>{{ account.is_active ? formatDateTime(account.next_poll_at) : '监听已暂停' }}</small></span></template></el-table-column>
+          <el-table-column label="下次轮询" min-width="150"><template #default="{ row: account }"><span class="date-cell"><strong>{{ account.is_active ? nextPollLabel(account.next_poll_at) : '不适用' }}</strong><small>{{ account.is_active ? formatDateTime(account.next_poll_at) : '监听已暂停' }}</small></span></template></el-table-column>
           <el-table-column label="操作" fixed="right" width="135" align="right">
             <template #default="{ row: account }">
               <div class="row-actions">
