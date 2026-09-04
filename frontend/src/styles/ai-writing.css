@@ -1,0 +1,1111 @@
+/* AI writing workspace: a focused operations surface for queue, policy, and review. */
+.ai-writing-page {
+  --writing-ink: #172033;
+  --writing-text: #47536a;
+  --writing-muted: #77839a;
+  --writing-subtle: #9da8ba;
+  --writing-border: #e1e7f0;
+  --writing-border-strong: #cbd6e5;
+  --writing-surface: #fff;
+  --writing-soft: #f7f9fc;
+  --writing-rose: #e11d48;
+  --writing-rose-soft: #fff1f4;
+  --writing-blue: #2563eb;
+  --writing-blue-soft: #edf3ff;
+  --writing-green: #059669;
+  --writing-green-soft: #eaf9f2;
+  --writing-amber: #c27808;
+  --writing-amber-soft: #fff7e8;
+  display: flex;
+  width: 100%;
+  max-width: 1420px;
+  flex-direction: column;
+  gap: 24px;
+  margin: 0 auto;
+  color: var(--writing-ink);
+}
+
+.ai-writing-page .ai-hero,
+.ai-writing-page .ai-workbench {
+  border: 1px solid var(--writing-border);
+  border-radius: 18px;
+  background: var(--writing-surface);
+  box-shadow: 0 7px 24px rgba(31, 43, 71, .055);
+}
+
+.ai-writing-page .ai-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 138px;
+  padding: 28px 30px;
+  overflow: hidden;
+  gap: 24px;
+  background: linear-gradient(115deg, #fff 0%, #fff 68%, #fff8fa 100%);
+}
+
+.ai-writing-page .ai-hero::after {
+  position: absolute;
+  right: -76px;
+  top: -128px;
+  width: 300px;
+  height: 300px;
+  border: 1px solid rgba(225, 29, 72, .1);
+  border-radius: 50%;
+  box-shadow: 0 0 0 22px rgba(225, 29, 72, .025), 0 0 0 46px rgba(225, 29, 72, .018);
+  content: '';
+  pointer-events: none;
+}
+
+.ai-writing-page .ai-hero__copy,
+.ai-writing-page .ai-hero__actions,
+.ai-writing-page .ai-summary-grid article,
+.ai-writing-page .settings-block header,
+.ai-writing-page .skill-card header,
+.ai-writing-page .job-source,
+.ai-writing-page .job-actions,
+.ai-writing-page .ai-tab-label {
+  display: flex;
+  align-items: center;
+}
+
+.ai-writing-page .ai-hero__copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  gap: 16px;
+}
+
+.ai-writing-page .ai-hero__icon {
+  display: inline-flex;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #f6c5d1;
+  border-radius: 15px;
+  color: var(--writing-rose);
+  background: var(--writing-rose-soft);
+}
+
+.ai-writing-page .eyebrow {
+  color: var(--writing-rose);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.ai-writing-page .ai-hero h2 {
+  margin: 5px 0 4px;
+  color: var(--writing-ink);
+  font-size: 25px;
+  letter-spacing: -.045em;
+}
+
+.ai-writing-page .ai-hero p,
+.ai-writing-page .ai-pane__toolbar p,
+.ai-writing-page .settings-block header p {
+  margin: 0;
+  color: var(--writing-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.ai-writing-page .ai-hero__actions {
+  position: relative;
+  z-index: 1;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ai-writing-page .provider-readiness {
+  display: flex;
+  align-items: center;
+  min-width: 155px;
+  margin-right: 2px;
+  padding: 10px 12px;
+  border: 1px solid #eadfca;
+  border-radius: 11px;
+  background: var(--writing-amber-soft);
+  gap: 8px;
+}
+
+.ai-writing-page .provider-readiness > span {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--writing-amber);
+}
+
+.ai-writing-page .provider-readiness.is-ready {
+  border-color: #bdebd8;
+  background: var(--writing-green-soft);
+}
+
+.ai-writing-page .provider-readiness.is-ready > span {
+  background: var(--writing-green);
+}
+
+.ai-writing-page .provider-readiness div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.ai-writing-page .provider-readiness small {
+  color: var(--writing-muted);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.ai-writing-page .provider-readiness strong {
+  margin-top: 3px;
+  color: var(--writing-ink);
+  font-size: 10px;
+}
+
+.ai-writing-page .ai-hero__actions > .el-button--primary {
+  min-height: 44px;
+  padding-inline: 17px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--writing-rose);
+  box-shadow: 0 8px 18px rgba(225, 29, 72, .16);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ai-writing-page .ai-hero__actions > .el-button--primary:hover {
+  background: #be123c;
+}
+
+.ai-writing-page .ai-hero__actions > .el-button.is-circle {
+  width: 42px;
+  height: 42px;
+  border-color: var(--writing-border-strong);
+  color: var(--writing-muted);
+  background: #fff;
+}
+
+.ai-writing-page .ai-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.ai-writing-page .ai-summary-grid article {
+  position: relative;
+  min-width: 0;
+  min-height: 106px;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid var(--writing-border);
+  border-radius: 14px;
+  background: var(--writing-surface);
+  box-shadow: 0 5px 18px rgba(31, 43, 71, .04);
+  gap: 12px;
+}
+
+.ai-writing-page .ai-summary-grid article::before {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 3px;
+  height: 100%;
+  border-radius: 14px 0 0 14px;
+  background: var(--writing-rose);
+  content: '';
+}
+
+.ai-writing-page .ai-summary-grid article:nth-child(2)::before { background: var(--writing-blue); }
+.ai-writing-page .ai-summary-grid article:nth-child(3)::before { background: var(--writing-green); }
+.ai-writing-page .ai-summary-grid article:nth-child(4)::before { background: var(--writing-amber); }
+
+.ai-writing-page .summary-icon {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+}
+
+.ai-writing-page .summary-icon.is-purple { color: var(--writing-rose); background: var(--writing-rose-soft); }
+.ai-writing-page .summary-icon.is-blue { color: var(--writing-blue); background: var(--writing-blue-soft); }
+.ai-writing-page .summary-icon.is-green { color: var(--writing-green); background: var(--writing-green-soft); }
+.ai-writing-page .summary-icon.is-orange { color: var(--writing-amber); background: var(--writing-amber-soft); }
+
+.ai-writing-page .ai-summary-grid article > div {
+  min-width: 0;
+}
+
+.ai-writing-page .ai-summary-grid small,
+.ai-writing-page .ai-summary-grid p {
+  display: block;
+  overflow: hidden;
+  color: var(--writing-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-writing-page .ai-summary-grid strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: var(--writing-ink);
+  font-size: 16px;
+  letter-spacing: -.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-writing-page .ai-summary-grid p {
+  margin: 3px 0 0;
+}
+
+.ai-writing-page .ai-workbench {
+  overflow: hidden;
+}
+
+.ai-writing-page .ai-tabs .el-tabs__header {
+  margin: 0;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--writing-border);
+}
+
+.ai-writing-page .ai-tabs .el-tabs__nav-wrap::after {
+  display: none;
+}
+
+.ai-writing-page .ai-tabs .el-tabs__item {
+  height: 58px;
+  color: var(--writing-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ai-writing-page .ai-tabs .el-tabs__item:hover,
+.ai-writing-page .ai-tabs .el-tabs__item.is-active {
+  color: var(--writing-rose);
+}
+
+.ai-writing-page .ai-tabs .el-tabs__active-bar {
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--writing-rose);
+}
+
+.ai-writing-page .ai-tab-label {
+  gap: 7px;
+}
+
+.ai-writing-page .ai-pane {
+  min-height: 0;
+  padding: 24px;
+}
+
+.ai-writing-page .ai-pane__toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  gap: 16px;
+}
+
+.ai-writing-page .ai-pane__toolbar h3,
+.ai-writing-page .settings-block h3 {
+  margin: 0 0 4px;
+  color: var(--writing-ink);
+  font-size: 15px;
+  letter-spacing: -.02em;
+}
+
+.ai-writing-page .ai-pane__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-writing-page .ai-pane__actions .el-input {
+  width: 210px;
+}
+
+.ai-writing-page .status-filter {
+  width: 132px;
+}
+
+.ai-writing-page .ai-pane .el-select__wrapper,
+.ai-writing-page .ai-pane .el-input__wrapper {
+  min-height: 42px;
+  border: 1px solid var(--writing-border-strong);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.ai-writing-page .ai-pane .el-select__wrapper:hover,
+.ai-writing-page .ai-pane .el-input__wrapper:hover {
+  border-color: #aebbd0;
+}
+
+.ai-writing-page .ai-pane .el-select__wrapper.is-focused,
+.ai-writing-page .ai-pane .el-input__wrapper.is-focus {
+  border-color: var(--writing-rose);
+  box-shadow: 0 0 0 3px var(--writing-rose-soft) !important;
+}
+
+.ai-writing-page .sentinel-table {
+  overflow: hidden;
+  border: 1px solid var(--writing-border);
+  border-radius: 12px;
+}
+
+.ai-writing-page .sentinel-table .el-table__header-wrapper th {
+  height: 42px;
+  color: var(--writing-muted);
+  background: var(--writing-soft);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ai-writing-page .sentinel-table .el-table__body-wrapper td {
+  padding: 13px 0;
+  border-bottom-color: var(--writing-border);
+}
+
+.ai-writing-page .sentinel-table .el-table__row:hover > td {
+  background: #fff9fa !important;
+}
+
+.ai-writing-page .sentinel-table .ai-job-row--highlighted > td {
+  background: var(--writing-rose-soft) !important;
+}
+
+.ai-writing-page .job-source {
+  min-width: 0;
+  gap: 9px;
+}
+
+.ai-writing-page .source-mark {
+  flex: 0 0 auto;
+  padding: 5px 7px;
+  border-radius: 7px;
+  color: var(--writing-rose);
+  background: var(--writing-rose-soft);
+  font-family: ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.ai-writing-page .job-source > div {
+  min-width: 0;
+}
+
+.ai-writing-page .job-source strong {
+  color: var(--writing-ink);
+  font-size: 11px;
+}
+
+.ai-writing-page .job-source p {
+  overflow: hidden;
+  max-width: 360px;
+  margin: 4px 0 0;
+  color: var(--writing-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-writing-page .skill-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ai-writing-page .skill-tags .el-tag {
+  border-color: #d6d0ff;
+  color: var(--writing-rose);
+  background: var(--writing-rose-soft);
+}
+
+.ai-writing-page .skill-tags > span,
+.ai-writing-page .attempt-copy,
+.ai-writing-page .waiting-copy {
+  color: var(--writing-muted);
+  font-size: 10px;
+}
+
+.ai-writing-page .waiting-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ai-writing-page .job-actions {
+  min-height: 30px;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ai-writing-page .job-actions .el-button {
+  border-radius: 8px;
+}
+
+.ai-writing-page .job-error-icon {
+  margin-left: 4px;
+  color: var(--writing-rose);
+}
+
+.ai-writing-page .ai-pane > .empty-state {
+  min-height: 248px;
+  margin: 4px 0 0;
+  padding: 42px 20px;
+  border: 1px dashed var(--writing-border-strong);
+  border-radius: 14px;
+  background: var(--writing-soft);
+}
+
+.ai-writing-page .ai-pane > .empty-state .empty-state__icon {
+  width: 48px;
+  height: 48px;
+  color: var(--writing-rose);
+  background: var(--writing-rose-soft);
+}
+
+.ai-writing-page .ai-pane > .empty-state strong {
+  color: var(--writing-ink);
+  font-size: 13px;
+}
+
+.ai-writing-page .ai-pane > .empty-state p {
+  max-width: 420px;
+  color: var(--writing-muted);
+  font-size: 10px;
+}
+
+.ai-writing-page .settings-pane {
+  padding: 24px 24px 0;
+}
+
+.ai-writing-page .settings-sections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.ai-writing-page .settings-block {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--writing-border);
+  border-radius: 14px;
+  background: var(--writing-soft);
+}
+
+.ai-writing-page .settings-block header {
+  margin-bottom: 18px;
+  gap: 11px;
+}
+
+.ai-writing-page .settings-block header > span {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #f5c5d1;
+  border-radius: 10px;
+  color: var(--writing-rose);
+  background: var(--writing-rose-soft);
+}
+
+.ai-writing-page .settings-block header > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.ai-writing-page .settings-block header .el-tag {
+  flex: 0 0 auto;
+}
+
+.ai-writing-page .settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+}
+
+.ai-writing-page .settings-block .el-form-item,
+.ai-writing-page .context-selector .el-form-item {
+  margin-bottom: 17px;
+}
+
+.ai-writing-page .settings-block .el-form-item__label,
+.ai-writing-page .context-selector .el-form-item__label,
+.ai-writing-page .dialog-form .el-form-item__label {
+  height: auto;
+  margin-bottom: 7px;
+  color: var(--writing-ink);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.ai-writing-page .settings-block .el-input__wrapper,
+.ai-writing-page .settings-block .el-select__wrapper,
+.ai-writing-page .settings-block .el-textarea__inner,
+.ai-writing-page .settings-block .el-input-number .el-input__wrapper,
+.ai-writing-page .context-selector .el-select__wrapper {
+  min-height: 42px;
+  border: 1px solid var(--writing-border-strong);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.ai-writing-page .settings-block .el-textarea__inner {
+  min-height: 132px;
+  padding: 11px 12px;
+}
+
+.ai-writing-page .settings-block .el-input__wrapper.is-focus,
+.ai-writing-page .settings-block .el-select__wrapper.is-focused,
+.ai-writing-page .settings-block .el-textarea__inner:focus {
+  border-color: var(--writing-rose);
+  box-shadow: 0 0 0 3px var(--writing-rose-soft) !important;
+}
+
+.ai-writing-page .span-2,
+.ai-writing-page .automation-block {
+  grid-column: 1 / -1;
+}
+
+.ai-writing-page .field-unit {
+  margin-left: 7px;
+  color: var(--writing-muted);
+  font-size: 10px;
+}
+
+.ai-writing-page .credential-status {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--writing-border);
+  border-radius: 11px;
+  background: #fff;
+  gap: 10px;
+}
+
+.ai-writing-page .credential-status > span {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: var(--writing-amber);
+  background: var(--writing-amber-soft);
+}
+
+.ai-writing-page .credential-status > span.is-ready {
+  color: var(--writing-green);
+  background: var(--writing-green-soft);
+}
+
+.ai-writing-page .credential-status > div {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.ai-writing-page .credential-status strong {
+  font-size: 11px;
+}
+
+.ai-writing-page .credential-status small {
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--writing-muted);
+  font-size: 9px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-writing-page .credential-status .el-button {
+  flex: 0 0 auto;
+}
+
+.ai-writing-page .compact-provider-settings {
+  margin-top: 16px;
+}
+
+.ai-writing-page .switch-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ai-writing-page .switch-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--writing-border);
+  border-radius: 11px;
+  background: #fff;
+  gap: 10px;
+}
+
+.ai-writing-page .switch-list > div > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.ai-writing-page .switch-list strong {
+  color: var(--writing-ink);
+  font-size: 10px;
+}
+
+.ai-writing-page .switch-list small {
+  margin-top: 4px;
+  color: var(--writing-muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.ai-writing-page .settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin: 20px -24px 0;
+  padding: 14px 24px;
+  border-top: 1px solid var(--writing-border);
+  background: #fff;
+  gap: 8px;
+}
+
+.ai-writing-page .settings-footer > span {
+  margin-right: auto;
+  color: var(--writing-subtle);
+  font-size: 9px;
+}
+
+.ai-writing-page .context-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 280px));
+  gap: 14px;
+  margin-bottom: 17px;
+}
+
+.ai-writing-page .context-selector .el-form-item {
+  margin-bottom: 0;
+}
+
+.ai-writing-page .context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.ai-writing-page .binding-card,
+.ai-writing-page .profile-card {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.ai-writing-page .binding-card .el-alert {
+  margin-bottom: 17px;
+}
+
+.ai-writing-page .binding-card .el-select {
+  width: 100%;
+}
+
+.ai-writing-page .binding-card > footer,
+.ai-writing-page .profile-card > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 16px;
+  color: var(--writing-muted);
+  font-size: 9px;
+  gap: 10px;
+}
+
+.ai-writing-page .feature-prompt,
+.ai-writing-page .profile-details > div {
+  border: 1px solid var(--writing-border);
+  border-radius: 11px;
+  background: #fff;
+}
+
+.ai-writing-page .feature-prompt {
+  padding: 13px;
+}
+
+.ai-writing-page .feature-prompt small,
+.ai-writing-page .profile-topics > small,
+.ai-writing-page .profile-details dt {
+  color: var(--writing-rose);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.ai-writing-page .feature-prompt p {
+  margin: 7px 0 0;
+  color: var(--writing-text);
+  font-size: 10px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.ai-writing-page .profile-details {
+  display: grid;
+  margin: 0;
+  gap: 9px;
+}
+
+.ai-writing-page .profile-details > div {
+  padding: 12px;
+}
+
+.ai-writing-page .profile-details dd {
+  margin: 6px 0 0;
+  color: var(--writing-text);
+  font-size: 10px;
+  line-height: 1.65;
+}
+
+.ai-writing-page .profile-topics {
+  margin-top: 14px;
+}
+
+.ai-writing-page .profile-topics > div {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  color: var(--writing-muted);
+  font-size: 10px;
+  gap: 5px;
+}
+
+.ai-writing-page .skill-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 120px;
+  gap: 14px;
+}
+
+.ai-writing-page .skill-card {
+  display: flex;
+  min-width: 0;
+  min-height: 226px;
+  flex-direction: column;
+  padding: 17px;
+  border: 1px solid var(--writing-border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(31, 43, 71, .035);
+}
+
+.ai-writing-page .skill-card.is-inactive {
+  opacity: .62;
+}
+
+.ai-writing-page .skill-card header {
+  gap: 9px;
+}
+
+.ai-writing-page .skill-card__icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: var(--writing-rose);
+  background: var(--writing-rose-soft);
+}
+
+.ai-writing-page .skill-card header > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.ai-writing-page .skill-card header strong,
+.ai-writing-page .skill-card header small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-writing-page .skill-card header strong {
+  color: var(--writing-ink);
+  font-size: 11px;
+}
+
+.ai-writing-page .skill-card header small {
+  margin-top: 3px;
+  color: var(--writing-muted);
+  font-size: 9px;
+}
+
+.ai-writing-page .skill-card > p {
+  overflow: hidden;
+  min-height: 30px;
+  margin: 13px 0 9px;
+  color: var(--writing-text);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.ai-writing-page .skill-card pre {
+  display: -webkit-box;
+  overflow: hidden;
+  flex: 1;
+  margin: 0;
+  padding: 11px;
+  border: 1px solid var(--writing-border);
+  border-radius: 9px;
+  color: var(--writing-muted);
+  background: var(--writing-soft);
+  font-family: inherit;
+  font-size: 9px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+}
+
+.ai-writing-page .skill-card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  color: var(--writing-muted);
+  font-size: 9px;
+}
+
+.ai-writing-page .skill-card footer > div {
+  display: flex;
+  gap: 5px;
+}
+
+.ai-writing-dialog .dialog-form {
+  margin-top: 16px;
+}
+
+.ai-writing-dialog .dialog-form .el-form-item {
+  margin-bottom: 17px;
+}
+
+.ai-writing-dialog .dialog-form .el-input__wrapper,
+.ai-writing-dialog .dialog-form .el-select__wrapper,
+.ai-writing-dialog .dialog-form .el-textarea__inner {
+  border: 1px solid var(--writing-border-strong);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.ai-writing-dialog .dialog-form .el-input__wrapper,
+.ai-writing-dialog .dialog-form .el-select__wrapper {
+  min-height: 42px;
+}
+
+.ai-writing-dialog .dialog-form .el-input__wrapper.is-focus,
+.ai-writing-dialog .dialog-form .el-select__wrapper.is-focused,
+.ai-writing-dialog .dialog-form .el-textarea__inner:focus {
+  border-color: var(--writing-rose);
+  box-shadow: 0 0 0 3px var(--writing-rose-soft) !important;
+}
+
+.ai-writing-dialog .dialog-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 14px;
+}
+
+.ai-writing-dialog .tweet-option {
+  display: flex;
+  max-width: 470px;
+  flex-direction: column;
+}
+
+.ai-writing-dialog .tweet-option span {
+  overflow: hidden;
+  color: var(--writing-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-writing-dialog .draft-dialog-meta {
+  display: flex;
+  justify-content: space-between;
+  color: var(--writing-muted);
+  font-size: 9px;
+}
+
+.ai-writing-dialog .dialog-footer-spacer {
+  display: inline-block;
+  min-width: 80px;
+  flex: 1;
+}
+
+.ai-writing-dialog .el-dialog__footer > div {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+@media (max-width: 1180px) {
+  .ai-writing-page .ai-summary-grid,
+  .ai-writing-page .skill-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ai-writing-page .settings-sections,
+  .ai-writing-page .context-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-writing-page .automation-block {
+    grid-column: auto;
+  }
+
+  .ai-writing-page .switch-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 800px) {
+  .ai-writing-page .ai-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ai-writing-page .ai-hero__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .ai-writing-page .provider-readiness {
+    margin-right: auto;
+  }
+
+  .ai-writing-page .ai-pane__toolbar {
+    flex-direction: column;
+  }
+
+  .ai-writing-page .ai-pane__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .ai-writing-page .ai-pane__actions .el-input {
+    width: min(100%, 280px);
+  }
+
+  .ai-writing-page .skill-grid,
+  .ai-writing-page .context-selector {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-writing-page .settings-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-writing-page .span-2 {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .ai-writing-page {
+    gap: 16px;
+  }
+
+  .ai-writing-page .ai-hero {
+    padding: 21px 18px;
+  }
+
+  .ai-writing-page .ai-hero__copy {
+    align-items: flex-start;
+  }
+
+  .ai-writing-page .ai-hero__icon {
+    width: 46px;
+    height: 46px;
+  }
+
+  .ai-writing-page .ai-hero h2 {
+    font-size: 22px;
+  }
+
+  .ai-writing-page .ai-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-writing-page .ai-tabs .el-tabs__header {
+    padding: 0 12px;
+  }
+
+  .ai-writing-page .ai-tabs .el-tabs__item {
+    height: 52px;
+    padding: 0 11px;
+    font-size: 10px;
+  }
+
+  .ai-writing-page .ai-pane,
+  .ai-writing-page .settings-pane {
+    padding: 18px 14px;
+  }
+
+  .ai-writing-page .settings-footer {
+    align-items: stretch;
+    flex-wrap: wrap;
+    margin-inline: -14px;
+    padding-inline: 14px;
+  }
+
+  .ai-writing-page .settings-footer > span {
+    width: 100%;
+    margin-right: 0;
+  }
+
+  .ai-writing-dialog .dialog-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-writing-page *,
+  .ai-writing-page *::before,
+  .ai-writing-page *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

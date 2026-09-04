@@ -1,0 +1,665 @@
+/* QQ delivery console: operational hierarchy first, with restrained status color. */
+.qq-notifications-page {
+  --qq-ink: #172033;
+  --qq-text: #47536a;
+  --qq-muted: #77839a;
+  --qq-subtle: #9da8ba;
+  --qq-border: #e1e7f0;
+  --qq-border-strong: #cbd6e5;
+  --qq-surface: #fff;
+  --qq-soft: #f7f9fc;
+  --qq-rose: #e11d48;
+  --qq-rose-soft: #fff1f4;
+  --qq-blue: #2563eb;
+  --qq-blue-soft: #edf3ff;
+  --qq-green: #059669;
+  --qq-green-soft: #eaf9f2;
+  --qq-amber: #c27808;
+  --qq-amber-soft: #fff7e8;
+  display: flex;
+  width: 100%;
+  max-width: 1420px;
+  flex-direction: column;
+  gap: 24px;
+  margin: 0 auto;
+  color: var(--qq-ink);
+}
+
+.qq-notifications-page .qq-toolbar,
+.qq-notifications-page .qq-section,
+.qq-notifications-page .qq-summary article,
+.qq-notifications-page .platform-notice {
+  border: 1px solid var(--qq-border);
+  border-radius: 16px;
+  background: var(--qq-surface);
+  box-shadow: 0 6px 22px rgba(31, 43, 71, .045);
+}
+
+.qq-notifications-page .qq-toolbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 132px;
+  overflow: hidden;
+  padding: 25px 28px;
+  gap: 24px;
+  background: linear-gradient(115deg, #fff 0%, #fff 70%, #fff8fa 100%);
+}
+
+.qq-notifications-page .qq-toolbar::after {
+  position: absolute;
+  right: -90px;
+  top: -140px;
+  width: 310px;
+  height: 310px;
+  border: 1px solid rgba(225, 29, 72, .1);
+  border-radius: 50%;
+  box-shadow: 0 0 0 22px rgba(225, 29, 72, .025), 0 0 0 46px rgba(225, 29, 72, .018);
+  content: '';
+  pointer-events: none;
+}
+
+.qq-notifications-page .qq-toolbar > div:first-child {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.qq-notifications-page .qq-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--qq-rose);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.qq-notifications-page .qq-toolbar h2 {
+  margin: 5px 0 5px;
+  color: var(--qq-ink);
+  font-size: 25px;
+  letter-spacing: -.045em;
+}
+
+.qq-notifications-page .qq-toolbar p,
+.qq-notifications-page .qq-section header p {
+  max-width: 780px;
+  margin: 0;
+  color: var(--qq-muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.qq-notifications-page .qq-toolbar__actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 9px;
+}
+
+.qq-notifications-page .qq-toolbar__actions .el-button--primary {
+  border: 0;
+  border-radius: 10px;
+  background: var(--qq-rose);
+  box-shadow: 0 8px 18px rgba(225, 29, 72, .16);
+  font-weight: 700;
+}
+
+.qq-notifications-page .qq-toolbar__actions .el-button--primary:hover {
+  background: #be123c;
+}
+
+.qq-notifications-page .qq-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.qq-notifications-page .qq-summary article {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 104px;
+  overflow: hidden;
+  padding: 18px;
+  gap: 13px;
+}
+
+.qq-notifications-page .qq-summary article::before {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 3px;
+  height: 100%;
+  border-radius: 16px 0 0 16px;
+  background: var(--qq-rose);
+  content: '';
+}
+
+.qq-notifications-page .qq-summary article:nth-child(2)::before { background: var(--qq-blue); }
+.qq-notifications-page .qq-summary article:nth-child(3)::before { background: var(--qq-amber); }
+.qq-notifications-page .qq-summary article:nth-child(4)::before { background: var(--qq-green); }
+
+.qq-notifications-page .qq-summary article > span,
+.qq-notifications-page .bot-avatar,
+.qq-notifications-page .target-icon,
+.qq-notifications-page .qq-empty > span {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border: 1px solid #f4c7d2;
+  border-radius: 12px;
+  color: var(--qq-rose);
+  background: var(--qq-rose-soft);
+}
+
+.qq-notifications-page .qq-summary article:nth-child(2) > span {
+  border-color: #cbdafc;
+  color: var(--qq-blue);
+  background: var(--qq-blue-soft);
+}
+
+.qq-notifications-page .qq-summary article:nth-child(3) > span {
+  border-color: #f3dfb4;
+  color: var(--qq-amber);
+  background: var(--qq-amber-soft);
+}
+
+.qq-notifications-page .qq-summary article:nth-child(4) > span {
+  border-color: #bdebd8;
+  color: var(--qq-green);
+  background: var(--qq-green-soft);
+}
+
+.qq-notifications-page .qq-summary article > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.qq-notifications-page .qq-summary small,
+.qq-notifications-page .bot-meta small,
+.qq-notifications-page .target-scope small {
+  color: var(--qq-muted);
+  font-size: 10px;
+}
+
+.qq-notifications-page .qq-summary strong {
+  color: var(--qq-ink);
+  font-size: 24px;
+  letter-spacing: -.035em;
+}
+
+.qq-notifications-page .qq-summary strong em {
+  color: var(--qq-subtle);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.qq-notifications-page .status-text {
+  font-size: 15px !important;
+}
+
+.qq-notifications-page .status-text.online { color: var(--qq-green); }
+.qq-notifications-page .status-text.offline { color: var(--qq-rose); }
+
+.qq-notifications-page .platform-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  padding: 15px 18px;
+  border-color: #eadfca;
+  color: var(--qq-amber);
+  background: #fffdf7;
+  gap: 11px;
+}
+
+.qq-notifications-page .platform-notice strong {
+  color: #7a5a12;
+  font-size: 12px;
+}
+
+.qq-notifications-page .platform-notice p {
+  margin: 3px 0 0;
+  color: #756a42;
+  font-size: 10px;
+  line-height: 1.65;
+}
+
+.qq-notifications-page .platform-notice a {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--qq-rose);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.qq-notifications-page .qq-section {
+  overflow: hidden;
+}
+
+.qq-notifications-page .qq-section > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--qq-border);
+  gap: 20px;
+}
+
+.qq-notifications-page .qq-section > header h3 {
+  margin: 0 0 4px;
+  color: var(--qq-ink);
+  font-size: 15px;
+  letter-spacing: -.02em;
+}
+
+.qq-notifications-page .qq-section > header > span {
+  color: var(--qq-muted);
+  font-size: 11px;
+}
+
+.qq-notifications-page .bot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 16px;
+}
+
+.qq-notifications-page .bot-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 17px;
+  border: 1px solid var(--qq-border);
+  border-radius: 14px;
+  background: #fff;
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.qq-notifications-page .bot-card:hover {
+  border-color: #f0a9b8;
+  box-shadow: 0 10px 24px rgba(31, 43, 71, .07);
+  transform: translateY(-1px);
+}
+
+.qq-notifications-page .bot-card__top {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 11px;
+}
+
+.qq-notifications-page .bot-card__top > div {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.qq-notifications-page .bot-card__top strong,
+.qq-notifications-page .target-main strong {
+  overflow: hidden;
+  color: var(--qq-ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qq-notifications-page .bot-card__top small,
+.qq-notifications-page .target-main small {
+  overflow: hidden;
+  color: var(--qq-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qq-notifications-page .verification,
+.qq-notifications-page .online-status,
+.qq-notifications-page .delivery-status {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.qq-notifications-page .verification { color: var(--qq-muted); background: #f1f3f7; }
+.qq-notifications-page .verification.valid,
+.qq-notifications-page .online-status.online,
+.qq-notifications-page .delivery-status.sent { color: var(--qq-green); background: var(--qq-green-soft); }
+.qq-notifications-page .verification.invalid,
+.qq-notifications-page .verification.error,
+.qq-notifications-page .online-status.offline,
+.qq-notifications-page .online-status.disabled,
+.qq-notifications-page .delivery-status.failed,
+.qq-notifications-page .delivery-status.cancelled { color: var(--qq-rose); background: var(--qq-rose-soft); }
+.qq-notifications-page .verification.unverified,
+.qq-notifications-page .online-status.connecting,
+.qq-notifications-page .delivery-status.retry_wait { color: var(--qq-amber); background: var(--qq-amber-soft); }
+.qq-notifications-page .delivery-status.queued,
+.qq-notifications-page .delivery-status.sending { color: var(--qq-blue); background: var(--qq-blue-soft); }
+
+.qq-notifications-page .online-status i,
+.qq-notifications-page .delivery-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.qq-notifications-page .bot-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 16px 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--qq-border);
+  border-bottom: 1px solid var(--qq-border);
+}
+
+.qq-notifications-page .bot-meta > span {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  padding: 0 10px;
+  border-right: 1px solid var(--qq-border);
+  gap: 2px 7px;
+}
+
+.qq-notifications-page .bot-meta > span:first-child { padding-left: 0; }
+.qq-notifications-page .bot-meta > span:last-child { padding-right: 0; border-right: 0; }
+.qq-notifications-page .bot-meta svg { grid-row: 1 / 3; color: var(--qq-rose); }
+.qq-notifications-page .bot-meta strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+.qq-notifications-page .row-error {
+  display: flex;
+  align-items: flex-start;
+  margin: 0 0 13px;
+  padding: 9px 10px;
+  border: 1px solid #f5c4cc;
+  border-radius: 9px;
+  color: #b4233c;
+  background: #fff5f6;
+  font-size: 10px;
+  line-height: 1.5;
+  gap: 6px;
+}
+
+.qq-notifications-page .row-error svg { flex: 0 0 auto; }
+.qq-notifications-page .bot-card > footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; gap: 12px; }
+.qq-notifications-page .bot-card > footer > div,
+.qq-notifications-page .target-actions { display: flex; gap: 5px; }
+
+.qq-notifications-page .qq-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 190px;
+  flex-direction: column;
+  padding: 30px 22px;
+  text-align: center;
+}
+
+.qq-notifications-page .qq-empty > span { margin-bottom: 12px; }
+.qq-notifications-page .qq-empty strong { color: var(--qq-ink); font-size: 13px; }
+.qq-notifications-page .qq-empty p { max-width: 430px; margin: 6px 0 15px; color: var(--qq-muted); font-size: 10px; line-height: 1.6; }
+.qq-notifications-page .qq-empty--compact { min-height: 150px; }
+
+.qq-notifications-page .target-list { display: flex; flex-direction: column; }
+
+.qq-notifications-page .target-row {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1.5fr) minmax(140px, 1fr) auto auto;
+  align-items: center;
+  padding: 15px 22px;
+  border-bottom: 1px solid var(--qq-border);
+  gap: 15px;
+}
+
+.qq-notifications-page .target-row:last-child { border-bottom: 0; }
+.qq-notifications-page .target-icon { width: 38px; height: 38px; border-radius: 11px; }
+.qq-notifications-page .target-main,
+.qq-notifications-page .target-scope { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.qq-notifications-page .target-scope strong { color: var(--qq-text); font-size: 11px; }
+
+.qq-notifications-page .delivery-section {
+  margin-bottom: 20px;
+}
+
+.qq-notifications-page .delivery-table-wrap {
+  overflow-x: auto;
+}
+
+.qq-notifications-page .delivery-table {
+  width: 100%;
+  min-width: 870px;
+  border-collapse: collapse;
+}
+
+.qq-notifications-page .delivery-table th {
+  padding: 12px 16px;
+  color: var(--qq-muted);
+  background: var(--qq-soft);
+  font-size: 9px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.qq-notifications-page .delivery-table td {
+  padding: 14px 16px;
+  border-top: 1px solid var(--qq-border);
+  color: var(--qq-text);
+  font-size: 11px;
+  vertical-align: middle;
+}
+
+.qq-notifications-page .delivery-table tr:hover td { background: #fff9fa; }
+.qq-notifications-page .delivery-table td > strong,
+.qq-notifications-page .delivery-table td > small { display: block; }
+.qq-notifications-page .delivery-table td > strong { color: var(--qq-ink); }
+.qq-notifications-page .delivery-table td > small { margin-top: 3px; color: var(--qq-muted); font-size: 9px; }
+.qq-notifications-page .delivery-table td p { display: -webkit-box; overflow: hidden; max-width: 390px; margin: 0; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.qq-notifications-page .delivery-table .error-copy { color: #b4233c; }
+
+.qq-notifications-page .table-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 110px;
+  color: var(--qq-muted);
+  gap: 8px;
+}
+
+.qq-notifications-page .pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 18px;
+  border-top: 1px solid var(--qq-border);
+  color: var(--qq-muted);
+  font-size: 10px;
+}
+
+.qq-notifications-page .pagination > div { display: flex; align-items: center; gap: 10px; }
+.qq-notifications-page .pagination strong { color: var(--qq-text); font-size: 10px; }
+
+.qq-notifications-page .qq-form { display: flex; flex-direction: column; }
+.qq-notifications-page .qq-form .el-select { width: 100%; }
+.qq-notifications-page .qq-form .el-form-item { margin-bottom: 17px; }
+.qq-notifications-page .qq-form .el-form-item__label { height: auto; margin-bottom: 7px; color: var(--qq-ink); font-size: 10px; font-weight: 700; line-height: 1.35; }
+.qq-notifications-page .qq-form .el-input__wrapper,
+.qq-notifications-page .qq-form .el-select__wrapper,
+.qq-notifications-page .qq-form .el-textarea__inner {
+  border: 1px solid var(--qq-border-strong);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: none;
+}
+.qq-notifications-page .qq-form .el-input__wrapper,
+.qq-notifications-page .qq-form .el-select__wrapper { min-height: 42px; }
+.qq-notifications-page .qq-form .el-input__wrapper.is-focus,
+.qq-notifications-page .qq-form .el-select__wrapper.is-focused,
+.qq-notifications-page .qq-form .el-textarea__inner:focus { border-color: var(--qq-rose); box-shadow: 0 0 0 3px var(--qq-rose-soft) !important; }
+
+.qq-notifications-page .form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.qq-notifications-page .form-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 17px;
+  padding: 13px 14px;
+  border: 1px solid var(--qq-border);
+  border-radius: 11px;
+  background: var(--qq-soft);
+  gap: 16px;
+}
+
+.qq-notifications-page .form-switch > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.qq-notifications-page .form-switch strong { color: var(--qq-ink); font-size: 11px; }
+.qq-notifications-page .form-switch small,
+.qq-notifications-page .template-help { color: var(--qq-muted); font-size: 10px; line-height: 1.55; }
+.qq-notifications-page .group-picker { display: flex; width: 100%; flex-direction: column; gap: 10px; }
+.qq-notifications-page .group-picker__toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.qq-notifications-page .group-picker__error { color: #b4233c; font-size: 10px; line-height: 1.5; }
+
+.qq-notifications-page .template-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.qq-notifications-page .template-variable-note {
+  display: flex;
+  padding: 13px 14px;
+  border: 1px solid #dbe4f1;
+  border-radius: 10px;
+  background: #f8faff;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.qq-notifications-page .template-variable-note strong { color: var(--qq-ink); font-size: 12px; }
+.qq-notifications-page .template-variable-note span { color: var(--qq-muted); font-size: 10px; line-height: 1.6; }
+.qq-notifications-page .template-variable-note code { color: var(--qq-rose); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.qq-notifications-page .template-variable-list { display: flex; margin-top: 15px; flex-direction: column; gap: 9px; }
+.qq-notifications-page .template-variable-row { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(0, 1.3fr) auto; align-items: start; gap: 9px; }
+.qq-notifications-page .template-variable-row__key,
+.qq-notifications-page .template-variable-row__value { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.qq-notifications-page .template-variable-row small { color: var(--qq-muted); font-size: 9px; }
+.qq-notifications-page .template-variable-add { display: inline-flex; align-items: center; margin-top: 12px; padding: 0; border: 0; color: var(--qq-rose); background: transparent; cursor: pointer; font-size: 11px; gap: 5px; }
+
+.qq-notification-dialog .el-dialog__header,
+.qq-notification-dialog .el-dialog__footer { border-color: var(--qq-border); }
+.qq-notification-dialog .el-dialog__footer { background: var(--qq-soft); }
+
+@media (max-width: 980px) {
+  .qq-notifications-page .qq-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .qq-notifications-page .bot-grid { grid-template-columns: 1fr; }
+  .qq-notifications-page .target-row { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+  .qq-notifications-page .target-scope { grid-column: 2 / 3; }
+  .qq-notifications-page .target-actions { grid-column: 4; grid-row: 1 / 3; }
+}
+
+@media (max-width: 700px) {
+  .qq-notifications-page { gap: 16px; }
+  .qq-notifications-page .qq-toolbar { align-items: flex-start; flex-direction: column; padding: 22px 20px; }
+  .qq-notifications-page .qq-toolbar__actions { width: 100%; }
+  .qq-notifications-page .qq-toolbar__actions .el-button { flex: 1; }
+  .qq-notifications-page .platform-notice { grid-template-columns: auto minmax(0, 1fr); }
+  .qq-notifications-page .platform-notice a { grid-column: 2; justify-self: start; }
+  .qq-notifications-page .qq-section > header { align-items: flex-start; padding: 17px 16px; flex-direction: column; }
+  .qq-notifications-page .target-row { grid-template-columns: auto minmax(0, 1fr) auto; padding: 14px 16px; }
+  .qq-notifications-page .target-scope { grid-column: 2; }
+  .qq-notifications-page .target-actions { grid-column: 2 / 4; grid-row: auto; justify-content: flex-end; }
+  .qq-notifications-page .form-grid { grid-template-columns: 1fr; }
+  .qq-notifications-page .status-filter { width: 100%; }
+}
+
+@media (max-width: 520px) {
+  .qq-notifications-page .qq-summary { grid-template-columns: 1fr 1fr; gap: 9px; }
+  .qq-notifications-page .qq-summary article { min-height: 84px; padding: 13px 12px; }
+  .qq-notifications-page .qq-summary article > span { display: none; }
+  .qq-notifications-page .qq-summary strong { font-size: 21px; }
+  .qq-notifications-page .qq-toolbar h2 { font-size: 22px; }
+  .qq-notifications-page .bot-grid { padding: 10px; }
+  .qq-notifications-page .bot-meta { grid-template-columns: 1fr; }
+  .qq-notifications-page .bot-meta > span { grid-template-columns: auto 1fr; padding: 7px 0; border-right: 0; border-bottom: 1px solid var(--qq-border); }
+  .qq-notifications-page .bot-meta > span:last-child { border-bottom: 0; }
+  .qq-notifications-page .template-editor { grid-template-columns: 1fr; }
+  .qq-notifications-page .template-editor .el-button { justify-self: start; }
+  .qq-notifications-page .template-variable-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .qq-notifications-page .template-variable-row__value { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qq-notifications-page *,
+  .qq-notifications-page *::before,
+  .qq-notifications-page *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* BaseModal teleports outside the page root, so keep its form treatment explicit. */
+.qq-notification-dialog .qq-form { display: flex; flex-direction: column; }
+.qq-notification-dialog .qq-form .el-select { width: 100%; }
+.qq-notification-dialog .qq-form .el-form-item { margin-bottom: 17px; }
+.qq-notification-dialog .qq-form .el-form-item__label { height: auto; margin-bottom: 7px; color: #172033; font-size: 10px; font-weight: 700; line-height: 1.35; }
+.qq-notification-dialog .qq-form .el-input__wrapper,
+.qq-notification-dialog .qq-form .el-select__wrapper,
+.qq-notification-dialog .qq-form .el-textarea__inner { border: 1px solid #cbd6e5; border-radius: 10px; background: #fff; box-shadow: none; }
+.qq-notification-dialog .qq-form .el-input__wrapper,
+.qq-notification-dialog .qq-form .el-select__wrapper { min-height: 42px; }
+.qq-notification-dialog .qq-form .el-input__wrapper.is-focus,
+.qq-notification-dialog .qq-form .el-select__wrapper.is-focused,
+.qq-notification-dialog .qq-form .el-textarea__inner:focus { border-color: #e11d48; box-shadow: 0 0 0 3px #fff1f4 !important; }
+.qq-notification-dialog .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.qq-notification-dialog .form-switch { display: flex; align-items: center; justify-content: space-between; margin-bottom: 17px; padding: 13px 14px; border: 1px solid #e1e7f0; border-radius: 11px; background: #f7f9fc; gap: 16px; }
+.qq-notification-dialog .form-switch > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.qq-notification-dialog .form-switch strong { color: #172033; font-size: 11px; }
+.qq-notification-dialog .form-switch small,
+.qq-notification-dialog .template-help { color: #77839a; font-size: 10px; line-height: 1.55; }
+.qq-notification-dialog .group-picker { display: flex; width: 100%; flex-direction: column; gap: 10px; }
+.qq-notification-dialog .group-picker__toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.qq-notification-dialog .group-picker__error { color: #b4233c; font-size: 10px; line-height: 1.5; }
+.qq-notification-dialog .template-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; }
+.qq-notification-dialog .template-variable-note { display: flex; padding: 13px 14px; border: 1px solid #dbe4f1; border-radius: 10px; background: #f8faff; flex-direction: column; gap: 5px; }
+.qq-notification-dialog .template-variable-note strong { color: #172033; font-size: 12px; }
+.qq-notification-dialog .template-variable-note span { color: #77839a; font-size: 10px; line-height: 1.6; }
+.qq-notification-dialog .template-variable-note code { color: #e11d48; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.qq-notification-dialog .template-variable-list { display: flex; margin-top: 15px; flex-direction: column; gap: 9px; }
+.qq-notification-dialog .template-variable-row { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(0, 1.3fr) auto; align-items: start; gap: 9px; }
+.qq-notification-dialog .template-variable-row__key,
+.qq-notification-dialog .template-variable-row__value { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.qq-notification-dialog .template-variable-row small { color: #77839a; font-size: 9px; }
+.qq-notification-dialog .template-variable-add { display: inline-flex; align-items: center; margin-top: 12px; padding: 0; border: 0; color: #e11d48; background: transparent; cursor: pointer; font-size: 11px; gap: 5px; }
+@media (max-width: 620px) {
+  .qq-notification-dialog .form-grid,
+  .qq-notification-dialog .template-editor { grid-template-columns: 1fr; }
+  .qq-notification-dialog .template-editor .el-button { justify-self: start; }
+  .qq-notification-dialog .template-variable-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .qq-notification-dialog .template-variable-row__value { grid-column: 1 / -1; }
+}

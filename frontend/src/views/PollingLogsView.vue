@@ -77,17 +77,17 @@ onMounted(async () => {
 <template>
   <div class="logs-view page-stack">
     <section class="summary-strip">
-      <div><span class="summary-strip__icon"><FileClock :size="18" /></span><span><small>记录总数</small><strong>{{ total }}</strong></span></div>
+      <div class="summary-strip__metric"><span class="summary-strip__icon"><FileClock :size="18" /></span><span><small>记录总数</small><strong>{{ total }}</strong></span></div>
       <i />
-      <div><span class="summary-strip__icon is-success"><TerminalSquare :size="18" /></span><span><small>当前页成功</small><strong>{{ successCount }}</strong></span></div>
+      <div class="summary-strip__metric"><span class="summary-strip__icon is-success"><TerminalSquare :size="18" /></span><span><small>当前页成功</small><strong>{{ successCount }}</strong></span></div>
       <i />
-      <div><span class="summary-strip__icon is-danger"><AlertCircle :size="18" /></span><span><small>当前页异常</small><strong>{{ issueCount }}</strong></span></div>
+      <div class="summary-strip__metric"><span class="summary-strip__icon is-danger"><AlertCircle :size="18" /></span><span><small>当前页异常</small><strong>{{ issueCount }}</strong></span></div>
     </section>
 
     <section class="panel data-panel">
       <header class="data-toolbar data-toolbar--logs">
         <div class="toolbar-heading"><strong>执行记录</strong><span>按账号、状态和时间定位每次轮询结果</span></div>
-        <el-tooltip content="刷新记录"><el-button circle :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" /></el-button></el-tooltip>
+        <el-tooltip content="刷新记录"><el-button class="logs-refresh" circle :loading="loading" aria-label="刷新记录" @click="load"><RefreshCw v-if="!loading" :size="16" /></el-button></el-tooltip>
       </header>
 
       <div class="log-filter-grid">
@@ -103,7 +103,7 @@ onMounted(async () => {
         <el-button class="log-filter-grid__clear" :disabled="!hasFilters" @click="clearFilters">清空筛选</el-button>
       </div>
 
-      <div class="content-result-bar"><span>共 <strong>{{ total }}</strong> 次执行记录</span><span>时间按浏览器本地时区显示</span></div>
+      <div class="content-result-bar" aria-live="polite"><span class="content-result-bar__count">共 <strong>{{ total }}</strong> 次执行记录</span><span class="content-result-bar__hint">时间按浏览器本地时区显示</span></div>
 
       <div v-if="error && !runs.length" class="error-panel error-panel--embedded">
         <AlertCircle :size="21" /><div><strong>记录加载失败</strong><span>{{ error }}</span></div><button class="button button--secondary" @click="load">重试</button>
@@ -112,17 +112,18 @@ onMounted(async () => {
 
       <div v-else-if="runs.length" class="table-wrap">
         <table class="data-table logs-table">
-          <thead><tr><th>任务 / 账号</th><th>触发方式</th><th>开始时间</th><th>耗时</th><th>发现内容</th><th>状态</th><th /></tr></thead>
+          <colgroup><col class="logs-table__col-account" /><col class="logs-table__col-trigger" /><col class="logs-table__col-start" /><col class="logs-table__col-duration" /><col class="logs-table__col-content" /><col class="logs-table__col-status" /><col class="logs-table__col-action" /></colgroup>
+          <thead><tr><th class="logs-table__head-account">任务 / 账号</th><th>触发方式</th><th>开始时间</th><th>耗时</th><th>发现内容</th><th>状态</th><th aria-label="操作" /></tr></thead>
           <tbody>
             <template v-for="run in runs" :key="run.id">
               <tr :class="{ 'is-expanded': expanded === String(run.id) }">
-                <td data-label="任务 / 账号"><div class="run-id-cell"><span><TerminalSquare :size="16" /></span><div><strong>@{{ run.username || '未知账号' }}</strong><small>#{{ run.id }}</small><small v-if="run.worker_id" class="worker-id">{{ run.worker_id }}</small></div></div></td>
+                <td class="logs-table__account" data-label="任务 / 账号"><div class="run-id-cell"><span><TerminalSquare :size="16" /></span><div><strong>@{{ run.username || '未知账号' }}</strong><small>#{{ run.id }}</small><small v-if="run.worker_id" class="worker-id">{{ run.worker_id }}</small></div></div></td>
                 <td data-label="触发方式"><span class="trigger-label"><component :is="run.trigger === 'manual' ? RefreshCw : Clock3" :size="14" />{{ run.trigger === 'manual' ? '手动触发' : '定时调度' }}</span></td>
                 <td data-label="开始时间"><span class="date-cell"><strong>{{ formatDateTime(run.started_at) }}</strong><small v-if="run.finished_at">结束于 {{ formatDateTime(run.finished_at) }}</small></span></td>
                 <td data-label="耗时">{{ formatDuration(run.duration_ms) }}</td>
-                <td data-label="发现内容"><strong class="new-content-count">{{ run.tweets_inserted }}</strong><small class="fetched-count"> / 获取 {{ run.tweets_fetched }}</small></td>
+                <td class="logs-table__content" data-label="发现内容"><strong class="new-content-count">{{ run.tweets_inserted }}</strong><small class="fetched-count">获取 {{ run.tweets_fetched }}</small></td>
                 <td data-label="状态"><StatusBadge :status="run.status" /></td>
-                <td><button v-if="run.error_message" class="icon-button" aria-label="查看错误" @click="expanded = expanded === String(run.id) ? null : String(run.id)"><ChevronDown :size="16" :class="{ 'rotate-180': expanded === String(run.id) }" /></button></td>
+                <td class="logs-table__action"><button v-if="run.error_message" class="icon-button" aria-label="查看错误" @click="expanded = expanded === String(run.id) ? null : String(run.id)"><ChevronDown :size="16" :class="{ 'rotate-180': expanded === String(run.id) }" /></button></td>
               </tr>
               <tr v-if="expanded === String(run.id)" class="log-detail-row"><td colspan="7"><div class="log-error-detail"><AlertCircle :size="17" /><div><strong>错误详情</strong><code>{{ run.error_message }}</code></div></div></td></tr>
             </template>

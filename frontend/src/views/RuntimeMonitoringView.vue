@@ -89,17 +89,28 @@ onBeforeUnmount(() => window.clearInterval(timer))
 <template>
   <div class="runtime-monitoring-view page-stack">
     <section class="monitoring-command-bar" aria-labelledby="monitoring-heading">
-      <div><span class="monitoring-command-bar__icon"><Server :size="21" /></span><div><h2 id="monitoring-heading">应用服务器指标</h2><p>集中查看 API、依赖服务与后台 Worker 的运行状态。</p></div></div>
+      <div class="monitoring-command-bar__intro">
+        <span class="monitoring-command-bar__icon"><Server :size="21" /></span>
+        <div>
+          <span class="monitoring-eyebrow">SYSTEM HEALTH</span>
+          <h2 id="monitoring-heading">应用服务器指标</h2>
+          <p>集中查看 API、依赖服务与后台 Worker 的运行状态。</p>
+        </div>
+      </div>
       <div class="monitoring-command-bar__actions">
-        <span class="monitoring-summary"><strong>{{ healthyServiceCount }}/{{ services.length || 0 }}</strong> 服务正常</span>
+        <div class="monitoring-summary" aria-live="polite"><strong>{{ healthyServiceCount }}/{{ services.length || 0 }}</strong><span>服务正常</span></div>
         <span class="live-copy"><span class="live-dot" />每分钟更新</span>
-        <el-button :loading="refreshing" @click="refreshMetrics()"><RefreshCw v-if="!refreshing" :size="16" />刷新</el-button>
+        <el-button class="monitoring-refresh" :loading="refreshing" @click="refreshMetrics()"><RefreshCw v-if="!refreshing" :size="16" />刷新指标</el-button>
       </div>
     </section>
 
-    <div v-if="metricsError && !metrics" class="error-panel monitoring-error"><AlertCircle :size="21" /><div><strong>服务器指标不可用</strong><span>{{ metricsError }}</span></div><el-button @click="refreshMetrics()">重试</el-button></div>
+    <div v-if="metricsError && !metrics" class="error-panel monitoring-error" role="alert"><AlertCircle :size="21" /><div><strong>服务器指标不可用</strong><span>{{ metricsError }}</span></div><el-button @click="refreshMetrics()">重试</el-button></div>
 
     <section class="server-hero monitoring-resource-panel" aria-label="服务器资源概览">
+      <header class="monitoring-section-header">
+        <div><span class="monitoring-section-kicker">RESOURCE OVERVIEW</span><h2>资源概览</h2><p>系统级容量与 API 进程运行时间</p></div>
+        <span class="monitoring-status-key"><i class="is-healthy" />健康阈值 <b>&lt; 70%</b></span>
+      </header>
       <div v-if="loading && !metrics" class="resource-grid"><div v-for="index in 4" :key="index" class="resource-card skeleton-card"><span /><span /><span /></div></div>
       <div v-else class="resource-grid">
         <article v-for="card in resourceCards" :key="card.label" class="resource-card"><ResourceGauge :label="card.label" :value="card.metric.percent" :detail="card.detail" :color="card.color" /></article>
@@ -107,14 +118,14 @@ onBeforeUnmount(() => window.clearInterval(timer))
       </div>
     </section>
 
-    <section class="service-resources">
-      <header class="service-resources__header"><div><h2>服务资源</h2><p>数据库、缓存与后台 Worker 的 CPU 和内存占用</p></div><MemoryStick :size="19" /></header>
+    <section class="service-resources" aria-labelledby="service-resources-heading">
+      <header class="service-resources__header"><div><h2 id="service-resources-heading">服务资源</h2><p>数据库、缓存与后台 Worker 的 CPU 和内存占用</p></div><MemoryStick :size="19" /></header>
       <div v-if="serviceResources.length" class="service-resource-grid">
         <article v-for="resource in serviceResources" :key="resource.name" class="service-resource-card">
           <header><span><component :is="resource.icon" :size="18" /></span><div><strong>{{ resource.name }}</strong><small>{{ resource.description }}</small></div><StatusBadge :status="resource.metric.status" /></header>
           <div class="service-resource-card__metrics">
-            <div><span><Cpu :size="14" />CPU</span><strong>{{ cpuText(resource.metric) }}</strong><i><b :style="{ width: resourcePercent(resource.metric.cpu_percent) }" /></i></div>
-            <div><span><MemoryStick :size="14" />内存</span><strong>{{ memoryText(resource.metric) }}</strong><i><b :style="{ width: resourcePercent(resource.metric.memory_percent) }" /></i></div>
+            <div class="resource-metric-row"><div class="resource-metric-row__label"><Cpu :size="14" />CPU</div><strong>{{ cpuText(resource.metric) }}</strong><i><b :style="{ width: resourcePercent(resource.metric.cpu_percent) }" /></i></div>
+            <div class="resource-metric-row"><div class="resource-metric-row__label"><MemoryStick :size="14" />内存</div><strong>{{ memoryText(resource.metric) }}</strong><i><b :style="{ width: resourcePercent(resource.metric.memory_percent) }" /></i></div>
           </div>
           <p v-if="resource.metric.resource_error" :title="String(resource.metric.resource_error)">资源指标不可用，连接健康检查仍正常</p>
         </article>

@@ -189,11 +189,11 @@ onMounted(async () => {
 <template>
   <div class="tweets-view page-stack">
     <section class="summary-strip">
-      <div><span class="summary-strip__icon"><MessageSquareText :size="18" /></span><span><small>内容总数</small><strong>{{ total }}</strong></span></div>
+      <div class="summary-strip__metric"><span class="summary-strip__icon"><MessageSquareText :size="18" /></span><span><small>内容总数</small><strong>{{ total }}</strong></span></div>
       <i />
-      <div><span class="summary-strip__icon is-neutral"><CalendarDays :size="18" /></span><span><small>当前页</small><strong>{{ tweets.length }}</strong></span></div>
+      <div class="summary-strip__metric"><span class="summary-strip__icon is-neutral"><CalendarDays :size="18" /></span><span><small>当前页</small><strong>{{ tweets.length }}</strong></span></div>
       <i />
-      <div><span class="summary-strip__icon is-success"><Send :size="18" /></span><span><small>已选择</small><strong>{{ selectedTweetIds.length }}</strong></span></div>
+      <div class="summary-strip__metric"><span class="summary-strip__icon is-success"><Send :size="18" /></span><span><small>已选择</small><strong>{{ selectedTweetIds.length }}</strong></span></div>
     </section>
 
     <section class="panel data-panel">
@@ -201,7 +201,7 @@ onMounted(async () => {
         <div class="toolbar-heading"><strong>采集内容</strong><span>检索、筛选并将内容送往后续创作或推送流程</span></div>
         <div class="toolbar-controls">
           <el-input v-model="filters.search" class="element-search element-search--large" placeholder="搜索正文、用户名或关键词" clearable><template #prefix><Search :size="16" /></template></el-input>
-          <el-button :type="filtersOpen ? 'primary' : ''" plain @click="filtersOpen = !filtersOpen"><Filter :size="16" />筛选<template v-if="activeFilterCount">（{{ activeFilterCount }}）</template></el-button>
+          <el-button class="filter-trigger" :type="filtersOpen ? 'primary' : ''" plain @click="filtersOpen = !filtersOpen"><Filter :size="16" />筛选<span v-if="activeFilterCount" class="filter-trigger__count">{{ activeFilterCount }}</span></el-button>
           <el-tooltip content="刷新内容流"><el-button circle :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" /></el-button></el-tooltip>
         </div>
       </header>
@@ -215,9 +215,9 @@ onMounted(async () => {
         </div>
       </Transition>
 
-      <div class="content-result-bar">
-        <span>共找到 <strong>{{ total }}</strong> 条内容</span>
-        <span v-if="filters.search">关键词 “{{ filters.search }}”</span>
+      <div class="content-result-bar" aria-live="polite">
+        <span class="content-result-bar__count">共找到 <strong>{{ total }}</strong> 条内容</span>
+        <span v-if="filters.search" class="content-result-bar__query">关键词 “{{ filters.search }}”</span>
       </div>
 
       <div v-if="error && !tweets.length" class="error-panel error-panel--embedded">
@@ -230,11 +230,11 @@ onMounted(async () => {
 
       <div v-else-if="tweets.length" class="tweet-list">
         <article v-for="tweet in tweets" :key="tweet.id" class="tweet-card" :class="{ 'tweet-card--selected': selectedTweetIds.includes(Number(tweet.id)) }">
-          <div class="tweet-select"><el-checkbox v-model="selectedTweetIds" :value="Number(tweet.id)" /></div>
+          <div class="tweet-select"><el-checkbox v-model="selectedTweetIds" :value="Number(tweet.id)" :aria-label="`选择 @${tweet.username || '未知用户'} 的内容`" /></div>
           <span class="avatar avatar--tweet">{{ (tweet.username || 'X').slice(0, 1).toUpperCase() }}</span>
           <div class="tweet-card__body">
-            <header>
-              <div><strong>@{{ tweet.username || '未知用户' }}</strong><span>{{ tweet.lang || '语言未知' }}</span><i class="meta-separator" /><time :title="formatDateTime(tweetTime(tweet))">{{ formatRelative(tweetTime(tweet)) }}</time></div>
+            <header class="tweet-card__header">
+              <div class="tweet-card__identity"><strong>@{{ tweet.username || '未知用户' }}</strong><span>{{ tweet.lang || '语言未知' }}</span><i class="meta-separator" /><time :title="formatDateTime(tweetTime(tweet))">{{ formatRelative(tweetTime(tweet)) }}</time></div>
               <a :href="tweetUrl(tweet)" target="_blank" rel="noopener noreferrer" class="icon-button" aria-label="在 X 查看"><ExternalLink :size="16" /></a>
             </header>
             <div v-if="tweetKind(tweet) !== 'original'" class="tweet-card__type"><Repeat2 v-if="tweetKind(tweet) === 'retweet'" :size="14" /><MessageCircle v-else :size="14" />{{ tweetKind(tweet) === 'retweet' ? '转推' : '回复' }}</div>
@@ -246,12 +246,16 @@ onMounted(async () => {
                 <span v-else><Image :size="22" />{{ media.type }}</span>
               </template>
             </div>
-            <footer>
-              <span><MessageCircle :size="15" />{{ formatNumber(tweet.reply_count) }}</span>
-              <span><Repeat2 :size="15" />{{ formatNumber(tweet.retweet_count) }}</span>
-              <span><Heart :size="15" />{{ formatNumber(tweet.like_count) }}</span>
-              <el-button class="tweet-ai-button" type="primary" link :loading="generatingTweetId === String(tweet.id)" @click="generateWithAi(tweet)"><Sparkles v-if="generatingTweetId !== String(tweet.id)" :size="14" />AI 生成</el-button>
-              <span class="tweet-card__id">ID {{ tweet.tweet_id }}</span>
+            <footer class="tweet-card__footer">
+              <div class="tweet-card__engagement" aria-label="互动数据">
+                <span title="回复"><MessageCircle :size="15" />{{ formatNumber(tweet.reply_count) }}</span>
+                <span title="转推"><Repeat2 :size="15" />{{ formatNumber(tweet.retweet_count) }}</span>
+                <span title="喜欢"><Heart :size="15" />{{ formatNumber(tweet.like_count) }}</span>
+              </div>
+              <div class="tweet-card__actions">
+                <el-button class="tweet-ai-button" type="primary" link :loading="generatingTweetId === String(tweet.id)" @click="generateWithAi(tweet)"><Sparkles v-if="generatingTweetId !== String(tweet.id)" :size="14" />AI 生成</el-button>
+                <span class="tweet-card__id">ID {{ tweet.tweet_id }}</span>
+              </div>
             </footer>
           </div>
         </article>
@@ -274,12 +278,3 @@ onMounted(async () => {
     </el-dialog>
   </div>
 </template>
-
-<style scoped>
-.tweet-ai-button { margin-left: 2px; }
-.tweet-select { display:flex; flex:0 0 28px; align-items:flex-start; justify-content:center; padding-top:7px; }
-.tweet-card--selected { background: var(--primary-soft); }
-.tweet-media__video-poster { position:relative; display:block; overflow:hidden; }
-.tweet-media__video-poster span { position:absolute; top:50%; left:50%; display:flex; align-items:center; padding:7px 10px; border-radius:999px; color:#fff; background:rgba(20,24,35,.75); font-size:10px; gap:5px; transform:translate(-50%,-50%); }
-.batch-toolbar { position:sticky; bottom:12px; display:flex; align-items:center; justify-content:flex-end; gap:14px; margin-top:14px; padding:10px 14px; border:1px solid var(--border-strong); border-radius:var(--radius-md); background:#fff; box-shadow:0 8px 24px rgba(31,41,55,.1); }
-</style>

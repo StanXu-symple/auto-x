@@ -204,7 +204,7 @@ onMounted(load)
           <el-radio-group v-model="filters.status" class="element-segmented" size="small">
             <el-radio-button v-for="option in [{ value: 'all', label: '全部' }, { value: 'active', label: '运行中' }, { value: 'paused', label: '已暂停' }]" :key="option.value" :value="option.value">{{ option.label }}</el-radio-button>
           </el-radio-group>
-          <el-tooltip content="刷新列表" placement="top"><el-button circle :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" /></el-button></el-tooltip>
+          <el-tooltip content="刷新列表" placement="top"><el-button circle aria-label="刷新列表" :loading="loading" @click="load"><RefreshCw v-if="!loading" :size="16" /></el-button></el-tooltip>
         </div>
       </header>
 
@@ -223,11 +223,11 @@ onMounted(load)
           <el-table-column label="账号" min-width="220">
             <template #default="{ row: account }"><div class="account-cell"><span class="avatar avatar--account"><img v-if="account.avatar_url" :src="account.avatar_url" alt="" referrerpolicy="no-referrer" /><template v-else>{{ (account.display_name || account.username).slice(0, 1).toUpperCase() }}</template></span><span><strong>{{ account.display_name || account.username }}</strong><small>@{{ account.username }}</small><small v-if="account.x_user_id" class="account-id">ID {{ account.x_user_id }}</small></span></div></template>
           </el-table-column>
-          <el-table-column label="状态" width="130"><template #default="{ row: account }"><StatusBadge :status="account.is_active ? account.status || 'active' : 'paused'" /><small v-if="account.last_error" class="row-error" :title="account.last_error">{{ account.last_error }}</small></template></el-table-column>
+          <el-table-column label="状态" width="154"><template #default="{ row: account }"><div class="account-status-cell"><StatusBadge :status="account.is_active ? account.status || 'active' : 'paused'" /><small v-if="account.last_error" class="row-error" :title="account.last_error">{{ account.last_error }}</small></div></template></el-table-column>
           <el-table-column label="轮询频率" min-width="130"><template #default="{ row: account }"><span class="interval-cell"><Clock3 :size="15" />{{ formatInterval(account.effective_poll_interval_seconds) }}<el-tag v-if="account.poll_interval_seconds == null" size="small" effect="plain">默认</el-tag></span></template></el-table-column>
           <el-table-column label="上次轮询" min-width="150"><template #default="{ row: account }"><span class="date-cell"><strong>{{ formatRelative(account.last_polled_at) }}</strong><small>{{ formatDateTime(account.last_polled_at) }}</small></span></template></el-table-column>
           <el-table-column label="下次轮询" min-width="150"><template #default="{ row: account }"><span class="date-cell"><strong>{{ account.is_active ? nextPollLabel(account.next_poll_at) : '不适用' }}</strong><small>{{ account.is_active ? formatDateTime(account.next_poll_at) : '监听已暂停' }}</small></span></template></el-table-column>
-          <el-table-column label="操作" fixed="right" width="135" align="right">
+          <el-table-column label="操作" fixed="right" width="150" align="right">
             <template #default="{ row: account }">
               <div class="row-actions">
                 <el-tooltip :content="account.is_active ? '立即轮询' : '恢复监听后可立即轮询'" placement="top"><el-button circle size="small" :loading="actionLoading === `${account.id}:poll`" :disabled="!account.is_active || (!!actionLoading && actionLoading !== `${account.id}:poll`)" @click="pollNow(account)"><RefreshCw v-if="actionLoading !== `${account.id}:poll`" :size="15" /></el-button></el-tooltip>

@@ -1,0 +1,289 @@
+/* QQ task console: clear schedule hierarchy with a calm, operational surface. */
+.qq-tasks-page {
+  --task-ink: #172033;
+  --task-text: #46536a;
+  --task-muted: #7c899e;
+  --task-subtle: #a4afbf;
+  --task-border: #e1e7f0;
+  --task-border-strong: #ccd7e6;
+  --task-surface: #fff;
+  --task-soft: #f7f9fc;
+  --task-rose: #e11d48;
+  --task-rose-soft: #fff1f4;
+  --task-blue: #2563eb;
+  --task-blue-soft: #edf3ff;
+  --task-green: #059669;
+  --task-green-soft: #eaf9f2;
+  display: flex;
+  width: 100%;
+  max-width: 1420px;
+  flex-direction: column;
+  gap: 24px;
+  margin: 0 auto;
+  color: var(--task-ink);
+}
+
+.qq-tasks-page .summary-strip,
+.qq-tasks-page .data-panel {
+  border: 1px solid var(--task-border);
+  border-radius: 16px;
+  background: var(--task-surface);
+  box-shadow: 0 6px 22px rgba(31, 43, 71, .05);
+}
+
+.qq-tasks-page .summary-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 104px;
+  overflow: hidden;
+  padding: 18px 22px;
+  gap: 18px;
+}
+
+.qq-tasks-page .summary-strip::before {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg, #fb7185, var(--task-rose));
+  content: '';
+}
+
+.qq-tasks-page .summary-strip > div:not(.summary-strip__action) {
+  display: flex;
+  align-items: center;
+  min-width: 145px;
+  gap: 12px;
+}
+
+.qq-tasks-page .summary-strip > i {
+  width: 1px;
+  height: 42px;
+  background: var(--task-border);
+}
+
+.qq-tasks-page .summary-strip__icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border: 1px solid #f5c9d4;
+  border-radius: 12px;
+  color: var(--task-rose);
+  background: var(--task-rose-soft);
+}
+
+.qq-tasks-page .summary-strip__icon.is-success {
+  border-color: #bcebd8;
+  color: var(--task-green);
+  background: var(--task-green-soft);
+}
+
+.qq-tasks-page .summary-strip > div > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qq-tasks-page .summary-strip small {
+  color: var(--task-muted);
+  font-size: 10px;
+}
+
+.qq-tasks-page .summary-strip strong {
+  color: var(--task-ink);
+  font-size: 25px;
+  line-height: 1;
+  letter-spacing: -.04em;
+}
+
+.qq-tasks-page .summary-strip__action {
+  display: flex;
+  margin-left: auto;
+}
+
+.qq-tasks-page .summary-strip__action .el-button,
+.qq-tasks-page .empty-state .el-button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--task-rose);
+  box-shadow: 0 8px 18px rgba(225, 29, 72, .16);
+  font-weight: 700;
+}
+
+.qq-tasks-page .summary-strip__action .el-button:hover,
+.qq-tasks-page .empty-state .el-button:hover { background: #be123c; }
+
+.qq-tasks-page .data-panel { overflow: hidden; }
+
+.qq-tasks-page .task-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 78px;
+  padding: 19px 22px;
+  border-bottom: 1px solid var(--task-border);
+  gap: 20px;
+}
+
+.qq-tasks-page .task-toolbar > div,
+.qq-tasks-page .task-name {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.qq-tasks-page .task-toolbar strong {
+  color: var(--task-ink);
+  font-size: 15px;
+  letter-spacing: -.02em;
+}
+
+.qq-tasks-page .task-toolbar span,
+.qq-tasks-page .task-name span {
+  overflow: hidden;
+  color: var(--task-muted);
+  font-size: 11px;
+  line-height: 1.55;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qq-tasks-page .task-toolbar .el-button {
+  width: 36px;
+  height: 36px;
+  border-color: var(--task-border-strong);
+  color: var(--task-muted);
+  background: #fff;
+}
+
+.qq-tasks-page .task-toolbar .el-button:hover { color: var(--task-rose); border-color: #f0a9b8; }
+
+.qq-tasks-page .table-wrap { overflow: auto; }
+
+.qq-tasks-page .sentinel-table {
+  --el-table-border-color: var(--task-border);
+  --el-table-header-bg-color: var(--task-soft);
+  --el-table-row-hover-bg-color: #fff8fa;
+  color: var(--task-text);
+  font-size: 12px;
+}
+
+.qq-tasks-page .sentinel-table::before { display: none; }
+.qq-tasks-page .sentinel-table th.el-table__cell { padding: 13px 16px; color: var(--task-muted); font-size: 10px; font-weight: 800; letter-spacing: .05em; }
+.qq-tasks-page .sentinel-table td.el-table__cell { padding: 16px; }
+.qq-tasks-page .sentinel-table .cell { overflow: visible; }
+.qq-tasks-page .task-name strong { overflow: hidden; color: var(--task-ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.qq-tasks-page .task-name span { max-width: 380px; }
+
+.qq-tasks-page .task-schedule { display: flex; align-items: flex-start; color: var(--task-text); gap: 9px; }
+.qq-tasks-page .task-schedule svg { flex: 0 0 auto; margin-top: 2px; color: var(--task-blue); }
+.qq-tasks-page .task-schedule span { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.qq-tasks-page .task-schedule strong { color: var(--task-ink); font-size: 12px; font-weight: 700; }
+.qq-tasks-page .task-schedule small { color: var(--task-muted); font-size: 10px; }
+
+.qq-tasks-page .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.qq-tasks-page .row-actions .el-button { color: var(--task-muted); font-size: 11px; }
+.qq-tasks-page .row-actions .el-button:hover { color: var(--task-rose); }
+.qq-tasks-page .row-actions .el-button--danger { width: 30px; height: 30px; color: var(--task-rose); }
+.qq-tasks-page .el-switch.is-checked .el-switch__core { border-color: var(--task-green); background: var(--task-green); }
+
+.qq-tasks-page .empty-state {
+  min-height: 270px;
+  padding: 38px 20px;
+  border-top: 1px solid var(--task-border);
+  background: linear-gradient(180deg, #fff 0%, #fbfcff 100%);
+}
+
+.qq-tasks-page .empty-state__icon {
+  width: 50px;
+  height: 50px;
+  border: 1px solid #cbdafc;
+  border-radius: 15px;
+  color: var(--task-blue);
+  background: var(--task-blue-soft);
+}
+
+.qq-tasks-page .empty-state strong { margin-top: 13px; color: var(--task-ink); font-size: 15px; }
+.qq-tasks-page .empty-state p { margin-top: 6px; color: var(--task-muted); font-size: 11px; }
+.qq-tasks-page .empty-state__action { margin-top: 18px; }
+
+/* Teleported dialogs keep the same rhythm as the page surface. */
+.qq-task-dialog.el-dialog,
+.qq-task-history-dialog.el-dialog {
+  overflow: hidden;
+  border: 1px solid var(--task-border-strong);
+  border-radius: 16px;
+  background: var(--task-surface);
+  box-shadow: 0 24px 70px rgba(20, 32, 58, .2);
+}
+
+.qq-task-dialog .el-dialog__header,
+.qq-task-history-dialog .el-dialog__header { margin: 0; padding: 20px 24px 16px; border-bottom: 1px solid var(--task-border); }
+.qq-task-dialog .el-dialog__title,
+.qq-task-history-dialog .el-dialog__title { color: var(--task-ink); font-size: 17px; font-weight: 750; }
+.qq-task-dialog .el-dialog__body,
+.qq-task-history-dialog .el-dialog__body { padding: 22px 24px; }
+.qq-task-dialog .el-dialog__footer,
+.qq-task-history-dialog .el-dialog__footer { padding: 14px 24px; border-top: 1px solid var(--task-border); background: var(--task-soft); }
+.qq-task-dialog .el-dialog__footer > div { display: flex; justify-content: flex-end; gap: 9px; }
+.qq-task-dialog .el-dialog__footer .el-button--primary { border: 0; border-radius: 9px; background: var(--task-rose); }
+
+.qq-task-dialog .sentinel-form { display: flex; flex-direction: column; gap: 2px; }
+.qq-task-dialog .sentinel-form .el-form-item { margin-bottom: 17px; }
+.qq-task-dialog .sentinel-form .el-form-item__label { margin-bottom: 7px; color: var(--task-text); font-size: 11px; font-weight: 700; }
+.qq-task-dialog .form-grid,
+.qq-task-dialog .schedule-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.qq-task-dialog .schedule-editor { padding: 16px 16px 0; border: 1px solid var(--task-border); border-radius: 12px; background: var(--task-soft); margin-bottom: 17px; }
+.qq-task-dialog .field-help { display: block; margin-top: 6px; color: var(--task-muted); font-size: 10px; }
+.qq-task-dialog .task-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.qq-task-dialog .task-options label { display: flex; align-items: center; justify-content: space-between; padding: 13px 14px; border: 1px solid var(--task-border); border-radius: 12px; background: var(--task-soft); gap: 16px; }
+.qq-task-dialog .task-options label > span { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.qq-task-dialog .task-options strong { color: var(--task-ink); font-size: 12px; }
+.qq-task-dialog .task-options small { color: var(--task-muted); font-size: 10px; line-height: 1.4; }
+.qq-task-dialog .el-input__wrapper,
+.qq-task-dialog .el-select__wrapper,
+.qq-task-dialog .el-textarea__inner,
+.qq-task-dialog .el-input-number .el-input__wrapper,
+.qq-task-dialog .el-time-picker { min-height: 40px; border-color: var(--task-border-strong); border-radius: 9px; background: #fff; box-shadow: none; }
+.qq-task-dialog .el-input__wrapper.is-focus,
+.qq-task-dialog .el-select__wrapper.is-focused,
+.qq-task-dialog .el-textarea__inner:focus { border-color: #f0849d; box-shadow: 0 0 0 3px rgba(225, 29, 72, .1); }
+.qq-task-dialog .el-select,
+.qq-task-dialog .el-time-picker { width: 100%; }
+.qq-task-dialog .el-input-number { width: 100%; }
+
+.qq-task-history-dialog .el-table { --el-table-border-color: var(--task-border); --el-table-header-bg-color: var(--task-soft); font-size: 11px; }
+.qq-task-history-dialog .el-table th.el-table__cell { color: var(--task-muted); font-size: 10px; }
+.qq-task-history-dialog .el-empty { padding: 28px 0 14px; }
+
+@media (max-width: 720px) {
+  .qq-tasks-page { gap: 16px; }
+  .qq-tasks-page .summary-strip { align-items: flex-start; flex-wrap: wrap; min-height: 0; padding: 16px; gap: 13px; }
+  .qq-tasks-page .summary-strip > div:not(.summary-strip__action) { min-width: 0; flex: 1 1 130px; }
+  .qq-tasks-page .summary-strip > i { display: none; }
+  .qq-tasks-page .summary-strip__action { width: 100%; margin-left: 0; }
+  .qq-tasks-page .summary-strip__action .el-button { width: 100%; }
+  .qq-tasks-page .task-toolbar { align-items: stretch; flex-direction: column; min-height: 0; padding: 16px; gap: 12px; }
+  .qq-tasks-page .task-toolbar .el-button { align-self: flex-end; }
+  .qq-tasks-page .task-name span { max-width: 220px; }
+  .qq-task-dialog .form-grid,
+  .qq-task-dialog .schedule-editor,
+  .qq-task-dialog .task-options { grid-template-columns: 1fr; }
+  .qq-task-dialog .el-dialog__body,
+  .qq-task-dialog .el-dialog__header,
+  .qq-task-dialog .el-dialog__footer,
+  .qq-task-history-dialog .el-dialog__body,
+  .qq-task-history-dialog .el-dialog__header,
+  .qq-task-history-dialog .el-dialog__footer { padding-inline: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qq-tasks-page *, .qq-tasks-page *::before, .qq-tasks-page *::after,
+  .qq-task-dialog *, .qq-task-history-dialog * { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}

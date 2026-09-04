@@ -146,7 +146,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="qq-tasks-view page-stack" v-loading="pageLoading">
+  <div class="qq-tasks-page qq-tasks-view page-stack" v-loading="pageLoading">
     <section class="summary-strip">
       <div><span class="summary-strip__icon"><CalendarClock :size="18" /></span><span><small>任务总数</small><strong>{{ tasks.length }}</strong></span></div>
       <i />
@@ -174,12 +174,12 @@ onMounted(load)
       </EmptyState>
     </section>
 
-    <el-dialog v-model="historyOpen" title="推送历史" width="760px">
+    <el-dialog v-model="historyOpen" class="qq-task-history-dialog" title="推送历史" width="760px">
       <div v-loading="historyLoading"><el-table :data="history" max-height="420"><el-table-column label="时间（GMT+8）" width="180"><template #default="{ row }">{{ formatDateTime(row.created_at) }}</template></el-table-column><el-table-column label="目标" prop="target_name"/><el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'sent' ? 'success' : row.status === 'failed' ? 'danger' : 'warning'">{{ row.status === 'sent' ? '成功' : row.status === 'failed' ? '失败' : row.status }}</el-tag></template></el-table-column><el-table-column label="失败原因" prop="last_error"/></el-table><el-empty v-if="!history.length" description="暂无推送历史"/></div>
       <template #footer><el-button type="danger" plain :disabled="!history.length" @click="clearHistory">清除历史</el-button><el-button @click="historyOpen = false">关闭</el-button></template>
     </el-dialog>
 
-    <BaseModal :open="open" :title="editing ? '编辑 QQ 任务' : '新建 QQ 任务'" width="large" @close="open = false">
+    <BaseModal class="qq-task-dialog" :open="open" :title="editing ? '编辑 QQ 任务' : '新建 QQ 任务'" width="large" @close="open = false">
       <el-form class="sentinel-form" label-position="top" @submit.prevent="save">
         <div class="form-grid"><el-form-item label="任务名称"><el-input v-model="form.name" maxlength="100" placeholder="例如：每日报告提醒" /></el-form-item><el-form-item label="发送频率"><el-select v-model="form.frequency"><el-option v-for="option in frequencyOptions" :key="option.value" :label="option.label" :value="option.value" /></el-select></el-form-item></div>
         <el-form-item label="固定消息"><el-input v-model="form.message" type="textarea" :rows="4" maxlength="2000" show-word-limit placeholder="输入要定时发送的消息" /></el-form-item>
@@ -198,21 +198,3 @@ onMounted(load)
     </BaseModal>
   </div>
 </template>
-
-<style scoped>
-.qq-tasks-view { max-width: 1320px; margin: 0 auto; }
-.task-toolbar { justify-content: space-between; }
-.task-toolbar > div, .task-name { display: flex; min-width: 0; flex-direction: column; }
-.task-toolbar strong { font-size: 13px; }.task-toolbar span, .task-name span { margin-top: 4px; color: var(--muted); font-size: 11px; }
-.task-name strong { color: var(--text); font-size: 12px; }.task-name span { overflow: hidden; max-width: 440px; text-overflow: ellipsis; white-space: nowrap; }
-.task-schedule { display: flex; align-items: center; color: var(--text-soft); gap: 8px; }.task-schedule svg { flex: 0 0 auto; color: var(--primary); }.task-schedule span { display: flex; min-width: 0; flex-direction: column; }.task-schedule strong { font-size: 11px; font-weight: 600; }.task-schedule small { margin-top: 4px; color: var(--muted); font-size: 10px; }
-.row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 3px; }
-.form-grid, .schedule-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
-.schedule-editor { padding: 16px 16px 0; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); margin-bottom: 18px; }
-.field-help { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; }
-.task-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.task-options label { display: flex; align-items: center; justify-content: space-between; padding: 13px 14px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); gap: 16px; }
-.task-options span { display: flex; flex-direction: column; }.task-options strong { font-size: 12px; }.task-options small { margin-top: 4px; color: var(--muted); font-size: 10px; }
-.qq-tasks-view :deep(.el-select), .qq-tasks-view :deep(.el-time-picker) { width: 100%; }
-@media (max-width: 720px) { .form-grid, .schedule-editor, .task-options { grid-template-columns: 1fr; } }
-</style>
