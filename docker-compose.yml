@@ -135,6 +135,9 @@ services:
 
   redis:
     image: redis:7.4-alpine
+    # Run directly as the redis user so container recreation does not rely
+    # on a privileged entrypoint traversing the persistent AOF directory.
+    user: "999:1000"
     command:
       - redis-server
       - --appendonly
@@ -171,6 +174,10 @@ services:
       - CHOWN
       - SETGID
       - SETUID
+      # The Redis entrypoint scans and fixes ownership under /data before
+      # dropping privileges to the redis user. Keep DAC override available
+      # so this also works when an existing AOF directory is mode 700.
+      - DAC_OVERRIDE
     healthcheck:
       test:
         - CMD-SHELL
