@@ -25,7 +25,12 @@ def upgrade():
             "WHERE template_variables IS NULL"
         )
     )
-    op.alter_column("qq_notification_targets", "template_variables", nullable=False)
+    op.alter_column(
+        "qq_notification_targets",
+        "template_variables",
+        nullable=False,
+        existing_type=sa.JSON(),
+    )
 
 
 def downgrade():
