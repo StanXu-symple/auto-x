@@ -127,19 +127,20 @@ onBeforeUnmount(() => window.clearInterval(timer))
     </div>
 
     <template v-if="loading">
-      <div class="metric-grid"><div v-for="index in 4" :key="index" class="metric-card skeleton-card"><span /><span /><span /></div></div>
+      <div class="metric-grid dashboard-metrics"><div v-for="index in 4" :key="index" class="metric-card skeleton-card"><span /><span /><span /></div></div>
       <div class="dashboard-grid"><div class="panel skeleton-panel" /><div class="panel skeleton-panel" /></div>
     </template>
 
     <template v-else-if="summary">
-      <section class="metric-grid">
-        <article v-for="card in cards" :key="card.label" class="metric-card">
+      <section class="metric-grid dashboard-metrics" aria-label="核心指标">
+        <article v-for="card in cards" :key="card.label" class="metric-card" :class="`metric-card--${card.tone}`">
           <div class="metric-card__head">
-            <span>{{ card.label }}</span>
+            <span class="metric-card__label"><i />{{ card.label }}</span>
             <span class="metric-card__icon" :class="`metric-card__icon--${card.tone}`"><component :is="card.icon" :size="19" /></span>
           </div>
-          <strong>{{ card.value }}</strong>
+          <div class="metric-card__value-row"><strong>{{ card.value }}</strong><span>24H</span></div>
           <small>{{ card.detail }}</small>
+          <div class="metric-card__meter" aria-hidden="true"><span /></div>
         </article>
       </section>
 
@@ -165,7 +166,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
         </article>
       </section>
 
-      <section class="dashboard-grid">
+      <section class="dashboard-grid dashboard-grid--bottom">
         <article class="panel panel--wide">
           <header class="panel__header"><div><h2>最新采集内容</h2><p>最近监听到的推文</p></div><RouterLink to="/tweets">查看全部 <ArrowUpRight :size="15" /></RouterLink></header>
           <div v-if="summary.recent_tweets?.length" class="recent-feed">
