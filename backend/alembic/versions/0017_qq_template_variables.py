@@ -11,10 +11,21 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column(
-        "qq_notification_targets",
-        sa.Column("template_variables", sa.JSON(), nullable=False, server_default="{}"),
+    inspector = sa.inspect(op.get_bind())
+    columns = {column["name"] for column in inspector.get_columns("qq_notification_targets")}
+    if "template_variables" not in columns:
+        op.add_column(
+            "qq_notification_targets",
+            sa.Column("template_variables", sa.JSON(), nullable=True),
+        )
+    op.execute(
+        sa.text(
+            "UPDATE qq_notification_targets "
+            "SET template_variables = JSON_OBJECT() "
+            "WHERE template_variables IS NULL"
+        )
     )
+    op.alter_column("qq_notification_targets", "template_variables", nullable=False)
 
 
 def downgrade():

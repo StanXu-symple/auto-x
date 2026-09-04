@@ -70,7 +70,7 @@ class QQNotificationTarget(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     all_monitored_users: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     message_template: Mapped[str] = mapped_column(Text)
-    template_variables: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, server_default="{}")
+    template_variables: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
