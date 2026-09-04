@@ -7,6 +7,7 @@ import router from './router'
 import './styles/main.css'
 import './styles/redesign.css'
 import './styles/finishing.css'
+import './styles/main-area.css'
 
 const app = createApp(App)
 app.use(createPinia())

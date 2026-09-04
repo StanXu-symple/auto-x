@@ -207,6 +207,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
         <div class="topbar__left">
           <button class="topbar__menu icon-button" aria-label="打开菜单" @click="ui.sidebarOpen = true"><Menu :size="20" /></button>
           <div>
+            <span class="topbar__eyebrow">Auto-X · Control Room</span>
             <h1>{{ route.meta.title }}</h1>
             <p>{{ route.meta.description }}</p>
           </div>
