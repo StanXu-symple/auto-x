@@ -39,7 +39,7 @@ async function submit() {
       <div class="login-visual__content">
         <div class="login-brand">
           <span class="brand-mark brand-mark--large"><Radio :size="27" /></span>
-          <span><strong>X Sentinel</strong><small>INTELLIGENCE CONSOLE</small></span>
+          <span><strong>Auto-X</strong><small>INTELLIGENCE CONSOLE</small></span>
         </div>
         <div class="radar-visual" aria-hidden="true">
           <span class="radar-visual__ring radar-visual__ring--one" />
@@ -67,7 +67,7 @@ async function submit() {
     <section class="login-panel">
       <form class="login-card" novalidate @submit.prevent="submit">
         <div class="login-card__mobile-brand">
-          <span class="brand-mark"><Radio :size="20" /></span><strong>X Sentinel</strong>
+          <span class="brand-mark"><Radio :size="20" /></span><strong>Auto-X</strong>
         </div>
         <header>
           <span class="login-card__shield"><ShieldCheck :size="22" /></span>

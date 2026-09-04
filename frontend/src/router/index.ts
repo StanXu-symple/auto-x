@@ -96,7 +96,7 @@ router.beforeEach((to) => {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
   if (!isPreview && to.meta.guestOnly && auth.isAuthenticated) return { name: 'dashboard' }
-  document.title = `${String(to.meta.title || '控制台')} · X Sentinel`
+  document.title = `${String(to.meta.title || '控制台')} · Auto-X`
 })
 
 export default router

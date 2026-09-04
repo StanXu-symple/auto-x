@@ -155,8 +155,8 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
       <div class="sidebar__brand">
         <div class="brand-mark"><Radio :size="20" /></div>
         <div class="brand-copy">
-          <strong>X Sentinel</strong>
-          <span>监听控制台</span>
+          <strong>Auto-X</strong>
+          <span>社媒自动化控制台</span>
         </div>
         <button class="sidebar__mobile-close icon-button" aria-label="关闭菜单" @click="ui.sidebarOpen = false"><X :size="18" /></button>
       </div>
