@@ -60,12 +60,6 @@ const router = createRouter({
           meta: { title: 'AI 创作', description: '把监听内容转化为可审核、可编辑的创作草稿' },
         },
         {
-          path: 'xiaohongshu',
-          name: 'xiaohongshu',
-          component: () => import('@/views/XiaohongshuView.vue'),
-          meta: { title: '小红书发布', description: '管理登录连接、图文内容与自动或延迟发布策略' },
-        },
-        {
           path: 'qq-notifications',
           name: 'qq-notifications',
           component: () => import('@/views/QQNotificationsView.vue'),

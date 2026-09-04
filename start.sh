@@ -127,13 +127,6 @@ start_process \
   "$PYTHON_BIN" -m app.ai_worker
 
 start_process \
-  "xhs-worker" \
-  "app.xhs_worker" \
-  "$BACKEND_DIR" \
-  "$LOG_DIR/xhs-worker.log" \
-  "$PYTHON_BIN" -m app.xhs_worker
-
-start_process \
   "frontend" \
   "npm run dev" \
   "$FRONTEND_DIR" \
@@ -145,7 +138,6 @@ echo
 echo "X Sentinel 已全部启动："
 echo "  前端：    http://127.0.0.1:5173"
 echo "  API：     http://127.0.0.1:8000"
-echo "  小红书：  由 xhs-worker 执行发布队列"
 echo "  API 文档：http://127.0.0.1:8000/docs"
 echo "  日志目录：$LOG_DIR"
 echo "关闭服务：./shutdown.sh"

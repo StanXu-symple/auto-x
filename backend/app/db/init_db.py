@@ -14,7 +14,6 @@ from app.models import (  # imports all model metadata
     AISetting,
     AISkill,
     AppSetting,
-    XiaohongshuPublishSetting,
 )
 from app.services.ai_defaults import DEFAULT_AI_FEATURES, DEFAULT_AI_MODEL, DEFAULT_AI_SKILLS
 
@@ -119,18 +118,4 @@ async def seed_runtime_defaults(settings: Settings, *, seed_admin: bool = True) 
             updated_at=now,
         )
         statement = statement.on_duplicate_key_update(id=AISetting.id)
-        await session.execute(statement)
-
-        statement = mysql_insert(XiaohongshuPublishSetting).values(
-            id=1,
-            enabled=False,
-            default_strategy="manual",
-            default_delay_minutes=60,
-            max_attempts=3,
-            daily_publish_limit=10,
-            default_visibility="公开可见",
-            declare_original=False,
-            updated_at=now,
-        )
-        statement = statement.on_duplicate_key_update(id=XiaohongshuPublishSetting.id)
         await session.execute(statement)

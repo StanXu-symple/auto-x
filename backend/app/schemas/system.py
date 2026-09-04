@@ -24,5 +24,4 @@ class SystemMetricsResponse(APIModel):
     redis: dict[str, Any]
     worker: dict[str, Any]
     ai_worker: dict[str, Any]
-    xhs_worker: dict[str, Any]
     qq_worker: dict[str, Any]

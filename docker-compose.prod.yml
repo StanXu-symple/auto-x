@@ -123,29 +123,6 @@ services:
         reservations:
           memory: 192m
 
-  xhs-worker:
-    environment:
-      ENVIRONMENT: production
-      DEBUG: "false"
-      STARTUP_STRICT: "true"
-      AUTO_CREATE_TABLES: "false"
-      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE must be set}
-      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER must be set}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME must be set}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
-      X_TOKEN_ENCRYPTION_KEY: ${X_TOKEN_ENCRYPTION_KEY:?X_TOKEN_ENCRYPTION_KEY must be set}
-      CORS_ORIGINS: '${CORS_ORIGINS:?CORS_ORIGINS must be set}'
-    restart: always
-    deploy:
-      resources:
-        limits:
-          cpus: "1.00"
-          memory: 512m
-        reservations:
-          memory: 128m
 
   qq-worker:
     environment:

@@ -3917,7 +3917,6 @@ body { font-variant-numeric: tabular-nums; }
 .source-page,
 .ai-source-page,
 .ai-writing-view,
-.xhs-page,
 .qq-page,
 .qq-tasks-view { width: 100%; max-width: 1320px !important; margin-inline: auto; }
 
@@ -3945,7 +3944,6 @@ body { font-variant-numeric: tabular-nums; }
 
 .source-hero,
 .hero,
-.xhs-hero,
 .ai-hero,
 .qq-toolbar {
   width: 100%;
@@ -3960,7 +3958,6 @@ body { font-variant-numeric: tabular-nums; }
 
 .source-hero h2,
 .hero h2,
-.xhs-hero h2,
 .ai-hero h2,
 .qq-toolbar h2 { color: var(--text) !important; font-size: 20px !important; font-weight: 650; letter-spacing: 0 !important; }
 

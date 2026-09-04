@@ -24,11 +24,6 @@ from app.models.qq import (
 from app.models.setting import AppSetting
 from app.models.tweet import Tweet
 from app.models.x_credential import XCredential
-from app.models.xiaohongshu import (
-    XiaohongshuConnection,
-    XiaohongshuPublishJob,
-    XiaohongshuPublishSetting,
-)
 
 __all__ = [
     "Admin",
@@ -53,7 +48,4 @@ __all__ = [
     "QQScheduledTaskGroup",
     "Tweet",
     "XCredential",
-    "XiaohongshuConnection",
-    "XiaohongshuPublishJob",
-    "XiaohongshuPublishSetting",
 ]

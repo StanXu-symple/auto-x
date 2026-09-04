@@ -284,7 +284,6 @@ export interface SystemMetrics {
   redis: ServiceRuntimeMetric
   worker: WorkerRuntimeMetric
   ai_worker?: WorkerRuntimeMetric
-  xhs_worker?: WorkerRuntimeMetric
   qq_worker?: WorkerRuntimeMetric
 }
 
@@ -501,94 +500,6 @@ export interface AiDataSourceTestResult {
   message: string
   models: string[]
   checked_at: string
-}
-
-export type XhsPublishStrategy = 'manual' | 'automatic' | 'delayed'
-export type XhsPublishStatus = 'draft' | 'queued' | 'publishing' | 'retry_wait' | 'published' | 'failed' | 'cancelled'
-export type XhsVisibility = '公开可见' | '仅自己可见' | '仅互关好友可见'
-
-export interface XhsConnectionStatus {
-  configured: boolean
-  name: string | null
-  connector: 'xiaohongshu_mcp' | null
-  mcp_url: string | null
-  token_configured: boolean
-  token_hint: string | null
-  verification_status: 'unverified' | 'valid' | 'invalid' | 'error' | null
-  login_status: 'unknown' | 'logged_in' | 'logged_out' | string
-  risk_acknowledged: boolean
-  last_verified_at: string | null
-  last_error: string | null
-  version: number | null
-  cache_active: boolean
-  cache_ttl_seconds: number | null
-  updated_at: string | null
-}
-
-export interface XhsConnectionSavePayload {
-  name: string
-  connector: 'xiaohongshu_mcp'
-  mcp_url: string
-  auth_token?: string | null
-  risk_acknowledged: boolean
-}
-
-export interface XhsConnectionTestResult {
-  valid: boolean
-  logged_in: boolean
-  verification_status: string
-  login_status: string
-  message: string
-  checked_at: string
-}
-
-export interface XhsPublishSettings {
-  enabled: boolean
-  default_strategy: XhsPublishStrategy
-  default_delay_minutes: number
-  max_attempts: number
-  daily_publish_limit: number
-  default_visibility: XhsVisibility
-  declare_original: boolean
-  worker_status: string
-  worker_last_heartbeat: string | null
-  updated_at: string
-}
-
-export interface XhsPublishJob {
-  id: EntityId
-  source_ai_draft_id: EntityId | null
-  title: string
-  content: string
-  images: string[]
-  tags: string[]
-  products: string[]
-  visibility: XhsVisibility
-  is_original: boolean
-  strategy: XhsPublishStrategy
-  status: XhsPublishStatus
-  scheduled_at: string | null
-  attempts: number
-  max_attempts: number
-  last_error: string | null
-  platform_note_id: string | null
-  platform_url: string | null
-  published_at: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface XhsPublishJobCreatePayload {
-  source_ai_draft_id?: number | null
-  title: string
-  content: string
-  images: string[]
-  tags: string[]
-  products?: string[]
-  visibility?: XhsVisibility
-  is_original?: boolean
-  strategy?: XhsPublishStrategy
-  scheduled_at?: string | null
 }
 
 export interface AiSettings {

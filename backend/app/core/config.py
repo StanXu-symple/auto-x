@@ -83,10 +83,6 @@ class Settings(BaseSettings):
     ai_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
     ai_worker_metrics_port: int = Field(default=8002, ge=0, le=65535)
 
-    xhs_worker_scan_interval_seconds: float = Field(default=3.0, ge=0.5, le=60)
-    xhs_worker_lock_ttl_seconds: int = Field(default=300, ge=30, le=1800)
-    xhs_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
-    xhs_request_timeout_seconds: float = Field(default=180.0, ge=10, le=600)
 
     qq_auth_url: str = "https://bots.qq.com/app/getAppAccessToken"
     qq_api_base_url: str = "https://api.sgroup.qq.com/"

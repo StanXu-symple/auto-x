@@ -52,10 +52,6 @@ x-backend: &backend-common
     AI_WORKER_LOCK_TTL_SECONDS: ${AI_WORKER_LOCK_TTL_SECONDS:-180}
     AI_WORKER_HEARTBEAT_TTL_SECONDS: ${AI_WORKER_HEARTBEAT_TTL_SECONDS:-30}
     AI_WORKER_METRICS_PORT: "8002"
-    XHS_WORKER_SCAN_INTERVAL_SECONDS: ${XHS_WORKER_SCAN_INTERVAL_SECONDS:-3}
-    XHS_WORKER_LOCK_TTL_SECONDS: ${XHS_WORKER_LOCK_TTL_SECONDS:-300}
-    XHS_WORKER_HEARTBEAT_TTL_SECONDS: ${XHS_WORKER_HEARTBEAT_TTL_SECONDS:-30}
-    XHS_REQUEST_TIMEOUT_SECONDS: ${XHS_REQUEST_TIMEOUT_SECONDS:-180}
     QQ_AUTH_URL: ${QQ_AUTH_URL:-https://bots.qq.com/app/getAppAccessToken}
     QQ_API_BASE_URL: ${QQ_API_BASE_URL:-https://api.sgroup.qq.com/}
     QQ_REQUEST_TIMEOUT_SECONDS: ${QQ_REQUEST_TIMEOUT_SECONDS:-20}
@@ -305,33 +301,6 @@ services:
         reservations:
           memory: 128m
 
-  xhs-worker:
-    <<: *backend-common
-    command:
-      - python
-      - -m
-      - app.xhs_worker
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import os, redis; u=os.getenv('REDIS_URL'); c=redis.Redis.from_url(u, socket_timeout=3) if u else redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), db=int(os.getenv('REDIS_DB', '0')), password=os.getenv('REDIS_PASSWORD') or None, socket_timeout=3); assert c.get('xsentinel:xhs-worker:heartbeat')"
-      interval: 20s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    stop_grace_period: 60s
-    deploy:
-      resources:
-        limits:
-          cpus: "1.00"
-          memory: 512m
-        reservations:
-          memory: 128m
 
   qq-worker:
     <<: *backend-common
@@ -364,25 +333,6 @@ services:
         reservations:
           memory: 128m
 
-  xiaohongshu-mcp:
-    image: xpzouying/xiaohongshu-mcp:latest
-    profiles:
-      - xiaohongshu
-    environment:
-      AUTH_TOKEN: ${XHS_MCP_AUTH_TOKEN:-}
-      XHS_PROXY: ${XHS_PROXY:-}
-    expose:
-      - "18060"
-    ports:
-      - "127.0.0.1:${XHS_MCP_PORT:-18060}:18060"
-    volumes:
-      - xhs_mcp_data:/app/data
-      - xhs_mcp_images:/app/images
-    networks:
-      - app
-    restart: unless-stopped
-    shm_size: "1gb"
-    logging: *default-logging
 
   frontend:
     build:
@@ -616,5 +566,3 @@ volumes:
   redis_data:
   prometheus_data:
   grafana_data:
-  xhs_mcp_data:
-  xhs_mcp_images:

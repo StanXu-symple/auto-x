@@ -12,7 +12,6 @@
 - Post 内容流、关键词搜索、账号筛选和分页
 - 内置 AI Skill、手动/自动生成队列与可编辑草稿，统一使用一个 OpenAI 兼容账号
 - AI 任务幂等、重试、请求/响应审计和独立 Worker，不会自动发布到 X
-- 小红书 MCP 扫码登录、图文编辑，以及手动、立即自动和延迟发布队列
 - 腾讯 QQ 官方机器人适配，支持多机器人、多群目标和按监听账号分流
 - 每次轮询的状态、耗时、读取数、新增数和错误审计
 - CPU、内存、磁盘、负载、进程运行时间监控
@@ -30,13 +29,12 @@ Vue 3 / Nginx -> FastAPI -----------> MySQL
                   Redis <-> Polling Worker -> 官方 X API / twscrape
                     ^                  |
                     +---- AI Worker ---+----> 统一 AI 数据源
-                    +---- XHS Worker ------> xiaohongshu-mcp -> 小红书
                     +---- QQ Worker -------> NoneBot2 -> 腾讯 QQ 开放平台
 
 Prometheus -> Nginx + API + Workers + exporters -> Grafana
 ```
 
-详细设计见 [架构说明](docs/ARCHITECTURE.md)，X 官方接口见 [X API 接入说明](docs/X_API.md)，小红书部署和账号风险见 [小红书接入说明](docs/XIAOHONGSHU.md)。
+详细设计见 [架构说明](docs/ARCHITECTURE.md)，X 官方接口见 [X API 接入说明](docs/X_API.md)。
 
 ## 快速启动
 
@@ -104,9 +102,6 @@ AI API Key 使用服务端凭据加密密钥持久化到 MySQL，Redis 只缓存
 
 “AI 创作 → 用户策略与画像”支持按“监听用户 × AI 功能点”绑定一个或多个 Skill。每次新建 AI 会话按“手动覆盖 → 用户功能绑定 → 全局默认”解析 Skill，并把解析结果和版本写入任务快照。上下文同时包含该作者已有画像及最近 20 条动态；成功生成后会更新“他是谁、近期关注、动态关联、长期主题、证据和置信度”，供下一次创作继续使用。原帖与近期动态始终作为不可信引用数据处理，不能覆盖系统、功能点或 Skill 指令。
 
-## 小红书发布
-
-小红书功能默认关闭。先启动开源 `xiaohongshu-mcp` 执行端，再进入“小红书发布”配置 MCP 地址、可选访问令牌并扫码登录。系统支持文章草稿、立即自动发布和延迟发布，独立 `xhs-worker` 负责重试、每日上限与审计。Cookie 只保存在 MCP 执行端，不会写入本项目的 MySQL 或 Redis。Docker 用户可执行 `docker compose --profile xiaohongshu up -d`，详细步骤见 [小红书接入说明](docs/XIAOHONGSHU.md)。
 
 ## QQ 群推送
 
@@ -220,8 +215,6 @@ python -m app.worker
 # 需要先在 backend/.env 中配置对应 provider 凭据
 python -m app.ai_worker
 
-# 小红书发布队列
-python -m app.xhs_worker
 ```
 
 API 文档默认位于 [http://localhost:8000/docs](http://localhost:8000/docs)。

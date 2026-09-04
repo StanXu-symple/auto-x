@@ -55,12 +55,6 @@ import type {
   XSourceStatus,
   XSourceTestResult,
   TwscrapeCredentialSavePayload,
-  XhsConnectionSavePayload,
-  XhsConnectionStatus,
-  XhsConnectionTestResult,
-  XhsPublishJob,
-  XhsPublishJobCreatePayload,
-  XhsPublishSettings,
 } from '@/types'
 
 type Wrapped<T> = T | ApiEnvelope<T>
@@ -320,47 +314,5 @@ export const aiDataSourceApi = {
   },
   async remove() {
     await http.delete('/ai-data-source')
-  },
-}
-
-export const xiaohongshuApi = {
-  async connection() {
-    return dataOf(await http.get<Wrapped<XhsConnectionStatus>>('/xiaohongshu/connection'))
-  },
-  async saveConnection(payload: XhsConnectionSavePayload) {
-    return dataOf(await http.put<Wrapped<XhsConnectionStatus>>('/xiaohongshu/connection', payload))
-  },
-  async testConnection() {
-    return dataOf(await http.post<Wrapped<XhsConnectionTestResult>>('/xiaohongshu/connection/test'))
-  },
-  async loginQr() {
-    return dataOf(await http.post<Wrapped<{ image_data: string; mime_type: string; message: string }>>('/xiaohongshu/connection/login-qrcode'))
-  },
-  async removeConnection() {
-    await http.delete('/xiaohongshu/connection')
-  },
-  async settings() {
-    return dataOf(await http.get<Wrapped<XhsPublishSettings>>('/xiaohongshu/settings'))
-  },
-  async saveSettings(payload: Omit<XhsPublishSettings, 'worker_status' | 'worker_last_heartbeat' | 'updated_at'>) {
-    return dataOf(await http.put<Wrapped<XhsPublishSettings>>('/xiaohongshu/settings', payload))
-  },
-  async jobs(params: { page?: number; page_size?: number; status?: string; task_id?: EntityId } = {}) {
-    return pageOf(await http.get<Wrapped<PaginatedResponse<XhsPublishJob>>>('/xiaohongshu/jobs', { params }))
-  },
-  async createJob(payload: XhsPublishJobCreatePayload) {
-    return dataOf(await http.post<Wrapped<XhsPublishJob>>('/xiaohongshu/jobs', payload))
-  },
-  async publishNow(id: EntityId) {
-    return dataOf(await http.post<Wrapped<XhsPublishJob>>(`/xiaohongshu/jobs/${id}/publish`))
-  },
-  async schedule(id: EntityId, scheduledAt: string) {
-    return dataOf(await http.post<Wrapped<XhsPublishJob>>(`/xiaohongshu/jobs/${id}/schedule`, { scheduled_at: scheduledAt }))
-  },
-  async cancel(id: EntityId) {
-    return dataOf(await http.post<Wrapped<XhsPublishJob>>(`/xiaohongshu/jobs/${id}/cancel`))
-  },
-  async retry(id: EntityId) {
-    return dataOf(await http.post<Wrapped<XhsPublishJob>>(`/xiaohongshu/jobs/${id}/retry`))
   },
 }
