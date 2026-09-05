@@ -98,10 +98,11 @@ x-backend: &backend-common
 services:
   log-init:
     image: alpine:3.22
+    user: "0:0"
     command:
       - sh
       - -c
-      - chown -R 10001:10001 /var/log/xsentinel && chmod 0750 /var/log/xsentinel
+      - chmod 0750 /var/log/xsentinel && chown -R 10001:10001 /var/log/xsentinel
     volumes:
       - runtime_logs:/var/log/xsentinel
     restart: "no"
@@ -111,6 +112,7 @@ services:
       - ALL
     cap_add:
       - CHOWN
+      - DAC_OVERRIDE
       - FOWNER
     deploy:
       resources:
