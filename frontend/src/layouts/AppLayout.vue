@@ -23,6 +23,7 @@ import {
   UserRound,
   UsersRound,
   X,
+  BookOpen,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
@@ -67,6 +68,7 @@ const navigation = [
       { label: 'AI 创作', to: '/ai-writing', icon: Sparkles },
       { label: 'QQ 推送', to: '/qq-notifications', icon: Bot },
       { label: 'QQ 任务', to: '/qq-tasks', icon: Bell },
+      { label: '小红书管理', to: '/xhs', icon: BookOpen },
     ],
   },
   { label: '系统', items: [{ label: '系统与设置', to: '/settings', icon: Settings }] },

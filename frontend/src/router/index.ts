@@ -66,6 +66,7 @@ const router = createRouter({
           meta: { title: 'QQ 推送', description: '管理腾讯 QQ 官方机器人、群目标与投递记录' },
         },
         { path: 'qq-tasks', name: 'qq-tasks', component: () => import('@/views/QQTasksView.vue'), meta: { title: 'QQ 任务', description: '管理 QQ 定时消息任务' } },
+        { path: 'xhs', name: 'xhs', component: () => import('@/views/XhsView.vue'), meta: { title: '小红书管理', description: '登录并发布小红书图文笔记' } },
         {
           path: 'polling-logs',
           name: 'polling-logs',

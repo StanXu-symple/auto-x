@@ -14,6 +14,7 @@ from app.api.routes import (
     tweets,
     x_credentials,
     x_sources,
+    xhs,
 )
 
 api_router = APIRouter()
@@ -33,4 +34,5 @@ api_router.include_router(system.router)
 api_router.include_router(settings.router)
 api_router.include_router(x_credentials.router)
 api_router.include_router(x_sources.router)
+api_router.include_router(xhs.router)
 api_router.include_router(health.router)

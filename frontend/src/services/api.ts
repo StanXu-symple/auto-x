@@ -212,6 +212,12 @@ export const qqApi = {
   },
 }
 
+export const xhsApi = {
+  async status() { return dataOf(await http.get<Wrapped<any>>('/xhs/status')) },
+  async login(cookie: string) { return dataOf(await http.post<Wrapped<any>>('/xhs/login', { cookie })) },
+  async post(payload: { title: string; content: string; images: string[] }) { return dataOf(await http.post<Wrapped<any>>('/xhs/posts', payload)) },
+}
+
 export const xCredentialsApi = {
   async status() {
     return dataOf(await http.get<Wrapped<XCredentialStatus>>('/x-credentials/status'))
