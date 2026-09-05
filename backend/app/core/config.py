@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     mysql_database: str = "xsentinel"
     mysql_user: str = "xsentinel"
     mysql_password: str = "xsentinel"
-    mysql_pool_size: int = Field(default=10, ge=1, le=100)
-    mysql_max_overflow: int = Field(default=20, ge=0, le=200)
+    mysql_pool_size: int = Field(default=3, ge=1, le=100)
+    mysql_max_overflow: int = Field(default=2, ge=0, le=200)
     mysql_pool_recycle_seconds: int = Field(default=1800, ge=60)
 
     redis_url: str = ""
