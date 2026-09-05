@@ -217,6 +217,11 @@ services:
 
   backend:
     <<: *backend-common
+    # Camoufox/Firefox uses shared memory heavily while loading and uploading.
+    # Docker's 64 MB default can terminate the browser mid-navigation.
+    shm_size: 512m
+    tmpfs:
+      - /tmp:size=256m,mode=1777
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
       - xhs_home:/var/lib/xsentinel/xhs-home
@@ -247,9 +252,9 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 512m
+          memory: 1g
         reservations:
-          memory: 128m
+          memory: 256m
 
   worker:
     <<: *backend-common

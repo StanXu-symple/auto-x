@@ -75,9 +75,9 @@ services:
       resources:
         limits:
           cpus: "2.00"
-          memory: 1g
+          memory: 1536m
         reservations:
-          memory: 256m
+          memory: 512m
 
   worker:
     environment:

@@ -216,7 +216,7 @@ export const xhsApi = {
   async status() { return dataOf(await http.get<Wrapped<{ saved: boolean; connected: boolean; installed: boolean; message?: string }>>('/xhs/status')) },
   async login(payload: { a1: string; web_session: string }) { return dataOf(await http.post<Wrapped<any>>('/xhs/login', payload)) },
   async upload(files: File[]) { const body = new FormData(); files.forEach(file => body.append('files', file)); return dataOf(await http.post<Wrapped<any>>('/xhs/uploads', body)) },
-  async post(payload: { title: string; content: string; images: string[] }) { return dataOf(await http.post<Wrapped<any>>('/xhs/posts', payload)) },
+  async post(payload: { title: string; content: string; images: string[] }) { return dataOf(await http.post<Wrapped<any>>('/xhs/posts', payload, { timeout: 180_000 })) },
 }
 
 export const xCredentialsApi = {

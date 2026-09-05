@@ -24,6 +24,7 @@ from app.services.xhs_credentials import (
 router = APIRouter(prefix="/xhs", tags=["Xiaohongshu"])
 CLI_HOME_ROOT = Path(os.getenv("XHS_CLI_HOME") or os.getenv("HOME", "/tmp/xsentinel-xhs"))
 UPLOAD_DIR = Path(os.getenv("XHS_UPLOAD_DIR", "/var/lib/xsentinel/xhs-uploads"))
+BROWSER_CLOSED_ERROR = "Target page, context or browser has been closed"
 
 
 class LoginPayload(BaseModel):
@@ -60,6 +61,18 @@ def _validated_image_path(image: str) -> Path | None:
     if path.is_file() and UPLOAD_DIR in path.parents:
         return path
     return None
+
+
+def _publish_error(out: str, err: str) -> str:
+    detail = err.strip() or out.strip() or "发布失败"
+    if BROWSER_CLOSED_ERROR in out or BROWSER_CLOSED_ERROR in err:
+        browser_detail = err.strip() if BROWSER_CLOSED_ERROR in err else out.strip()
+        return (
+            "小红书发布浏览器意外退出。请使用最新部署配置重新创建 backend 容器，"
+            "并确认容器至少有 1.5GB 内存和 512MB /dev/shm。原始错误："
+            + browser_detail
+        )
+    return detail
 
 
 async def _run(admin_id: int, *args: str) -> tuple[int, str, str]:
@@ -167,7 +180,7 @@ async def post(payload: PostPayload, db: DbSession, admin: CurrentAdmin) -> dict
         args.extend(["--image", str(path)])
     code, out, err = await _run(admin.id, *args, "--json")
     if code:
-        raise HTTPException(502, detail=err.strip() or out.strip() or "发布失败")
+        raise HTTPException(502, detail=_publish_error(out, err))
     try:
         result = json.loads(out)
     except json.JSONDecodeError:
