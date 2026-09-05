@@ -17,6 +17,7 @@ from app.services.x_credentials import XCredentialUnavailableError
 from app.services.xhs_credentials import (
     XiaohongshuCredentialValue,
     get_xhs_credentials,
+    has_xhs_credentials,
     save_xhs_credentials,
 )
 
@@ -106,37 +107,11 @@ async def _restore_cli_login(
 
 @router.get("/status")
 async def status(db: DbSession, admin: CurrentAdmin) -> dict:
-    credentials, code, _, err = await _restore_cli_login(db, admin.id)
-    if credentials is None:
-        return {
-            "saved": False,
-            "connected": False,
-            "installed": shutil.which("xhs") is not None,
-        }
-    if code:
-        return {
-            "saved": True,
-            "connected": False,
-            "installed": code != 127,
-            "message": err.strip(),
-        }
-    code, out, err = await _run(admin.id, "whoami", "--json")
-    if code:
-        return {
-            "saved": True,
-            "connected": False,
-            "installed": code != 127,
-            "message": err.strip(),
-        }
-    try:
-        profile = json.loads(out)
-    except json.JSONDecodeError:
-        profile = {"raw": out.strip()}
+    saved = await has_xhs_credentials(db, admin_id=admin.id)
     return {
-        "saved": True,
-        "connected": True,
-        "installed": True,
-        "profile": profile,
+        "saved": saved,
+        "connected": saved,
+        "installed": shutil.which("xhs") is not None,
     }
 
 

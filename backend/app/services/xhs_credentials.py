@@ -17,6 +17,10 @@ class XiaohongshuCredentialValue:
     version: int
 
 
+async def has_xhs_credentials(session: AsyncSession, *, admin_id: int) -> bool:
+    return await session.get(XiaohongshuCredential, admin_id) is not None
+
+
 async def save_xhs_credentials(
     session: AsyncSession,
     settings: Settings,

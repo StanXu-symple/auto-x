@@ -1,6 +1,10 @@
 from app.core.config import Settings
 from app.models.xhs_credential import XiaohongshuCredential
-from app.services.xhs_credentials import get_xhs_credentials, save_xhs_credentials
+from app.services.xhs_credentials import (
+    get_xhs_credentials,
+    has_xhs_credentials,
+    save_xhs_credentials,
+)
 
 
 class FakeSession:
@@ -35,6 +39,12 @@ async def test_xhs_credentials_are_encrypted_and_scoped_to_admin() -> None:
     assert row.admin_id == 42
     assert "a1-secret-value" not in row.encrypted_a1
     assert "web-session-secret-value" not in row.encrypted_web_session
+    assert await has_xhs_credentials(
+        session, admin_id=42  # type: ignore[arg-type]
+    )
+    assert not await has_xhs_credentials(
+        session, admin_id=7  # type: ignore[arg-type]
+    )
     assert (
         await get_xhs_credentials(
             session,
