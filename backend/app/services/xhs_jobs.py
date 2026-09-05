@@ -33,7 +33,7 @@ def xhs_response_key(job_id: str) -> str:
 
 
 def publish_error(out: str, err: str) -> str:
-    detail = err.strip() or out.strip() or "发布失败"
+    detail = "\n".join(part for part in (out.strip(), err.strip()) if part) or "发布失败"
     combined = f"{out}\n{err}"
     if CGROUP_OOM_MARKER in combined:
         oom_detail = err.strip() if CGROUP_OOM_MARKER in err else out.strip()

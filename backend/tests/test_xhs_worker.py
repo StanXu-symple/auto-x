@@ -5,6 +5,7 @@ from app.xhs_worker import (
     RELEASE_HEARTBEAT_SCRIPT,
     XiaohongshuWorker,
     _cgroup_memory_snapshot,
+    _cli_executable,
     _oom_kill_count,
 )
 
@@ -63,3 +64,8 @@ def test_cgroup_memory_snapshot(tmp_path: Path) -> None:
     assert snapshot["peak_bytes"] == 2097152
     assert snapshot["limit_bytes"] is None
     assert _oom_kill_count(snapshot) == 1
+
+
+def test_post_uses_compatibility_cli_only() -> None:
+    assert _cli_executable(("post", "title"))[-2:] == ("-m", "app.xhs_cli_compat")
+    assert _cli_executable(("login", "--cookie", "value")) == ("xhs",)

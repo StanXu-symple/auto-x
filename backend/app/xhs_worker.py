@@ -7,6 +7,7 @@ import os
 import shutil
 import signal
 import socket
+import sys
 import time
 import uuid
 from contextlib import suppress
@@ -92,6 +93,12 @@ def _oom_kill_count(snapshot: dict[str, Any]) -> int:
         return int(events.get("oom_kill", 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _cli_executable(args: tuple[str, ...]) -> tuple[str, ...]:
+    if args and args[0] == "post":
+        return sys.executable, "-m", "app.xhs_cli_compat"
+    return ("xhs",)
 
 
 class XiaohongshuWorker:
@@ -269,8 +276,9 @@ class XiaohongshuWorker:
         home.mkdir(parents=True, exist_ok=True)
         home.chmod(0o700)
         memory_before = _cgroup_memory_snapshot()
+        executable = _cli_executable(args)
         process = await asyncio.create_subprocess_exec(
-            "xhs",
+            *executable,
             *args,
             env={**os.environ, "HOME": str(home)},
             stdout=asyncio.subprocess.PIPE,

@@ -16,6 +16,16 @@ def test_publish_error_preserves_other_cli_errors() -> None:
     assert publish_error("", "creator login required") == "creator login required"
 
 
+def test_publish_error_combines_stdout_and_stderr() -> None:
+    message = publish_error(
+        '{"success": false}',
+        "Title input not found\nContent input not found",
+    )
+
+    assert '{"success": false}' in message
+    assert "Title input not found" in message
+
+
 def test_publish_error_explains_page_crash() -> None:
     message = publish_error(
         "Publishing note",
