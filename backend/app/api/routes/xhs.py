@@ -69,7 +69,7 @@ def _publish_error(out: str, err: str) -> str:
         browser_detail = err.strip() if BROWSER_CLOSED_ERROR in err else out.strip()
         return (
             "小红书发布浏览器意外退出。请使用最新部署配置重新创建 backend 容器，"
-            "并确认容器至少有 1.5GB 内存和 512MB /dev/shm。原始错误："
+            "并确认容器至少有 2GB 内存和 512MB /dev/shm。原始错误："
             + browser_detail
         )
     return detail

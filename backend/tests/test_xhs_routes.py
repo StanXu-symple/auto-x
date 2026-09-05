@@ -8,7 +8,7 @@ def test_publish_error_explains_browser_resource_failure_from_stdout() -> None:
     )
 
     assert "浏览器意外退出" in message
-    assert "1.5GB" in message
+    assert "2GB" in message
     assert "512MB /dev/shm" in message
     assert "Target page, context or browser has been closed" in message
 
