@@ -7,6 +7,7 @@
   --accounts-text: #172033;
   --accounts-muted: #66758b;
   --accounts-accent: #d51f4c;
+  --accounts-accent-hover: #b81740;
   --accounts-online: #2eaf6f;
   --accounts-warning: #b7791f;
   gap: 24px;
@@ -14,7 +15,7 @@
 
 .accounts-view .summary-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr)) auto;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr) 1px minmax(0, 1fr) auto;
   align-items: center;
   min-height: 112px;
   padding: 20px 24px;
@@ -28,6 +29,7 @@
 .accounts-view .summary-strip > div:not(.summary-strip__action) {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   min-width: 0;
   padding: 0 24px;
   gap: 12px;
@@ -43,7 +45,10 @@
 }
 
 .accounts-view .summary-strip > i {
-  display: none;
+  display: block;
+  width: 1px;
+  height: 44px;
+  background: var(--accounts-border);
 }
 
 .accounts-view .summary-strip__icon {
@@ -73,17 +78,30 @@
   gap: 4px;
 }
 
+.accounts-view .summary-strip__copy {
+  min-width: 92px;
+}
+
 .accounts-view .summary-strip small {
   color: var(--accounts-muted);
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
   white-space: nowrap;
 }
 
 .accounts-view .summary-strip strong {
   color: var(--accounts-text);
   font-size: 22px;
-  line-height: 1;
+  line-height: 1.05;
   font-variant-numeric: tabular-nums;
+}
+
+.accounts-view .summary-strip em {
+  color: #9aa7b9;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.2;
 }
 
 .accounts-view .summary-strip__action {
@@ -97,7 +115,23 @@
   min-height: 40px;
   padding-inline: 16px;
   border-radius: 9px;
+  border-color: var(--accounts-accent);
+  color: #fff;
+  background: var(--accounts-accent);
+  box-shadow: 0 8px 16px rgba(213, 31, 76, 0.16);
+  font-weight: 700;
   white-space: nowrap;
+}
+
+.accounts-view .summary-strip__action .el-button:hover,
+.accounts-view .summary-strip__action .el-button:focus-visible {
+  border-color: var(--accounts-accent-hover);
+  color: #fff;
+  background: var(--accounts-accent-hover);
+}
+
+.accounts-view .summary-strip__action .el-button svg {
+  color: currentColor;
 }
 
 .accounts-view .data-panel {
@@ -437,6 +471,10 @@
 @media (max-width: 1100px) {
   .accounts-view .summary-strip {
     grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+
+  .accounts-view .summary-strip > i {
+    display: none;
   }
 
   .accounts-view .summary-strip__action {

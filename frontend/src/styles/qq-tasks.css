@@ -106,17 +106,31 @@
 }
 
 .qq-tasks-page .summary-strip__action .el-button,
-.qq-tasks-page .empty-state .el-button {
+.qq-tasks-page .empty-state__action .el-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 40px;
+  padding: 0 16px;
   border: 0;
   border-radius: 10px;
+  color: #fff;
   background: var(--task-rose);
   box-shadow: 0 8px 18px rgba(225, 29, 72, .16);
+  font-size: 11px;
   font-weight: 700;
+  gap: 7px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .qq-tasks-page .summary-strip__action .el-button:hover,
-.qq-tasks-page .empty-state .el-button:hover { background: #be123c; }
+.qq-tasks-page .empty-state__action .el-button:hover,
+.qq-tasks-page .summary-strip__action .el-button:focus-visible,
+.qq-tasks-page .empty-state__action .el-button:focus-visible { background: #be123c; }
+
+.qq-tasks-page .summary-strip__action .el-button:active,
+.qq-tasks-page .empty-state__action .el-button:active { transform: translateY(1px); }
 
 .qq-tasks-page .data-panel { overflow: hidden; }
 

@@ -184,32 +184,84 @@
 .runtime-monitoring-view .resource-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: 18px;
 }
 
 .runtime-monitoring-view .resource-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   min-height: 122px;
-  padding: 16px;
+  padding: 18px;
   border: 1px solid var(--monitoring-border);
-  border-radius: 12px;
-  background: var(--monitoring-surface-muted);
+  border-top: 3px solid transparent;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--monitoring-surface) 0%, var(--monitoring-surface-muted) 100%);
   box-shadow: none;
   transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
-.runtime-monitoring-view .resource-card:hover {
-  border-color: rgba(52, 152, 219, 0.35);
-  box-shadow: 0 8px 18px rgba(34, 55, 82, 0.07);
-  transform: translateY(-1px);
+.runtime-monitoring-view .resource-card::before {
+  position: absolute;
+  z-index: 0;
+  right: -34px;
+  top: -48px;
+  width: 138px;
+  height: 138px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  content: '';
+  opacity: .12;
+  pointer-events: none;
 }
 
+.runtime-monitoring-view .resource-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.runtime-monitoring-view .resource-card:nth-child(1) {
+  border-top-color: #8b5cf6;
+  color: #7c3aed;
+  background: linear-gradient(135deg, #fff 0%, #fbf9ff 100%);
+}
+
+.runtime-monitoring-view .resource-card:nth-child(2) {
+  border-top-color: var(--monitoring-online);
+  color: var(--monitoring-online);
+  background: linear-gradient(135deg, #fff 0%, #f7fbff 100%);
+}
+
+.runtime-monitoring-view .resource-card:nth-child(3) {
+  border-top-color: var(--monitoring-healthy);
+  color: #1faa5b;
+  background: linear-gradient(135deg, #fff 0%, #f7fdf9 100%);
+}
+
+.runtime-monitoring-view .resource-card:nth-child(4) {
+  border-top-color: #f59e0b;
+  color: #d97706;
+  background: linear-gradient(135deg, #fff 0%, #fffaf2 100%);
+}
+
+.runtime-monitoring-view .resource-card:hover {
+  border-color: rgba(52, 152, 219, 0.35);
+  box-shadow: 0 12px 24px rgba(34, 55, 82, 0.08);
+  transform: translateY(-2px);
+}
+
+.runtime-monitoring-view .resource-card:nth-child(1):hover { border-top-color: #7c3aed; }
+.runtime-monitoring-view .resource-card:nth-child(2):hover { border-top-color: #2479ae; }
+.runtime-monitoring-view .resource-card:nth-child(3):hover { border-top-color: #218c4a; }
+.runtime-monitoring-view .resource-card:nth-child(4):hover { border-top-color: #b45309; }
+
 .runtime-monitoring-view .resource-gauge {
-  gap: 12px;
+  gap: 16px;
 }
 
 .runtime-monitoring-view .resource-gauge__visual {
-  width: 76px;
-  height: 76px;
+  width: 82px;
+  height: 82px;
 }
 
 .runtime-monitoring-view .resource-gauge__track,
@@ -222,7 +274,7 @@
 }
 
 .runtime-monitoring-view .resource-card:nth-child(1) .resource-gauge__value {
-  stroke: var(--monitoring-online);
+  stroke: #8b5cf6;
 }
 
 .runtime-monitoring-view .resource-card:nth-child(2) .resource-gauge__value {
@@ -244,12 +296,26 @@
   font-variant-numeric: tabular-nums;
 }
 
+.runtime-monitoring-view .resource-gauge__visual > strong {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  line-height: 1;
+  text-align: center;
+}
+
+.runtime-monitoring-view .resource-gauge__visual.is-purple > strong {
+  color: #6d28d9;
+}
+
 .runtime-monitoring-view .resource-gauge > div:last-child {
   gap: 5px;
 }
 
 .runtime-monitoring-view .resource-gauge > div:last-child strong {
-  font-size: 12px;
+  color: var(--monitoring-text);
+  font-size: 13px;
 }
 
 .runtime-monitoring-view .resource-gauge > div:last-child span,
@@ -268,8 +334,8 @@
 .runtime-monitoring-view .uptime-card .resource-card__icon {
   width: 40px;
   height: 40px;
-  color: var(--monitoring-healthy);
-  background: rgba(46, 204, 113, 0.1);
+  color: #d97706;
+  background: rgba(245, 158, 11, 0.12);
 }
 
 .runtime-monitoring-view .uptime-card strong {
@@ -300,13 +366,13 @@
 
 .runtime-monitoring-view .service-resource-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .runtime-monitoring-view .service-resource-card {
-  min-height: 182px;
-  padding: 16px;
+  min-height: 156px;
+  padding: 14px;
   border: 1px solid var(--monitoring-border);
   border-radius: 12px;
   background: var(--monitoring-surface-muted);
@@ -321,12 +387,20 @@
 }
 
 .runtime-monitoring-view .service-resource-card header {
-  gap: 10px;
+  gap: 8px;
+}
+
+.runtime-monitoring-view .service-resource-card header > div {
+  min-width: 0;
+}
+
+.runtime-monitoring-view .service-resource-card header > .status-badge {
+  flex: 0 0 auto;
 }
 
 .runtime-monitoring-view .service-resource-card header > span {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border-radius: 9px;
   color: var(--monitoring-online);
   background: rgba(52, 152, 219, 0.1);
@@ -347,8 +421,8 @@
 }
 
 .runtime-monitoring-view .service-resource-card__metrics {
-  margin-top: 16px;
-  gap: 12px;
+  margin-top: 14px;
+  gap: 10px;
 }
 
 .runtime-monitoring-view .resource-metric-row {
@@ -398,6 +472,7 @@
 
 .runtime-monitoring-view .monitoring-detail-grid {
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  align-items: start;
   gap: 16px;
 }
 
@@ -429,15 +504,15 @@
 }
 
 .runtime-monitoring-view .service-health-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: 16px;
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 14px;
+  gap: 10px;
 }
 
 .runtime-monitoring-view .service-health-card,
 .runtime-monitoring-view .process-stat {
-  min-height: 58px;
-  padding: 12px;
+  min-height: 56px;
+  padding: 10px;
   border-color: var(--monitoring-border);
   border-radius: 9px;
   background: var(--monitoring-surface-muted);
@@ -481,6 +556,51 @@
   background: rgba(149, 165, 166, 0.18);
 }
 
+.runtime-monitoring-view .status-badge--state-healthy {
+  color: #15803d;
+  background: #eaf8ef;
+}
+
+.runtime-monitoring-view .status-badge--state-success {
+  color: #047857;
+  background: #e7f8f1;
+}
+
+.runtime-monitoring-view .status-badge--state-online {
+  color: #2479ae;
+  background: #eaf4ff;
+}
+
+.runtime-monitoring-view .status-badge--state-active {
+  color: #6d28d9;
+  background: #f1ebff;
+}
+
+.runtime-monitoring-view .status-badge--state-connected {
+  color: #0f7490;
+  background: #e7f8fb;
+}
+
+.runtime-monitoring-view .status-badge--state-idle,
+.runtime-monitoring-view .status-badge--state-ok {
+  color: #52708a;
+  background: #eef4f8;
+}
+
+.runtime-monitoring-view .status-badge--state-offline,
+.runtime-monitoring-view .status-badge--state-down,
+.runtime-monitoring-view .status-badge--state-unhealthy {
+  color: #b42318;
+  background: #fff0ee;
+}
+
+.runtime-monitoring-view .status-badge--state-paused,
+.runtime-monitoring-view .status-badge--state-pending,
+.runtime-monitoring-view .status-badge--state-queued {
+  color: #9a6700;
+  background: #fff8e6;
+}
+
 .runtime-monitoring-view .process-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   padding: 16px;
@@ -500,13 +620,13 @@
 }
 
 .runtime-monitoring-view .worker-heartbeat-list {
-  padding: 0 16px 16px;
-  gap: 8px;
+  padding: 0 14px 14px;
+  gap: 6px;
 }
 
 .runtime-monitoring-view .worker-heartbeat {
-  min-height: 54px;
-  padding: 10px 12px;
+  min-height: 48px;
+  padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 9px;
   background: var(--monitoring-surface-muted);
@@ -528,11 +648,15 @@
   }
 
   .runtime-monitoring-view .service-resource-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .runtime-monitoring-view .monitoring-detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .runtime-monitoring-view .service-health-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 

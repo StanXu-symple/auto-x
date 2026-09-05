@@ -138,8 +138,28 @@ onMounted(loadStatus)
       <section class="panel">
         <div class="panel__head"><div><span class="step">01</span><h3>官方认证方式</h3></div><CircleDollarSign :size="20" /></div>
         <div class="method-tabs"><button type="button" :class="{ active: acquisitionMethod === 'developer_console' }" @click="acquisitionMethod = 'developer_console'">Developer Console</button><button type="button" :class="{ active: acquisitionMethod === 'api_exchange' }" @click="acquisitionMethod = 'api_exchange'">API Key / Secret</button></div>
-        <div class="guide" v-if="acquisitionMethod === 'developer_console'"><strong>App-Only Authentication → Bearer Token</strong><ol><li>进入 X Developer Console</li><li>选择 App 的 Keys & Tokens</li><li>在 Bearer Token 一栏 Generate</li><li>立即复制并保存到右侧</li></ol><a href="https://console.x.com/" target="_blank" rel="noopener noreferrer">打开 Developer Console <ArrowUpRight :size="14" /></a></div>
-        <div class="guide" v-else><strong>Client Credentials Grant</strong><ol><li>准备 Consumer Key 与 Secret</li><li>构造 Basic Authorization</li><li>POST /oauth2/token</li><li>复制 access_token</li></ol><a href="https://docs.x.com/fundamentals/authentication/oauth-2-0/application-only" target="_blank" rel="noopener noreferrer">查看官方流程 <ArrowUpRight :size="14" /></a></div>
+        <div class="guide" v-if="acquisitionMethod === 'developer_console'">
+          <div class="guide__intro"><strong>App-only Bearer Token</strong><p>适合后台轮询：它代表应用本身，不绑定某个用户的发帖权限，复制一次即可交给右侧加密保存。</p></div>
+          <ol class="guide__steps">
+            <li><span class="guide__step">1</span><div><strong>打开 Developer Console</strong><small>使用有权限的 X 开发者账号登录 console.x.com。</small></div></li>
+            <li><span class="guide__step">2</span><div><strong>进入项目与 App</strong><small>打开对应 Project，选择需要为 Auto-X 服务的 App。</small></div></li>
+            <li><span class="guide__step">3</span><div><strong>生成 Bearer Token</strong><small>进入 Keys & Tokens，在 Authentication Tokens 中点击 Generate。</small></div></li>
+            <li><span class="guide__step">4</span><div><strong>复制并立即保存</strong><small>Token 通常只完整展示一次，请勿粘贴到工单、聊天或提交到代码仓库。</small></div></li>
+          </ol>
+          <div class="guide__note"><ShieldCheck :size="16" /><span><strong>提交前检查</strong><small>右侧只需要 Bearer Token；保存后系统会加密存储，并在测试通过后才建议启用。</small></span></div>
+          <a href="https://console.x.com/" target="_blank" rel="noopener noreferrer">打开 Developer Console <ArrowUpRight :size="14" /></a>
+        </div>
+        <div class="guide" v-else>
+          <div class="guide__intro"><strong>Client Credentials Grant</strong><p>适合已经具备 API Key 与 API Secret 的团队，通过 OAuth 2.0 换取短期 access token，再将结果填入右侧。</p></div>
+          <ol class="guide__steps">
+            <li><span class="guide__step">1</span><div><strong>准备应用凭据</strong><small>在 Developer Console 的 Keys & Tokens 中确认 Consumer Key 与 Secret。</small></div></li>
+            <li><span class="guide__step">2</span><div><strong>拼接 Basic Authorization</strong><small>分别对 Key 与 Secret 做 URL 编码后用冒号连接，再进行 Base64 编码。</small></div></li>
+            <li><span class="guide__step">3</span><div><strong>请求 OAuth Token</strong><small>向 <code>/oauth2/token</code> 发送 POST，并使用 <code>grant_type=client_credentials</code>。</small></div></li>
+            <li><span class="guide__step">4</span><div><strong>复制 access_token</strong><small>只把返回的 access_token 填入右侧，不要保存 Key、Secret 或完整响应。</small></div></li>
+          </ol>
+          <div class="guide__note"><ShieldCheck :size="16" /><span><strong>安全边界</strong><small>Key 与 Secret 永远不要放入浏览器端或前端代码；仅在受控环境完成换取。</small></span></div>
+          <a href="https://docs.x.com/fundamentals/authentication/oauth-2-0/application-only" target="_blank" rel="noopener noreferrer">查看官方流程 <ArrowUpRight :size="14" /></a>
+        </div>
       </section>
 
       <section class="panel credential-panel">
@@ -156,8 +176,15 @@ onMounted(loadStatus)
     <div v-else class="workspace-grid">
       <section class="panel">
         <div class="panel__head"><div><span class="step warning">01</span><h3>获取登录 Cookies</h3></div><Cookie :size="20" /></div>
-        <div class="risk-banner"><AlertTriangle :size="20" /><div><strong>实验性非官方方式</strong><p>可能因 X 页面更新失效，也可能触发验证码、登录限制或账号停用。建议只使用专门的低权限账号。</p></div></div>
-        <ol class="cookie-steps"><li>在浏览器登录专用 X 账号</li><li>打开开发者工具 → Application</li><li>选择 Cookies → https://x.com</li><li>复制 <code>auth_token</code> 与 <code>ct0</code> 的 Value</li></ol>
+        <div class="risk-banner"><AlertTriangle :size="20" /><div><strong>实验性非官方方式</strong><p>可能因 X 页面更新失效，也可能触发验证码、登录限制或账号停用。建议只使用专门的低权限账号，不要使用个人主账号。</p></div></div>
+        <div class="guide__intro"><strong>从浏览器读取两项 Cookie</strong><p>twscrape 只需要网页会话中的 <code>auth_token</code> 和 <code>ct0</code>，不会读取你的密码。完成后请关闭开发者工具并清理剪贴板。</p></div>
+        <ol class="cookie-steps guide__steps">
+          <li><span class="guide__step guide__step--warning">1</span><div><strong>登录专用 X 账号</strong><small>确认地址栏是 <code>https://x.com</code>，并优先使用低权限、可随时替换的账号。</small></div></li>
+          <li><span class="guide__step guide__step--warning">2</span><div><strong>打开开发者工具</strong><small>在 Chrome / Edge 中按 F12，切换到 Application（应用）面板。</small></div></li>
+          <li><span class="guide__step guide__step--warning">3</span><div><strong>定位 x.com Cookies</strong><small>展开 Storage → Cookies，选择 <code>https://x.com</code>，不要从第三方域名复制。</small></div></li>
+          <li><span class="guide__step guide__step--warning">4</span><div><strong>复制两项 Value</strong><small>分别找到 <code>auth_token</code> 与 <code>ct0</code>，只复制 Value 粘贴到右侧对应输入框。</small></div></li>
+        </ol>
+        <div class="guide__note guide__note--warning"><AlertTriangle :size="16" /><span><strong>提交前检查</strong><small>Cookie 等同于登录凭据；不要截图、分享或提交到仓库。若账号异常，请立即在 X 中退出所有会话并轮换凭据。</small></span></div>
         <a class="terms-link" href="https://x.com/en/tos" target="_blank" rel="noopener noreferrer">阅读 X 服务条款 <ArrowUpRight :size="14" /></a>
       </section>
 

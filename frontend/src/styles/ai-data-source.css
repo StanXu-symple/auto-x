@@ -189,8 +189,8 @@
 
 .ai-data-source-page .source-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
-  align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
   gap: 24px;
 }
 
@@ -404,6 +404,24 @@
   color: var(--ai-subtle);
   font-size: 10px;
   text-align: right;
+}
+
+.ai-data-source-page .source-grid > .panel {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.ai-data-source-page .source-grid > .panel > header {
+  min-height: 54px;
+  margin-bottom: 0;
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--ai-border);
+}
+
+.ai-data-source-page .source-grid > .panel > .el-form {
+  flex: 1;
 }
 
 @media (max-width: 980px) {

@@ -587,16 +587,16 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
             <EmptyState v-if="!monitoredUsers.length" compact title="还没有监听用户" description="先添加需要监听的 X 用户，再为他配置专属 Skill"><template #icon><UserRound :size="26" /></template><el-button type="primary" @click="router.push('/accounts')">添加监听用户</el-button></EmptyState>
             <div v-else class="context-grid">
               <section class="settings-block binding-card">
-                <header><span><WandSparkles :size="18" /></span><div><h3>专属 Skill 组合</h3><p>{{ userBinding?.feature.description || '选择该功能调用时需要注入的提示指令' }}</p></div><el-tag effect="plain" :type="userBinding?.resolution_source === 'user_feature_binding' ? 'success' : 'info'">{{ userBinding?.resolution_source === 'user_feature_binding' ? '用户专属' : '继承全局默认' }}</el-tag></header>
+                <header><span><WandSparkles :size="18" /></span><div><h3>专属 Skill 组合</h3><p>{{ userBinding?.feature.description || '选择该功能调用时需要注入的提示指令' }}</p></div><el-tag class="context-binding-tag" effect="plain" :type="userBinding?.resolution_source === 'user_feature_binding' ? 'success' : 'info'">{{ userBinding?.resolution_source === 'user_feature_binding' ? '用户专属' : '继承全局默认' }}</el-tag></header>
                 <el-alert title="留空并保存表示移除专属绑定，系统将自动回退到全局默认 Skills。" type="info" :closable="false" show-icon />
                 <el-form-item label="Skills（顺序即优先级）"><el-select v-model="bindingSkillIds" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择一个或多个 Skill"><el-option v-for="skill in skills.filter((item) => item.is_active)" :key="skill.id" :label="`${skill.name} · v${skill.version || 1}`" :value="skill.id" /></el-select></el-form-item>
                 <div class="feature-prompt"><small>功能点基础提示词</small><p>{{ userBinding?.feature.base_prompt || features.find((item) => item.code === selectedFeatureCode)?.base_prompt }}</p></div>
                 <footer><span>解析顺序：手动覆盖 → 用户功能绑定 → 全局默认</span><el-button type="primary" :loading="bindingSaving" @click="saveUserBinding"><Save v-if="!bindingSaving" :size="15" />保存策略</el-button></footer>
               </section>
               <section class="settings-block profile-card">
-                <header><span><Bot :size="18" /></span><div><h3>作者长期画像</h3><p>基于历史画像、近期动态和当前帖子进行保守迭代</p></div><el-tag effect="plain">v{{ userProfile?.version || 0 }} · 置信度 {{ Math.round((userProfile?.confidence || 0) * 100) }}%</el-tag></header>
+                <header><span><Bot :size="18" /></span><div><h3>作者长期画像</h3><p>基于历史画像、近期动态和当前帖子进行保守迭代</p></div><el-tag class="context-profile-tag" effect="plain">v{{ userProfile?.version || 0 }} · 置信度 {{ Math.round((userProfile?.confidence || 0) * 100) }}%</el-tag></header>
                 <dl class="profile-details"><div><dt>他是谁</dt><dd>{{ userProfile?.identity_summary || '尚未生成；首次成功创作后自动形成画像。' }}</dd></div><div><dt>近期关注</dt><dd>{{ userProfile?.focus_summary || '暂无近期关注总结' }}</dd></div><div><dt>动态关联与思想脉络</dt><dd>{{ userProfile?.relationship_summary || '暂无关联分析' }}</dd></div></dl>
-                <div class="profile-topics"><small>长期主题</small><div><el-tag v-for="topic in userProfile?.recurring_topics || []" :key="topic" effect="plain">{{ topic }}</el-tag><span v-if="!userProfile?.recurring_topics?.length">暂无</span></div></div>
+                <div class="profile-topics"><small>长期主题</small><div><el-tag v-for="topic in userProfile?.recurring_topics || []" :key="topic" class="context-topic-tag" effect="plain">{{ topic }}</el-tag><span v-if="!userProfile?.recurring_topics?.length">暂无</span></div></div>
                 <footer><span>最近更新：{{ formatDateTime(userProfile?.updated_at) }}</span><span v-if="userProfile?.last_source_tweet_id">来源推文 #{{ userProfile.last_source_tweet_id }}</span></footer>
               </section>
             </div>

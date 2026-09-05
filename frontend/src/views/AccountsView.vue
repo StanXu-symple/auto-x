@@ -188,11 +188,11 @@ onMounted(load)
 <template>
   <div class="accounts-view page-stack">
     <section class="summary-strip">
-      <div><span class="summary-strip__icon"><Radio :size="18" /></span><span><small>账号总数</small><strong>{{ total }}</strong></span></div>
+      <div><span class="summary-strip__icon"><Radio :size="18" /></span><span class="summary-strip__copy"><small>已监听账号</small><strong>{{ total }}</strong><em>全部分页</em></span></div>
       <i />
-      <div><span class="summary-strip__icon is-success"><Zap :size="18" /></span><span><small>当前页运行中</small><strong>{{ activeCount }}</strong></span></div>
+      <div><span class="summary-strip__icon is-success"><Zap :size="18" /></span><span class="summary-strip__copy"><small>运行中账号</small><strong>{{ activeCount }}</strong><em>当前页</em></span></div>
       <i />
-      <div><span class="summary-strip__icon is-neutral"><Pause :size="18" /></span><span><small>当前页已暂停</small><strong>{{ pausedCount }}</strong></span></div>
+      <div><span class="summary-strip__icon is-neutral"><Pause :size="18" /></span><span class="summary-strip__copy"><small>已暂停账号</small><strong>{{ pausedCount }}</strong><em>当前页</em></span></div>
       <div class="summary-strip__action"><el-button type="primary" @click="openCreate"><Plus :size="17" />添加监听账号</el-button></div>
     </section>
 

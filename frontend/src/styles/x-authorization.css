@@ -16,9 +16,13 @@
   --xauth-warning: #b7791f;
   --xauth-warning-soft: #fff7e8;
   --xauth-danger: #b4233c;
+  display: flex;
   width: 100%;
-  max-width: none;
+  max-width: 1420px;
+  flex-direction: column;
   gap: 24px;
+  margin: 0 auto;
+  color: var(--xauth-text);
 }
 
 .x-authorization-page .hero,
@@ -147,7 +151,14 @@
 .x-authorization-page .workspace-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.x-authorization-page .workspace-grid > .panel {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
   gap: 16px;
 }
 
@@ -308,7 +319,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 18px;
+  min-height: 42px;
+  margin-bottom: 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--xauth-border);
   color: var(--xauth-muted);
   gap: 14px;
 }
@@ -373,11 +387,37 @@
 }
 
 .x-authorization-page .guide {
-  margin-top: 16px;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  margin-top: 0;
   padding: 16px;
   border: 1px solid var(--xauth-border);
   border-radius: 11px;
   background: var(--xauth-surface-muted);
+}
+
+.x-authorization-page .guide__intro strong {
+  color: var(--xauth-text);
+  font-size: 12px;
+}
+
+.x-authorization-page .guide__intro p {
+  margin: 6px 0 0;
+  color: var(--xauth-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.x-authorization-page .guide__intro code,
+.x-authorization-page .guide__steps code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: var(--xauth-text-soft);
+  background: #eef2f7;
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
 }
 
 .x-authorization-page .guide > strong {
@@ -391,6 +431,106 @@
   margin: 14px 0 16px;
   padding-left: 18px;
   gap: 8px 24px;
+}
+
+.x-authorization-page .guide__steps {
+  display: flex;
+  flex-direction: column;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+  gap: 10px;
+}
+
+.x-authorization-page .guide__steps li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid var(--xauth-border);
+  border-radius: 9px;
+  background: var(--xauth-surface);
+  gap: 9px;
+}
+
+.x-authorization-page .guide__step {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--xauth-accent);
+  background: var(--xauth-accent-soft);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.x-authorization-page .guide__step--warning {
+  color: var(--xauth-warning);
+  background: var(--xauth-warning-soft);
+}
+
+.x-authorization-page .guide__steps li > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.x-authorization-page .guide__steps li strong {
+  color: var(--xauth-text);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.x-authorization-page .guide__steps li small {
+  color: var(--xauth-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.x-authorization-page .guide__note {
+  display: flex;
+  align-items: flex-start;
+  margin-top: auto;
+  padding: 11px 12px;
+  border: 1px solid #cfe9dc;
+  border-radius: 9px;
+  color: var(--xauth-success);
+  background: var(--xauth-success-soft);
+  gap: 8px;
+}
+
+.x-authorization-page .guide__note > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.x-authorization-page .guide__note strong {
+  color: #23774f;
+  font-size: 10px;
+}
+
+.x-authorization-page .guide__note small {
+  color: #4f8069;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.x-authorization-page .guide__note--warning {
+  border-color: #f3d8a3;
+  color: var(--xauth-warning);
+  background: var(--xauth-warning-soft);
+}
+
+.x-authorization-page .guide__note--warning strong {
+  color: #8f641b;
+}
+
+.x-authorization-page .guide__note--warning small {
+  color: #8b6c37;
 }
 
 .x-authorization-page .guide a,
@@ -554,12 +694,13 @@
 }
 
 .x-authorization-page .cookie-steps {
-  margin: 16px 0 0;
-  padding-left: 20px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
 }
 
 .x-authorization-page .cookie-steps li + li {
-  margin-top: 6px;
+  margin-top: 0;
 }
 
 .x-authorization-page .cookie-steps code {

@@ -17,6 +17,8 @@ const tone = computed(() => {
   return 'danger'
 })
 
+const stateClass = computed(() => `status-badge--state-${normalized.value.replace(/_/g, '-')}`)
+
 const labels: Record<string, string> = {
   active: '运行中',
   idle: '正常',
@@ -45,7 +47,7 @@ const labels: Record<string, string> = {
 </script>
 
 <template>
-  <span class="status-badge" :class="`status-badge--${tone}`">
+  <span class="status-badge" :class="[`status-badge--${tone}`, stateClass]">
     <span class="status-badge__dot" />
     {{ label || labels[normalized] || normalized }}
   </span>
