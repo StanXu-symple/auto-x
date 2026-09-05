@@ -9,10 +9,10 @@ from app.core.config import get_settings
 from app.db.base import Base
 from app.models import (  # noqa: F401
     Admin,
+    AIDataSource,
     AIDraft,
     AIGenerationJob,
     AISetting,
-    AIDataSource,
     AISkill,
     AppSetting,
     MonitoredUser,
@@ -20,12 +20,13 @@ from app.models import (  # noqa: F401
     QQBotAccount,
     QQDelivery,
     QQNotificationTarget,
-    QQTargetSubscription,
     QQScheduledTask,
     QQScheduledTaskBot,
     QQScheduledTaskGroup,
+    QQTargetSubscription,
     Tweet,
     XCredential,
+    XiaohongshuCredential,
 )
 
 config = context.config

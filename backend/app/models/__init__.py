@@ -16,14 +16,15 @@ from app.models.qq import (
     QQDelivery,
     QQJoinedGroup,
     QQNotificationTarget,
-    QQTargetSubscription,
     QQScheduledTask,
     QQScheduledTaskBot,
     QQScheduledTaskGroup,
+    QQTargetSubscription,
 )
 from app.models.setting import AppSetting
 from app.models.tweet import Tweet
 from app.models.x_credential import XCredential
+from app.models.xhs_credential import XiaohongshuCredential
 
 __all__ = [
     "Admin",
@@ -48,4 +49,5 @@ __all__ = [
     "QQScheduledTaskGroup",
     "Tweet",
     "XCredential",
+    "XiaohongshuCredential",
 ]
