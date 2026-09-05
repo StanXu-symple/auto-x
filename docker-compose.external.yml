@@ -13,6 +13,8 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD-}
 
   backend:
+    volumes:
+      - xhs_uploads:/var/lib/xsentinel/xhs-uploads
     environment:
       ENVIRONMENT: production
       DEBUG: "false"

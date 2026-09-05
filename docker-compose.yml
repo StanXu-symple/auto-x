@@ -216,6 +216,8 @@ services:
 
   backend:
     <<: *backend-common
+    volumes:
+      - xhs_uploads:/var/lib/xsentinel/xhs-uploads
     command:
       - uvicorn
       - app.main:app
@@ -570,6 +572,7 @@ networks:
     driver: bridge
 
 volumes:
+  xhs_uploads:
   mysql_data:
   redis_data:
   prometheus_data:
