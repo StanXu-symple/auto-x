@@ -19,6 +19,8 @@ async def test_liveness_and_openapi_contract() -> None:
     assert "/api/v1/dashboard/summary" in paths
     assert "/api/v1/monitored-users/{user_id}/poll" in paths
     assert "/api/v1/system/metrics" in paths
+    assert "/api/v1/system/logs/systems" in paths
+    assert "/api/v1/system/logs/stream" in paths
     assert "/api/v1/ai/settings" in paths
     assert "/api/v1/ai-data-source" in paths
     assert "/api/v1/ai-data-source/test" in paths

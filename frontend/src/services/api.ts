@@ -1,5 +1,5 @@
 import type { AxiosResponse } from 'axios'
-import { http } from './http'
+import { http, TOKEN_KEY } from './http'
 import type {
   AiJob,
   AiJobActionResponse,
@@ -96,6 +96,66 @@ export const authApi = {
 export const dashboardApi = {
   async summary() {
     return dataOf(await http.get<Wrapped<DashboardSummary>>('/dashboard/summary'))
+  },
+}
+
+export interface RuntimeLogSystem {
+  value: string
+  label: string
+}
+
+export interface RuntimeLogEvent {
+  event: 'ready' | 'log'
+  data: { system?: string; lines?: string[]; line?: string }
+}
+
+const apiBase = String(import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+
+export const runtimeLogsApi = {
+  async systems() {
+    return dataOf(await http.get<Wrapped<RuntimeLogSystem[]>>('/system/logs/systems'))
+  },
+  async stream(
+    system: string,
+    signal: AbortSignal,
+    onEvent: (event: RuntimeLogEvent) => void,
+  ) {
+    const token = localStorage.getItem(TOKEN_KEY)
+    const response = await fetch(
+      `${apiBase}/system/logs/stream?system=${encodeURIComponent(system)}&tail=200`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal },
+    )
+    if (response.status === 401) {
+      localStorage.removeItem(TOKEN_KEY)
+      localStorage.removeItem('x-sentinel-user')
+      window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)
+      throw new Error('登录状态已失效')
+    }
+    if (!response.ok) throw new Error(`日志流连接失败（HTTP ${response.status}）`)
+    if (!response.body) throw new Error('当前浏览器不支持流式日志')
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+      const messages = buffer.split('\n\n')
+      buffer = messages.pop() || ''
+      for (const message of messages) {
+        if (!message || message.startsWith(':')) continue
+        let event = 'message'
+        const data: string[] = []
+        for (const row of message.split('\n')) {
+          if (row.startsWith('event:')) event = row.slice(6).trim()
+          if (row.startsWith('data:')) data.push(row.slice(5).trimStart())
+        }
+        if ((event === 'ready' || event === 'log') && data.length) {
+          onEvent({ event, data: JSON.parse(data.join('\n')) } as RuntimeLogEvent)
+        }
+      }
+    }
   },
 }
 

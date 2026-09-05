@@ -12,6 +12,7 @@ import {
   Gauge,
   KeyRound,
   LockKeyhole,
+  Logs,
   LogOut,
   Menu,
   MessageSquareText,
@@ -50,6 +51,7 @@ const navigation = [
     items: [
       { label: '仪表盘', to: '/dashboard', icon: Gauge },
       { label: '运行监控', to: '/monitoring', icon: Activity },
+      { label: '日志监控', to: '/runtime-logs', icon: Logs },
     ],
   },
   {

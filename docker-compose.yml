@@ -16,6 +16,7 @@ x-backend: &backend-common
     DEBUG: ${DEBUG:-false}
     API_PREFIX: /api/v1
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    LOG_DIR: /var/log/xsentinel
     HOME: /tmp
     STARTUP_STRICT: ${STARTUP_STRICT:-true}
     AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-true}
@@ -95,6 +96,27 @@ x-backend: &backend-common
   logging: *default-logging
 
 services:
+  log-init:
+    image: alpine:3.22
+    command:
+      - sh
+      - -c
+      - chown -R 10001:10001 /var/log/xsentinel && chmod 0750 /var/log/xsentinel
+    volumes:
+      - runtime_logs:/var/log/xsentinel
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+    deploy:
+      resources:
+        limits:
+          memory: 32m
+
   mysql:
     image: mysql:8.4
     environment:
@@ -221,8 +243,12 @@ services:
 
   backend:
     <<: *backend-common
+    environment:
+      <<: *backend-environment
+      SERVICE_NAME: backend
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
+      - runtime_logs:/var/log/xsentinel
     command:
       - uvicorn
       - app.main:app
@@ -235,6 +261,8 @@ services:
       - "8000"
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      log-init:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -256,6 +284,11 @@ services:
 
   worker:
     <<: *backend-common
+    environment:
+      <<: *backend-environment
+      SERVICE_NAME: worker
+    volumes:
+      - runtime_logs:/var/log/xsentinel
     command:
       - python
       - -m
@@ -264,6 +297,8 @@ services:
       - "8001"
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      log-init:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -292,10 +327,15 @@ services:
       - app.ai_worker
     environment:
       <<: *backend-environment
+      SERVICE_NAME: ai-worker
+    volumes:
+      - runtime_logs:/var/log/xsentinel
     expose:
       - "8002"
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      log-init:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -319,6 +359,11 @@ services:
 
   qq-worker:
     <<: *backend-common
+    environment:
+      <<: *backend-environment
+      SERVICE_NAME: qq-worker
+    volumes:
+      - runtime_logs:/var/log/xsentinel
     command:
       - python
       - -m
@@ -328,6 +373,8 @@ services:
       - "8004"
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      log-init:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -353,6 +400,7 @@ services:
     environment:
       <<: *backend-environment
       HOME: /var/lib/xsentinel/xhs-home
+      SERVICE_NAME: xhs-worker
     command:
       - python
       - -m
@@ -363,10 +411,13 @@ services:
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
       - xhs_home:/var/lib/xsentinel/xhs-home
+      - runtime_logs:/var/log/xsentinel
     expose:
       - "8005"
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      log-init:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -616,6 +667,7 @@ networks:
     driver: bridge
 
 volumes:
+  runtime_logs:
   xhs_uploads:
   xhs_home:
   mysql_data:

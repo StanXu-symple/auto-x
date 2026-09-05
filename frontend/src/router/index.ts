@@ -30,6 +30,12 @@ const router = createRouter({
           meta: { title: '运行监控', description: '查看服务器资源、服务健康与 Worker 运行状态' },
         },
         {
+          path: 'runtime-logs',
+          name: 'runtime-logs',
+          component: () => import('@/views/RuntimeLogsView.vue'),
+          meta: { title: '日志监控', description: '实时查看 Backend 与 Worker 的生产日志' },
+        },
+        {
           path: 'accounts',
           name: 'accounts',
           component: () => import('@/views/AccountsView.vue'),

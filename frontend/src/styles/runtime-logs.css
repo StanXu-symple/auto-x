@@ -1,0 +1,46 @@
+.runtime-logs-view { gap: 20px; color: #172033; }
+.log-query-panel { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 22px 24px; border: 1px solid #dfe6ed; border-radius: 8px; background: #fff; }
+.log-query-panel__title { display: flex; align-items: center; min-width: 0; gap: 14px; }
+.log-query-panel__icon { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border: 1px solid #cde3f2; border-radius: 8px; color: #2176a9; background: #eef7fc; }
+.log-query-panel__title div > span { color: #2176a9; font-size: 10px; font-weight: 800; letter-spacing: 0; }
+.log-query-panel h2 { margin: 2px 0 0; font-size: 19px; letter-spacing: 0; }
+.log-query-panel p { margin: 4px 0 0; color: #6c798c; font-size: 12px; }
+.log-query-form { display: flex; align-items: flex-end; gap: 10px; }
+.log-query-form label { display: grid; min-width: 240px; gap: 7px; color: #506075; font-size: 12px; font-weight: 700; }
+.log-query-form .el-button { min-height: 32px; padding-inline: 20px; }
+.log-stream-panel { overflow: hidden; min-height: 560px; border: 1px solid #263241; border-radius: 8px; background: #111820; box-shadow: 0 12px 28px rgba(14, 24, 34, .12); }
+.log-stream-panel__head { display: flex; align-items: center; justify-content: space-between; min-height: 64px; padding: 0 18px; border-bottom: 1px solid #2a3643; background: #18212b; gap: 16px; }
+.log-stream-panel__head > div, .log-stream-panel__head > div > div { display: flex; align-items: center; gap: 10px; }
+.terminal-mark { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 6px; color: #71c5f2; background: #22313e; }
+.log-stream-panel__head strong { color: #f3f7fa; font-size: 13px; }
+.log-stream-panel__head strong + span { color: #8493a3; font-size: 11px; }
+.log-stream-actions { color: #a9b5c1; font-size: 12px; }
+.log-stream-actions .el-checkbox { --el-checkbox-text-color: #a9b5c1; }
+.log-stream-actions .el-button { border-color: #3a4754; color: #bac6d1; background: #222d38; }
+.stream-state { display: inline-flex; align-items: center; gap: 7px; }
+.stream-state i { width: 7px; height: 7px; border-radius: 50%; background: #788694; }
+.stream-state.is-live i { background: #32c875; box-shadow: 0 0 0 4px rgba(50, 200, 117, .12); }
+.stream-state.is-connecting i, .stream-state.is-reconnecting i { background: #f5b942; }
+.stream-state.is-error i { background: #f06464; }
+.log-terminal { overflow: auto; height: min(66vh, 720px); min-height: 495px; padding: 10px 0 20px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; scrollbar-color: #465462 #111820; }
+.log-terminal__empty { display: grid; height: 100%; place-content: center; justify-items: center; color: #6f7e8d; gap: 8px; }
+.log-terminal__empty strong { color: #aeb9c4; font-size: 13px; }
+.log-terminal__empty span { font-size: 11px; }
+.log-line { display: grid; grid-template-columns: 48px 78px 58px minmax(240px, 1fr) minmax(100px, auto); align-items: baseline; min-height: 27px; padding: 4px 16px 4px 0; color: #cad3dc; font-size: 12px; line-height: 19px; }
+.log-line:hover { background: #19232d; }
+.log-line__number { padding-right: 12px; color: #536170; text-align: right; user-select: none; }
+.log-line time { color: #788797; font-variant-numeric: tabular-nums; }
+.log-line b { color: #71c5f2; font-size: 10px; }
+.log-line.is-warning b, .log-line.is-warn b { color: #f5bd52; }
+.log-line.is-error b, .log-line.is-critical b { color: #ff7373; }
+.log-line__message { overflow-wrap: anywhere; white-space: pre-wrap; }
+.log-line small { overflow: hidden; color: #667585; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) {
+  .log-query-panel, .log-stream-panel__head { align-items: stretch; flex-direction: column; }
+  .log-query-form { width: 100%; }
+  .log-query-form label { min-width: 0; flex: 1; }
+  .log-stream-panel__head { padding-block: 12px; }
+  .log-stream-actions { flex-wrap: wrap; }
+  .log-line { grid-template-columns: 38px 68px 48px minmax(160px, 1fr); padding-right: 10px; font-size: 11px; }
+  .log-line small { display: none; }
+}

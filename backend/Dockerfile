@@ -24,8 +24,8 @@ COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
 
 RUN chown -R app:app /app
-RUN mkdir -p /var/lib/xsentinel/xhs-home /var/lib/xsentinel/xhs-uploads \
-    && chown -R app:app /var/lib/xsentinel
+RUN mkdir -p /var/lib/xsentinel/xhs-home /var/lib/xsentinel/xhs-uploads /var/log/xsentinel \
+    && chown -R app:app /var/lib/xsentinel /var/log/xsentinel
 USER app
 
 EXPOSE 8000 8001 8002 8003 8004 8005

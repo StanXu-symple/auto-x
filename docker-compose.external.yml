@@ -15,6 +15,7 @@ services:
   backend:
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
+      - runtime_logs:/var/log/xsentinel
     environment:
       ENVIRONMENT: production
       DEBUG: "false"

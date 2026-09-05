@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import APIError
 from app.core.security import decode_access_token
-from app.db.session import get_db
+from app.db.session import AsyncSessionFactory, get_db
 from app.models.admin import Admin
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
@@ -42,3 +42,13 @@ async def get_current_admin(
 
 
 CurrentAdmin = Annotated[Admin, Depends(get_current_admin)]
+
+
+async def get_current_admin_for_stream(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> Admin:
+    async with AsyncSessionFactory() as db:
+        return await get_current_admin(db, credentials)
+
+
+StreamCurrentAdmin = Annotated[Admin, Depends(get_current_admin_for_stream)]
