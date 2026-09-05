@@ -17,8 +17,6 @@ services:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
       - xhs_home:/var/lib/xsentinel/xhs-home
     environment:
-      HOME: /var/lib/xsentinel/xhs-home
-    environment:
       ENVIRONMENT: production
       DEBUG: "false"
       STARTUP_STRICT: "true"

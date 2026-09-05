@@ -16,6 +16,7 @@ x-backend: &backend-common
     DEBUG: ${DEBUG:-false}
     API_PREFIX: /api/v1
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    HOME: /var/lib/xsentinel/xhs-home
     STARTUP_STRICT: ${STARTUP_STRICT:-true}
     AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-true}
     APP_TIMEZONE: ${TZ:-Asia/Shanghai}
@@ -219,8 +220,6 @@ services:
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
       - xhs_home:/var/lib/xsentinel/xhs-home
-    environment:
-      HOME: /var/lib/xsentinel/xhs-home
     command:
       - uvicorn
       - app.main:app
