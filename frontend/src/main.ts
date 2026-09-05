@@ -18,6 +18,7 @@ import './styles/ai-writing.css'
 import './styles/qq-notifications.css'
 import './styles/qq-tasks.css'
 import './styles/settings.css'
+import './styles/xhs.css'
 import './styles/login.css'
 
 const app = createApp(App)
