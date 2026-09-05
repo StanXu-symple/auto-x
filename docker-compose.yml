@@ -134,9 +134,9 @@ services:
       resources:
         limits:
           cpus: "1.50"
-          memory: 1g
+          memory: 256m
         reservations:
-          memory: 384m
+          memory: 128m
 
   redis:
     image: redis:7.4-alpine
@@ -152,14 +152,14 @@ services:
       - --requirepass
       - ${REDIS_PASSWORD:-change-me-redis}
       - --maxmemory
-      - ${REDIS_MAXMEMORY:-384mb}
+      - ${REDIS_MAXMEMORY:-64mb}
       - --maxmemory-policy
       - noeviction
       - --tcp-keepalive
       - "60"
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-redis}
-      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-384mb}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-64mb}
       TZ: ${TZ:-Asia/Shanghai}
     expose:
       - "6379"
@@ -197,9 +197,9 @@ services:
       resources:
         limits:
           cpus: "0.75"
-          memory: 512m
-        reservations:
           memory: 128m
+        reservations:
+          memory: 64m
 
   migrate:
     <<: *backend-common
@@ -250,7 +250,7 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 512m
+          memory: 256m
         reservations:
           memory: 128m
 
@@ -280,9 +280,9 @@ services:
       resources:
         limits:
           cpus: "1.50"
-          memory: 768m
+          memory: 128m
         reservations:
-          memory: 192m
+          memory: 64m
 
   ai-worker:
     <<: *backend-common
@@ -312,9 +312,9 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 512m
-        reservations:
           memory: 128m
+        reservations:
+          memory: 64m
 
 
   qq-worker:
@@ -344,7 +344,7 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 512m
+          memory: 256m
         reservations:
           memory: 128m
 

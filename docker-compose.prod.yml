@@ -20,9 +20,9 @@ services:
       resources:
         limits:
           cpus: "2.00"
-          memory: 2g
+          memory: 256m
         reservations:
-          memory: 512m
+          memory: 128m
 
   redis:
     command:
@@ -34,22 +34,22 @@ services:
       - --requirepass
       - ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
       - --maxmemory
-      - ${REDIS_MAXMEMORY:-512mb}
+      - ${REDIS_MAXMEMORY:-64mb}
       - --maxmemory-policy
       - noeviction
       - --tcp-keepalive
       - "60"
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-512mb}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-64mb}
     restart: always
     deploy:
       resources:
         limits:
           cpus: "1.00"
-          memory: 768m
+          memory: 128m
         reservations:
-          memory: 192m
+          memory: 64m
 
   backend:
     volumes:
@@ -74,9 +74,9 @@ services:
       resources:
         limits:
           cpus: "2.00"
-          memory: 1g
-        reservations:
           memory: 256m
+        reservations:
+          memory: 128m
 
   worker:
     environment:
@@ -98,9 +98,9 @@ services:
       resources:
         limits:
           cpus: "2.00"
-          memory: 1g
+          memory: 128m
         reservations:
-          memory: 256m
+          memory: 64m
 
   ai-worker:
     environment:
@@ -122,9 +122,9 @@ services:
       resources:
         limits:
           cpus: "1.50"
-          memory: 768m
+          memory: 128m
         reservations:
-          memory: 192m
+          memory: 64m
 
 
   qq-worker:
@@ -147,7 +147,7 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 512m
+          memory: 256m
         reservations:
           memory: 128m
 
