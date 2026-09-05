@@ -12,6 +12,8 @@ XHS_JOB_QUEUE = "xsentinel:xhs:jobs"
 XHS_WORKER_HEARTBEAT = "xsentinel:xhs-worker:heartbeat"
 XHS_RESPONSE_PREFIX = "xsentinel:xhs:responses:"
 BROWSER_CLOSED_ERROR = "Target page, context or browser has been closed"
+BROWSER_PAGE_CRASHED_ERROR = "Page crashed"
+CGROUP_OOM_MARKER = "XHS_WORKER_CGROUP_OOM"
 
 
 class XHSWorkerUnavailableError(RuntimeError):
@@ -32,11 +34,23 @@ def xhs_response_key(job_id: str) -> str:
 
 def publish_error(out: str, err: str) -> str:
     detail = err.strip() or out.strip() or "发布失败"
-    if BROWSER_CLOSED_ERROR in out or BROWSER_CLOSED_ERROR in err:
-        browser_detail = err.strip() if BROWSER_CLOSED_ERROR in err else out.strip()
+    combined = f"{out}\n{err}"
+    if CGROUP_OOM_MARKER in combined:
+        oom_detail = err.strip() if CGROUP_OOM_MARKER in err else out.strip()
         return (
-            "小红书发布浏览器意外退出，请检查 xhs-worker 的 OOM "
-            "和浏览器日志。原始错误：" + browser_detail
+            "已确认小红书浏览器被 xhs-worker 的内存上限终止。"
+            "请使用 2GB 内存配置重新创建 xhs-worker。原始错误：" + oom_detail
+        )
+    if BROWSER_CLOSED_ERROR in combined or BROWSER_PAGE_CRASHED_ERROR in combined:
+        browser_detail = (
+            err.strip()
+            if BROWSER_CLOSED_ERROR in err or BROWSER_PAGE_CRASHED_ERROR in err
+            else out.strip()
+        )
+        return (
+            "小红书发布浏览器意外退出（页面崩溃）。请确认 xhs-worker 使用 2GB 内存和 "
+            "512MB /dev/shm，并在生产日志中检查 cgroup_memory 与 "
+            "cgroup_oom_kill_delta。原始错误：" + browser_detail
         )
     return detail
 

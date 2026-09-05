@@ -436,9 +436,9 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 1g
+          memory: 2g
         reservations:
-          memory: 256m
+          memory: 512m
 
 
   frontend:

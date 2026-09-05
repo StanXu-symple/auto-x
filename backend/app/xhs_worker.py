@@ -40,6 +40,7 @@ from app.services.xhs_jobs import (
 logger = logging.getLogger(__name__)
 CLI_HOME_ROOT = Path(os.getenv("XHS_CLI_HOME") or os.getenv("HOME", "/tmp/xsentinel-xhs"))
 UPLOAD_DIR = Path(os.getenv("XHS_UPLOAD_DIR", "/var/lib/xsentinel/xhs-uploads"))
+CGROUP_MEMORY_ROOT = Path("/sys/fs/cgroup")
 RELEASE_HEARTBEAT_SCRIPT = """
 local raw = redis.call('get', KEYS[1])
 if not raw then
@@ -58,6 +59,39 @@ def _validated_image_path(image: object) -> Path | None:
     if path.is_file() and UPLOAD_DIR in path.parents:
         return path
     return None
+
+
+def _cgroup_memory_snapshot(root: Path = CGROUP_MEMORY_ROOT) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+    for filename, key in (
+        ("memory.current", "current_bytes"),
+        ("memory.peak", "peak_bytes"),
+        ("memory.max", "limit_bytes"),
+    ):
+        try:
+            raw = (root / filename).read_text(encoding="ascii").strip()
+            snapshot[key] = None if raw == "max" else int(raw)
+        except (OSError, ValueError):
+            continue
+    try:
+        events: dict[str, int] = {}
+        for line in (root / "memory.events").read_text(encoding="ascii").splitlines():
+            name, value = line.split(maxsplit=1)
+            events[name] = int(value)
+        snapshot["events"] = events
+    except (OSError, ValueError):
+        pass
+    return snapshot
+
+
+def _oom_kill_count(snapshot: dict[str, Any]) -> int:
+    events = snapshot.get("events")
+    if not isinstance(events, dict):
+        return 0
+    try:
+        return int(events.get("oom_kill", 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 class XiaohongshuWorker:
@@ -234,6 +268,7 @@ class XiaohongshuWorker:
         home = CLI_HOME_ROOT / "users" / str(admin_id)
         home.mkdir(parents=True, exist_ok=True)
         home.chmod(0o700)
+        memory_before = _cgroup_memory_snapshot()
         process = await asyncio.create_subprocess_exec(
             "xhs",
             *args,
@@ -256,6 +291,16 @@ class XiaohongshuWorker:
             raise
         out = stdout.decode(errors="replace")
         err = stderr.decode(errors="replace")
+        memory_after = _cgroup_memory_snapshot()
+        oom_kill_delta = max(
+            0,
+            _oom_kill_count(memory_after) - _oom_kill_count(memory_before),
+        )
+        if process.returncode and oom_kill_delta:
+            err = (
+                f"{err.rstrip()}\nXHS_WORKER_CGROUP_OOM: "
+                f"oom_kill increased by {oom_kill_delta}"
+            ).lstrip()
         logger.info(
             "Xiaohongshu CLI finished",
             extra={
@@ -263,6 +308,9 @@ class XiaohongshuWorker:
                 "return_code": process.returncode,
                 "stdout": out[-4000:],
                 "stderr": err[-4000:],
+                "cgroup_memory_before": memory_before,
+                "cgroup_memory_after": memory_after,
+                "cgroup_oom_kill_delta": oom_kill_delta,
             },
         )
         return process.returncode or 0, out, err

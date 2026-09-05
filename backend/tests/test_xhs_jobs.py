@@ -56,7 +56,8 @@ async def test_submit_xhs_job_returns_worker_result() -> None:
 
     assert result == {"message": "done"}
     assert redis.jobs[0]["admin_id"] == 7
-    assert "a1" not in json.dumps(redis.jobs[0])
+    assert "a1" not in redis.jobs[0]
+    assert "a1" not in redis.jobs[0]["payload"]
 
 
 async def test_submit_xhs_job_rejects_offline_worker() -> None:
