@@ -85,7 +85,7 @@ async function refreshMetrics(showToast = true) {
 let timer: number | undefined
 onMounted(() => {
   refreshMetrics(false)
-  timer = window.setInterval(() => refreshMetrics(false), 60_000)
+  timer = window.setInterval(() => refreshMetrics(false), 10_000)
 })
 onBeforeUnmount(() => window.clearInterval(timer))
 </script>
@@ -103,7 +103,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
       </div>
       <div class="monitoring-command-bar__actions">
         <div class="monitoring-summary" aria-live="polite"><strong>{{ healthyServiceCount }}/{{ services.length || 0 }}</strong><span>服务正常</span></div>
-        <span class="live-copy"><span class="live-dot" />每分钟更新</span>
+        <span class="live-copy"><span class="live-dot" />每 10 秒更新</span>
         <el-button class="monitoring-refresh" :loading="refreshing" @click="refreshMetrics()"><RefreshCw v-if="!refreshing" :size="16" />刷新指标</el-button>
       </div>
     </section>

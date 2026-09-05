@@ -40,6 +40,17 @@ from app.services.xhs_jobs import (
 logger = logging.getLogger(__name__)
 CLI_HOME_ROOT = Path(os.getenv("XHS_CLI_HOME") or os.getenv("HOME", "/tmp/xsentinel-xhs"))
 UPLOAD_DIR = Path(os.getenv("XHS_UPLOAD_DIR", "/var/lib/xsentinel/xhs-uploads"))
+RELEASE_HEARTBEAT_SCRIPT = """
+local raw = redis.call('get', KEYS[1])
+if not raw then
+  return 0
+end
+local ok, heartbeat = pcall(cjson.decode, raw)
+if ok and heartbeat['worker_id'] == ARGV[1] then
+  return redis.call('del', KEYS[1])
+end
+return 0
+"""
 
 
 def _validated_image_path(image: object) -> Path | None:
@@ -66,9 +77,8 @@ class XiaohongshuWorker:
         self.stop_event.set()
 
     async def run(self) -> None:
-        await self.redis.ping()
-        async with AsyncSessionFactory() as session:
-            await session.execute(text("SELECT 1"))
+        if not await self._wait_for_dependencies():
+            return
         logger.info("X Sentinel Xiaohongshu worker started", extra={"worker_id": self.worker_id})
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         try:
@@ -86,13 +96,53 @@ class XiaohongshuWorker:
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
-            await self.redis.delete(XHS_WORKER_HEARTBEAT)
+            await self._release_heartbeat()
             await self.redis.aclose()
             await engine.dispose()
             logger.info(
                 "X Sentinel Xiaohongshu worker stopped",
                 extra={"worker_id": self.worker_id},
             )
+
+    async def _wait_for_dependencies(self, attempts: int = 10) -> bool:
+        for attempt in range(1, attempts + 1):
+            try:
+                await self.redis.ping()
+                async with AsyncSessionFactory() as session:
+                    await session.execute(text("SELECT 1"))
+                return True
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if attempt >= attempts:
+                    logger.exception(
+                        "Xiaohongshu worker dependencies unavailable",
+                        extra={"attempt": attempt, "attempts": attempts},
+                    )
+                    raise
+                delay = min(5.0, float(attempt))
+                logger.warning(
+                    "Xiaohongshu worker dependency check failed; retrying",
+                    extra={"attempt": attempt, "attempts": attempts, "retry_in_seconds": delay},
+                    exc_info=True,
+                )
+                try:
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=delay)
+                except TimeoutError:
+                    continue
+                return False
+        return False
+
+    async def _release_heartbeat(self) -> None:
+        try:
+            await self.redis.eval(
+                RELEASE_HEARTBEAT_SCRIPT,
+                1,
+                XHS_WORKER_HEARTBEAT,
+                self.worker_id,
+            )
+        except Exception:
+            logger.warning("Unable to release Xiaohongshu worker heartbeat", exc_info=True)
 
     async def _handle_job(self, raw: str) -> None:
         started = time.perf_counter()

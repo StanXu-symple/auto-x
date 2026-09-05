@@ -430,7 +430,7 @@ services:
       interval: 20s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 60s
     stop_grace_period: 30s
     deploy:
       resources:
