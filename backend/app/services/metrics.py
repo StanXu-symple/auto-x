@@ -73,3 +73,21 @@ QQ_WORKER_HEARTBEAT_METRIC = Gauge(
     "x_sentinel_qq_worker_heartbeat_timestamp_seconds",
     "Unix timestamp of the QQ worker's latest heartbeat",
 )
+XHS_JOBS = Counter(
+    "x_sentinel_xhs_jobs_total",
+    "Xiaohongshu worker job outcomes",
+    ["operation", "status"],
+)
+XHS_JOB_DURATION = Histogram(
+    "x_sentinel_xhs_job_duration_seconds",
+    "Duration of Xiaohongshu worker jobs",
+    ["operation", "status"],
+)
+XHS_QUEUE_DEPTH = Gauge(
+    "x_sentinel_xhs_queue_depth",
+    "Number of queued Xiaohongshu jobs",
+)
+XHS_WORKER_HEARTBEAT_METRIC = Gauge(
+    "x_sentinel_xhs_worker_heartbeat_timestamp_seconds",
+    "Unix timestamp of the Xiaohongshu worker's latest heartbeat",
+)

@@ -28,7 +28,7 @@ RUN mkdir -p /var/lib/xsentinel/xhs-home /var/lib/xsentinel/xhs-uploads \
     && chown -R app:app /var/lib/xsentinel
 USER app
 
-EXPOSE 8000 8001 8002 8003 8004
+EXPOSE 8000 8001 8002 8003 8004 8005
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=3).read()"]
 

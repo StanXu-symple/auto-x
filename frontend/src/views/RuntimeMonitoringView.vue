@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Activity, AlertCircle, Bot, Cpu, Database, FileCode2, MemoryStick, RefreshCw, Server, ShieldCheck, Sparkles, Workflow, Zap } from 'lucide-vue-next'
+import { Activity, AlertCircle, Bot, BookOpen, Cpu, Database, FileCode2, MemoryStick, RefreshCw, Server, ShieldCheck, Sparkles, Workflow, Zap } from 'lucide-vue-next'
 import ResourceGauge from '@/components/ResourceGauge.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { systemApi } from '@/services/api'
@@ -18,12 +18,14 @@ const metricsError = ref('')
 const services = computed<ServiceHealth[]>(() => {
   if (!metrics.value) return []
   const values: ServiceHealth[] = [
+    { name: 'API 服务', status: metrics.value.api.status, message: metrics.value.api.error },
     { name: 'MySQL 数据库', status: metrics.value.database.status, latency_ms: metrics.value.database.latency_ms, message: metrics.value.database.error },
     { name: 'Redis 缓存', status: metrics.value.redis.status, latency_ms: metrics.value.redis.latency_ms, message: metrics.value.redis.error },
     { name: '轮询 Worker', status: metrics.value.worker.status, message: metrics.value.worker.error },
   ]
   if (metrics.value.ai_worker) values.push({ name: 'AI Worker', status: metrics.value.ai_worker.status, message: metrics.value.ai_worker.error })
   if (metrics.value.qq_worker) values.push({ name: 'QQ Worker', status: metrics.value.qq_worker.status, message: metrics.value.qq_worker.error })
+  if (metrics.value.xhs_worker) values.push({ name: '小红书 Worker', status: metrics.value.xhs_worker.status, message: metrics.value.xhs_worker.error })
   return values
 })
 
@@ -31,11 +33,13 @@ const serviceResources = computed(() => {
   const current = metrics.value
   if (!current) return []
   return [
+    { name: 'API 服务', description: '主进程 RSS 内存', icon: FileCode2, metric: current.api },
     { name: 'MySQL 数据库', description: 'InnoDB 缓冲池', icon: Database, metric: current.database },
     { name: 'Redis 缓存', description: 'Redis 已分配内存', icon: Zap, metric: current.redis },
     { name: '轮询 Worker', description: '进程 RSS 内存', icon: Workflow, metric: current.worker },
     ...(current.ai_worker ? [{ name: 'AI Worker', description: '进程 RSS 内存', icon: Sparkles, metric: current.ai_worker }] : []),
     ...(current.qq_worker ? [{ name: 'QQ Worker', description: '进程 RSS 内存', icon: Bot, metric: current.qq_worker }] : []),
+    ...(current.xhs_worker ? [{ name: '小红书 Worker', description: `浏览器任务进程 · 队列 ${Number(current.xhs_worker.queue_depth || 0)}`, icon: BookOpen, metric: current.xhs_worker }] : []),
   ]
 })
 
@@ -137,7 +141,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
       <article class="panel">
         <header class="panel__header"><div><h2>核心服务</h2><p>数据库、缓存与调度组件连接状态</p></div><ShieldCheck :size="19" /></header>
         <div v-if="services.length" class="service-health-grid">
-          <div v-for="service in services" :key="service.name" class="service-health-card"><span class="service-health-card__icon"><component :is="service.name.includes('Redis') ? Zap : service.name.includes('数据库') ? Database : Workflow" :size="19" /></span><div><strong>{{ service.name }}</strong><span>{{ service.message || (service.latency_ms != null ? `响应 ${service.latency_ms} ms` : '服务状态已上报') }}</span></div><StatusBadge :status="service.status" /></div>
+          <div v-for="service in services" :key="service.name" class="service-health-card"><span class="service-health-card__icon"><component :is="service.name.includes('Redis') ? Zap : service.name.includes('数据库') ? Database : service.name.includes('API') ? FileCode2 : service.name.includes('小红书') ? BookOpen : Workflow" :size="19" /></span><div><strong>{{ service.name }}</strong><span>{{ service.message || (service.latency_ms != null ? `响应 ${service.latency_ms} ms` : '服务状态已上报') }}</span></div><StatusBadge :status="service.status" /></div>
         </div>
         <div v-else class="inline-empty">暂无服务健康数据</div>
       </article>

@@ -280,11 +280,13 @@ export interface SystemMetrics {
     threads?: number
     open_files?: number
   }
+  api: WorkerRuntimeMetric & { uptime_seconds?: number }
   database: ServiceRuntimeMetric
   redis: ServiceRuntimeMetric
   worker: WorkerRuntimeMetric
   ai_worker?: WorkerRuntimeMetric
   qq_worker?: WorkerRuntimeMetric
+  xhs_worker?: WorkerRuntimeMetric
 }
 
 export type QQVerificationStatus = 'unverified' | 'valid' | 'invalid' | 'error'

@@ -2,7 +2,7 @@ groups:
   - name: x-sentinel-availability
     rules:
       - alert: XSentinelTargetDown
-        expr: up{job=~"x-sentinel-api|x-sentinel-worker|x-sentinel-ai-worker|x-sentinel-qq-worker|x-sentinel-frontend|mysql|redis|node"} == 0
+        expr: up{job=~"x-sentinel-api|x-sentinel-worker|x-sentinel-ai-worker|x-sentinel-qq-worker|x-sentinel-xhs-worker|x-sentinel-frontend|mysql|redis|node"} == 0
         for: 2m
         labels:
           severity: critical
@@ -36,6 +36,15 @@ groups:
         annotations:
           summary: "X Sentinel QQ worker heartbeat is stale"
           description: "The QQ worker heartbeat is missing or older than 60 seconds."
+
+      - alert: XSentinelXHSWorkerHeartbeatStale
+        expr: (time() - max(x_sentinel_xhs_worker_heartbeat_timestamp_seconds) > 60) or (absent(x_sentinel_xhs_worker_heartbeat_timestamp_seconds) == 1)
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "X Sentinel Xiaohongshu worker heartbeat is stale"
+          description: "The Xiaohongshu worker heartbeat is missing or older than 60 seconds."
 
       - alert: XSentinelPollingFailureRateHigh
         expr: sum(rate(x_sentinel_poll_runs_total{status=~"error|failed|identity_conflict|lock_lost"}[10m])) / clamp_min(sum(rate(x_sentinel_poll_runs_total[10m])), 0.001) > 0.2
@@ -90,6 +99,15 @@ groups:
         annotations:
           summary: "More than 20% of QQ delivery attempts are failing or retrying"
           description: "Check bot credentials, active-message permissions and QQ platform errors."
+
+      - alert: XSentinelXHSFailureRateHigh
+        expr: sum(rate(x_sentinel_xhs_jobs_total{status="failed"}[15m])) / clamp_min(sum(rate(x_sentinel_xhs_jobs_total[15m])), 0.001) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 20% of Xiaohongshu jobs are failing"
+          description: "Check xhs-worker logs, login cookies, memory pressure and platform availability."
 
       - alert: XSentinelAPIErrorRateHigh
         expr: sum(rate(http_requests_total{job="x-sentinel-api",status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total{job="x-sentinel-api"}[5m])), 0.001) > 0.05

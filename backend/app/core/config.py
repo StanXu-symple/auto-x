@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     qq_worker_port: int = Field(default=8003, ge=0, le=65535)
     qq_worker_metrics_port: int = Field(default=8004, ge=0, le=65535)
 
+    xhs_job_timeout_seconds: float = Field(default=180.0, ge=30, le=600)
+    xhs_job_result_ttl_seconds: int = Field(default=300, ge=60, le=3600)
+    xhs_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
+    xhs_worker_metrics_port: int = Field(default=8005, ge=0, le=65535)
+
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
     @model_validator(mode="after")

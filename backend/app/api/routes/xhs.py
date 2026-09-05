@@ -1,30 +1,27 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import CurrentAdmin, DbSession
+from app.api.deps import CurrentAdmin, DbSession, RedisClient
 from app.api.errors import APIError
 from app.core.config import get_settings
-from app.services.x_credentials import XCredentialUnavailableError
-from app.services.xhs_credentials import (
-    XiaohongshuCredentialValue,
-    get_xhs_credentials,
-    has_xhs_credentials,
-    save_xhs_credentials,
+from app.services.x_credentials import XCredentialUnavailableError, encrypt_token
+from app.services.xhs_credentials import has_xhs_credentials, save_xhs_credentials
+from app.services.xhs_jobs import (
+    XHSJobFailedError,
+    XHSJobTimeoutError,
+    XHSWorkerUnavailableError,
+    get_xhs_worker_status,
+    submit_xhs_job,
 )
 
 router = APIRouter(prefix="/xhs", tags=["Xiaohongshu"])
-CLI_HOME_ROOT = Path(os.getenv("XHS_CLI_HOME") or os.getenv("HOME", "/tmp/xsentinel-xhs"))
 UPLOAD_DIR = Path(os.getenv("XHS_UPLOAD_DIR", "/var/lib/xsentinel/xhs-uploads"))
-BROWSER_CLOSED_ERROR = "Target page, context or browser has been closed"
 
 
 class LoginPayload(BaseModel):
@@ -46,10 +43,6 @@ class PostPayload(BaseModel):
     images: list[str] = Field(min_length=1, max_length=18)
 
 
-def _user_cli_home(admin_id: int) -> Path:
-    return CLI_HOME_ROOT / "users" / str(admin_id)
-
-
 def _write_upload(target: Path, contents: bytes) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(contents)
@@ -63,85 +56,49 @@ def _validated_image_path(image: str) -> Path | None:
     return None
 
 
-def _publish_error(out: str, err: str) -> str:
-    detail = err.strip() or out.strip() or "发布失败"
-    if BROWSER_CLOSED_ERROR in out or BROWSER_CLOSED_ERROR in err:
-        browser_detail = err.strip() if BROWSER_CLOSED_ERROR in err else out.strip()
-        return (
-            "小红书发布浏览器意外退出。请使用最新部署配置重新创建 backend 容器，"
-            "并确认容器至少有 2GB 内存和 512MB /dev/shm。原始错误："
-            + browser_detail
-        )
-    return detail
-
-
-async def _run(admin_id: int, *args: str) -> tuple[int, str, str]:
-    if shutil.which("xhs") is None:
-        return 127, "", "xhs-cli 未安装，请在后端环境安装 xhs-cli"
-    home = _user_cli_home(admin_id)
-    home.mkdir(parents=True, exist_ok=True)
-    home.chmod(0o700)
-    process = await asyncio.create_subprocess_exec(
-        "xhs",
-        *args,
-        env={**os.environ, "HOME": str(home)},
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    return (
-        process.returncode or 0,
-        stdout.decode(errors="replace"),
-        stderr.decode(errors="replace"),
-    )
-
-
-async def _stored_credentials(db: AsyncSession, admin_id: int) -> XiaohongshuCredentialValue | None:
+async def _submit(redis: RedisClient, *, operation: str, admin_id: int, payload: dict) -> dict:
     try:
-        return await get_xhs_credentials(db, get_settings(), admin_id=admin_id)
-    except XCredentialUnavailableError as exc:
-        raise APIError(503, "credential_encryption_unavailable", str(exc)) from None
-
-
-async def _restore_cli_login(
-    db: AsyncSession, admin_id: int
-) -> tuple[XiaohongshuCredentialValue | None, int, str, str]:
-    credentials = await _stored_credentials(db, admin_id)
-    if credentials is None:
-        return None, 0, "", ""
-    code, out, err = await _run(
-        admin_id,
-        "login",
-        "--cookie",
-        f"a1={credentials.a1}; web_session={credentials.web_session}",
-    )
-    return credentials, code, out, err
+        return await submit_xhs_job(
+            redis,
+            operation=operation,
+            admin_id=admin_id,
+            payload=payload,
+            timeout_seconds=get_settings().xhs_job_timeout_seconds,
+        )
+    except XHSWorkerUnavailableError as exc:
+        raise APIError(503, "xhs_worker_unavailable", str(exc)) from None
+    except XHSJobTimeoutError as exc:
+        raise APIError(504, "xhs_job_timeout", str(exc)) from None
+    except XHSJobFailedError as exc:
+        raise APIError(502, "xhs_job_failed", str(exc)) from None
 
 
 @router.get("/status")
-async def status(db: DbSession, admin: CurrentAdmin) -> dict:
+async def status(db: DbSession, redis: RedisClient, admin: CurrentAdmin) -> dict:
     saved = await has_xhs_credentials(db, admin_id=admin.id)
+    worker = await get_xhs_worker_status(redis)
     return {
         "saved": saved,
-        "connected": saved,
-        "installed": shutil.which("xhs") is not None,
+        "connected": saved and worker["status"] == "online" and bool(worker.get("installed")),
+        "installed": bool(worker.get("installed")),
+        "worker_status": worker["status"],
     }
 
 
 @router.post("/login")
-async def login(payload: LoginPayload, db: DbSession, admin: CurrentAdmin) -> dict:
-    code, out, err = await _run(
-        admin.id,
-        "login",
-        "--cookie",
-        f"a1={payload.a1}; web_session={payload.web_session}",
-    )
-    if code:
-        raise HTTPException(400, detail=err.strip() or out.strip() or "小红书登录失败")
+async def login(
+    payload: LoginPayload, db: DbSession, redis: RedisClient, admin: CurrentAdmin
+) -> dict:
+    settings = get_settings()
     try:
+        encrypted_payload = {
+            "encrypted_a1": encrypt_token(payload.a1, settings),
+            "encrypted_web_session": encrypt_token(payload.web_session, settings),
+        }
+        await _submit(redis, operation="login", admin_id=admin.id, payload=encrypted_payload)
         await save_xhs_credentials(
             db,
-            get_settings(),
+            settings,
             admin_id=admin.id,
             a1=payload.a1,
             web_session=payload.web_session,
@@ -165,24 +122,18 @@ async def upload(_: CurrentAdmin, files: list[UploadFile] = File(...)) -> dict:
 
 
 @router.post("/posts")
-async def post(payload: PostPayload, db: DbSession, admin: CurrentAdmin) -> dict:
-    credentials, code, out, err = await _restore_cli_login(db, admin.id)
-    if credentials is None:
+async def post(
+    payload: PostPayload, db: DbSession, redis: RedisClient, admin: CurrentAdmin
+) -> dict:
+    if not await has_xhs_credentials(db, admin_id=admin.id):
         raise APIError(409, "xhs_credentials_not_configured", "请先保存小红书登录态")
-    if code:
-        raise HTTPException(502, detail=err.strip() or out.strip() or "恢复小红书登录态失败")
-
-    args = ["post", payload.title, "--content", payload.content]
     for image in payload.images:
         path = await asyncio.to_thread(_validated_image_path, image)
         if path is None:
             raise HTTPException(400, detail="图片路径无效")
-        args.extend(["--image", str(path)])
-    code, out, err = await _run(admin.id, *args, "--json")
-    if code:
-        raise HTTPException(502, detail=_publish_error(out, err))
-    try:
-        result = json.loads(out)
-    except json.JSONDecodeError:
-        result = {"raw": out.strip()}
-    return {"message": "笔记发布成功", "result": result}
+    return await _submit(
+        redis,
+        operation="post",
+        admin_id=admin.id,
+        payload=payload.model_dump(),
+    )

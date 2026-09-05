@@ -4,7 +4,7 @@ import { BookOpen, CheckCircle2, Send, ShieldCheck, UploadCloud } from 'lucide-v
 import { ElMessage } from 'element-plus'
 import { xhsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
-const loading=ref(false), statusLoading=ref(true), status=ref<{saved:boolean;connected:boolean;installed:boolean;message?:string}|null>(null); const form=reactive({a1:'',web_session:'',title:'',content:'',images:[] as string[],previews:[] as string[]})
+const loading=ref(false), statusLoading=ref(true), status=ref<{saved:boolean;connected:boolean;installed:boolean;worker_status?:string;message?:string}|null>(null); const form=reactive({a1:'',web_session:'',title:'',content:'',images:[] as string[],previews:[] as string[]})
 async function refresh(){statusLoading.value=true;try{status.value=await xhsApi.status()}catch(e){ElMessage.error(getErrorMessage(e))}finally{statusLoading.value=false}}
 async function login(){if(!form.a1||!form.web_session)return ElMessage.warning('请填写 a1 和 web_session');loading.value=true;try{await xhsApi.login({a1:form.a1,web_session:form.web_session});form.a1='';form.web_session='';await refresh();ElMessage.success('登录态已保存')}catch(e){ElMessage.error(getErrorMessage(e))}finally{loading.value=false}}
 async function uploadFiles(files:File[]){if(!files.length)return;loading.value=true;try{const r:any=await xhsApi.upload(files);form.images.push(...r.files.map((x:any)=>x.path));form.previews.push(...files.map(file=>URL.createObjectURL(file)));ElMessage.success(`已上传 ${files.length} 张图片`)}catch(e){ElMessage.error(getErrorMessage(e,'上传失败'))}finally{loading.value=false}}

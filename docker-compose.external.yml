@@ -15,7 +15,6 @@ services:
   backend:
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
-      - xhs_home:/var/lib/xsentinel/xhs-home
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
@@ -31,9 +30,9 @@ services:
       resources:
         limits:
           cpus: "2.00"
-          memory: 2g
+          memory: 1g
         reservations:
-          memory: 512m
+          memory: 256m
 
   worker:
     environment:
@@ -94,6 +93,20 @@ services:
           memory: 512m
         reservations:
           memory: 128m
+
+  xhs-worker:
+    environment:
+      HOME: /var/lib/xsentinel/xhs-home
+      ENVIRONMENT: production
+      DEBUG: "false"
+      STARTUP_STRICT: "true"
+      AUTO_CREATE_TABLES: "false"
+      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
+      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
+      REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD-}
+    restart: always
 
   frontend:
     restart: always

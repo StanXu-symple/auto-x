@@ -9,8 +9,11 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.process_stats import ProcessStatsSampler
+
 PROCESS_STARTED_MONOTONIC = time.monotonic()
 PROCESS = psutil.Process(os.getpid())
+PROCESS_STATS = ProcessStatsSampler()
 # Prime delta-based counters so the first dashboard request is meaningful.
 PROCESS.cpu_percent(interval=None)
 psutil.cpu_percent(interval=None)
@@ -140,11 +143,15 @@ async def collect_system_metrics(session: AsyncSession, redis: Redis) -> dict[st
     except Exception as exc:
         qq_worker_status = {"status": "unknown", "error": str(exc)[:300]}
 
+    xhs_worker_status: dict[str, Any] = {"status": "offline"}
+    try:
+        xhs_worker_status = await _worker_status(redis, "xsentinel:xhs-worker:heartbeat")
+    except Exception as exc:
+        xhs_worker_status = {"status": "unknown", "error": str(exc)[:300]}
+
     with process.oneshot():
         process_metrics = {
-            "pid": process.pid,
-            "cpu_percent": process.cpu_percent(),
-            "rss_bytes": process.memory_info().rss,
+            **PROCESS_STATS.snapshot(),
             "threads": process.num_threads(),
             "open_files": len(process.open_files()),
         }
@@ -167,9 +174,15 @@ async def collect_system_metrics(session: AsyncSession, redis: Redis) -> dict[st
             "percent": disk.percent,
         },
         "process": process_metrics,
+        "api": {
+            "status": "healthy",
+            "uptime_seconds": round(time.monotonic() - PROCESS_STARTED_MONOTONIC, 2),
+            **process_metrics,
+        },
         "database": database_status,
         "redis": redis_status,
         "worker": worker_status,
         "ai_worker": ai_worker_status,
         "qq_worker": qq_worker_status,
+        "xhs_worker": xhs_worker_status,
     }

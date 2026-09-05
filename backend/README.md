@@ -13,7 +13,19 @@ alembic upgrade head
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 python -m app.worker
 python -m app.ai_worker
+python -m app.xhs_worker
 ```
+
+All Xiaohongshu CLI and Camoufox operations run in the dedicated `xhs-worker`.
+The API exchanges encrypted login validation and publishing jobs with it through Redis.
+Worker diagnostics are available with:
+
+```bash
+docker logs --since 15m --timestamps x-sentinel-xhs-worker-1
+docker exec x-sentinel-xhs-worker-1 cat /sys/fs/cgroup/memory.events
+```
+
+Prometheus scrapes the worker on port `8005` inside the Compose network.
 
 Copy `.env.example` to `.env` and set the database, Redis, JWT, administrator, and X bearer-token
 values. `AUTO_CREATE_TABLES=true` offers an idempotent first-run path; production deployments can
