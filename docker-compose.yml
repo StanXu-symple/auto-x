@@ -218,6 +218,9 @@ services:
     <<: *backend-common
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
+      - xhs_home:/var/lib/xsentinel/xhs-home
+    environment:
+      HOME: /var/lib/xsentinel/xhs-home
     command:
       - uvicorn
       - app.main:app
@@ -573,6 +576,7 @@ networks:
 
 volumes:
   xhs_uploads:
+  xhs_home:
   mysql_data:
   redis_data:
   prometheus_data:
