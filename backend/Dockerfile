@@ -3,7 +3,8 @@ FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    XDG_CACHE_HOME=/opt/xsentinel-cache
 
 WORKDIR /app
 
@@ -12,7 +13,11 @@ RUN groupadd --system --gid 10001 app \
 
 COPY requirements.txt ./requirements.txt
 RUN pip install --upgrade pip \
-    && pip install -r requirements.txt
+    && pip install -r requirements.txt \
+    && playwright install-deps firefox \
+    && python -m camoufox fetch \
+    && python -c 'from camoufox.utils import get_env_vars; [get_env_vars({}, os_name) for os_name in ("lin", "mac", "win")]' \
+    && chmod -R a+rX /opt/xsentinel-cache
 
 COPY app ./app
 COPY alembic ./alembic
