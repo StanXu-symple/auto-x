@@ -113,6 +113,29 @@ def _wait_for_image_input(page: Any, timeout_seconds: float) -> Any | None:
     return None
 
 
+def _click_element(element: Any, description: str) -> None:
+    errors: list[str] = []
+    try:
+        element.scroll_into_view_if_needed(timeout=5000)
+    except Exception as exc:
+        errors.append(f"scroll: {exc}")
+    for options in ({"timeout": 5000}, {"timeout": 5000, "force": True}):
+        try:
+            element.click(**options)
+            return
+        except Exception as exc:
+            errors.append(f"click: {exc}")
+    try:
+        element.evaluate(
+            "el => { el.scrollIntoView({block: 'center', inline: 'center'}); el.click(); }"
+        )
+        logger.warning("Used DOM click fallback for %s", description)
+        return
+    except Exception as exc:
+        errors.append(f"DOM click: {exc}")
+    raise RuntimeError(f"{description}失败：{' | '.join(errors)}")
+
+
 def _select_image_text_tab(page: Any) -> None:
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
@@ -132,10 +155,7 @@ def _select_image_text_tab(page: Any) -> None:
                     page.keyboard.press("Escape")
                 except Exception:
                     pass
-                try:
-                    tab.click()
-                except Exception:
-                    tab.click(force=True)
+                _click_element(tab, "点击上传图文页签")
                 logger.info("Selected Xiaohongshu image-text publish tab")
                 return
         time.sleep(0.3)
@@ -164,12 +184,27 @@ def _click_publish(page: Any, element: Any) -> None:
     except Exception:
         tag_name = ""
     if tag_name == "xhs-publish-btn":
-        box = element.bounding_box()
-        if not box:
-            raise RuntimeError("小红书发布按钮没有可点击区域")
-        page.mouse.click(box["x"] + box["width"] * 0.65, box["y"] + box["height"] / 2)
-        return
-    element.click()
+        try:
+            element.scroll_into_view_if_needed(timeout=5000)
+            box = element.bounding_box()
+            if box:
+                page.mouse.click(
+                    box["x"] + box["width"] * 0.65,
+                    box["y"] + box["height"] / 2,
+                )
+                return
+        except Exception as exc:
+            logger.warning("Publish widget coordinate click failed", extra={"error": str(exc)})
+        try:
+            element.evaluate(
+                "el => { const button = el.shadowRoot?.querySelector('button') "
+                "|| el.querySelector('button'); (button || el).click(); }"
+            )
+            logger.warning("Used DOM click fallback for Xiaohongshu publish widget")
+            return
+        except Exception as exc:
+            raise RuntimeError(f"点击小红书发布按钮失败：{exc}") from exc
+    _click_element(element, "点击小红书发布按钮")
 
 
 def publish_note_compat(
