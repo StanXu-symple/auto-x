@@ -51,9 +51,9 @@ services:
       resources:
         limits:
           cpus: "2.00"
-          memory: 128m
+          memory: 256m
         reservations:
-          memory: 64m
+          memory: 128m
 
   ai-worker:
     environment:
@@ -71,9 +71,9 @@ services:
       resources:
         limits:
           cpus: "1.50"
-          memory: 128m
+          memory: 256m
         reservations:
-          memory: 64m
+          memory: 128m
 
   qq-worker:
     environment:

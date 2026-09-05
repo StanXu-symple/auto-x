@@ -317,9 +317,9 @@ services:
       resources:
         limits:
           cpus: "1.50"
-          memory: 128m
+          memory: 256m
         reservations:
-          memory: 64m
+          memory: 128m
 
   ai-worker:
     <<: *backend-common
@@ -354,9 +354,9 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 128m
+          memory: 256m
         reservations:
-          memory: 64m
+          memory: 128m
 
 
   qq-worker:
