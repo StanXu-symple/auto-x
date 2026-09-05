@@ -8,7 +8,7 @@ const loading=ref(false), status=ref<any>(null), preview=ref<string | null>(null
 async function refresh(){try{status.value=await xhsApi.status()}catch(e){ElMessage.error(getErrorMessage(e))}}
 async function login(){if(!form.a1||!form.web_session)return ElMessage.warning('请填写 a1 和 web_session');loading.value=true;try{await xhsApi.login({a1:form.a1,web_session:form.web_session});form.a1='';form.web_session='';await refresh();ElMessage.success('登录态已保存')}catch(e){ElMessage.error(getErrorMessage(e))}finally{loading.value=false}}
 async function chooseFiles(e:Event){const files=Array.from((e.target as HTMLInputElement).files||[]);if(!files.length)return;loading.value=true;try{const r:any=await xhsApi.upload(files);form.images.push(...r.files.map((x:any)=>x.path));form.previews.push(...files.map(file=>URL.createObjectURL(file)));ElMessage.success(`已上传 ${files.length} 张图片`)}catch(e){ElMessage.error(getErrorMessage(e,'上传失败'))}finally{loading.value=false}}
-function removeImage(index:number){URL.revokeObjectURL(form.previews[index]);form.images.splice(index,1);form.previews.splice(index,1)}
+function removeImage(index:number){const url=form.previews[index];if(url) URL.revokeObjectURL(url);form.images.splice(index,1);form.previews.splice(index,1)}
 async function publish(){if(!form.title||!form.content||!form.images.length)return ElMessage.warning('请填写标题、正文并上传图片');loading.value=true;try{await xhsApi.post({title:form.title,content:form.content,images:form.images});ElMessage.success('发布成功')}catch(e){ElMessage.error(getErrorMessage(e,'发布失败'))}finally{loading.value=false}}
 onMounted(refresh)
 </script>
