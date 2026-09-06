@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -14,6 +16,7 @@ from app.core.config import Settings
 from app.schemas.ai import GeneratedDraft
 from app.services.ai_defaults import DRAFT_OUTPUT_SCHEMA, PROMPT_GUARD
 
+logger = logging.getLogger(__name__)
 MAX_SOURCE_CHARACTERS = 30000
 MAX_ERROR_CHARACTERS = 2000
 _UNSAFE_CONTROLS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
@@ -164,20 +167,69 @@ class AIProviderClient:
             await self.client.aclose()
 
     async def generate(self, request: ProviderRequest) -> ProviderResult:
+        started_perf = time.perf_counter()
         instructions, input_text, prompt_hash, source_hash = build_provider_material(request)
+        log_context = {
+            "ai_job_id": request.job_id,
+            "provider": request.provider,
+            "model": request.model,
+            "skill_count": len(request.skill_snapshot),
+            "request_timeout_seconds": request.timeout_seconds,
+        }
+
+        def stage_extra(stage: str, **fields: Any) -> dict[str, Any]:
+            return {
+                **log_context,
+                "stage": stage,
+                "elapsed_ms": round((time.perf_counter() - started_perf) * 1000),
+                **fields,
+            }
+
+        logger.info(
+            "AI provider prompt material prepared",
+            extra=stage_extra(
+                "provider_material_prepared",
+                instruction_character_count=len(instructions),
+                input_character_count=len(input_text),
+            ),
+        )
+        logger.info(
+            "AI provider HTTP request dispatching",
+            extra=stage_extra("provider_http_request_dispatching"),
+        )
         if request.provider == "openai_responses":
             raw = await self._openai_responses(request, instructions, input_text)
         elif request.provider == "codex_bridge":
             raw = await self._codex_bridge(request, instructions, input_text)
         else:
             raise AIProviderError(f"Unsupported AI provider: {request.provider}", retryable=False)
+        response_fields: dict[str, Any] = {}
+        response_id = raw.get("id")
+        if isinstance(response_id, (str, int)):
+            response_fields["provider_response_id"] = str(response_id)[:128]
+        logger.info(
+            "AI provider HTTP response received and decoded",
+            extra=stage_extra("provider_http_response_decoded", **response_fields),
+        )
         draft_payload = self._extract_draft(raw, request.provider)
+        logger.info(
+            "AI provider draft payload extracted",
+            extra=stage_extra("provider_draft_extracted"),
+        )
         try:
             draft = GeneratedDraft.model_validate(draft_payload)
         except ValidationError as exc:
             raise AIProviderError(
                 f"Provider returned an invalid draft: {exc}", retryable=True
             ) from exc
+        logger.info(
+            "AI provider draft schema validated",
+            extra=stage_extra(
+                "provider_draft_validated",
+                title_character_count=len(draft.title),
+                output_character_count=len(draft.content),
+            ),
+        )
         snapshot = self._safe_response_snapshot(raw)
         return ProviderResult(
             draft=draft,

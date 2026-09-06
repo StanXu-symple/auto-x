@@ -10,6 +10,7 @@ import socket
 import time
 import uuid
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
@@ -40,6 +41,7 @@ from app.services.metrics import (
 
 logger = logging.getLogger(__name__)
 AI_HEARTBEAT_KEY = "xsentinel:ai-worker:heartbeat"
+AI_PROVIDER_PROGRESS_INTERVAL_SECONDS = 15.0
 
 RELEASE_LOCK_SCRIPT = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
@@ -59,6 +61,15 @@ end
 
 class AILockLostError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class FailureCommitResult:
+    outcome: str
+    attempt: int | None = None
+    max_attempts: int | None = None
+    retry_delay_seconds: int | None = None
+    next_attempt_at: datetime | None = None
 
 
 class AIGenerationWorker:
@@ -190,6 +201,21 @@ class AIGenerationWorker:
     async def process_job(self, job_id: int) -> bool:
         lock_key = f"xsentinel:ai:lock:{job_id}"
         claim_token = str(uuid.uuid4())
+        started_perf = time.perf_counter()
+        job_context: dict[str, Any] = {
+            "ai_job_id": job_id,
+            "worker_id": self.worker_id,
+            "provider": "unknown",
+            "model": "unknown",
+            "attempt": None,
+            "max_attempts": None,
+        }
+        self._log_stage(
+            "AI generation job entered processing",
+            "job_discovered",
+            started_perf,
+            job_context,
+        )
         try:
             acquired = await self.redis.set(
                 lock_key,
@@ -198,12 +224,28 @@ class AIGenerationWorker:
                 ex=self.settings.ai_worker_lock_ttl_seconds,
             )
         except Exception:
-            logger.exception("AI lock acquisition failed", extra={"ai_job_id": job_id})
+            logger.exception(
+                "AI lock acquisition failed",
+                extra=self._stage_extra(
+                    "lock_acquisition_failed", started_perf, job_context
+                ),
+            )
             return False
         if not acquired:
+            self._log_stage(
+                "AI generation job is already owned by another worker",
+                "lock_not_acquired",
+                started_perf,
+                job_context,
+            )
             return False
 
-        started_perf = time.perf_counter()
+        self._log_stage(
+            "AI generation lock acquired",
+            "lock_acquired",
+            started_perf,
+            job_context,
+        )
         lost_lock = asyncio.Event()
         renew_task: asyncio.Task[None] | None = None
         claimed = False
@@ -211,16 +253,97 @@ class AIGenerationWorker:
         try:
             job = await self._claim(job_id, claim_token)
             if job is None:
+                self._log_stage(
+                    "AI generation job was no longer claimable",
+                    "claim_skipped",
+                    started_perf,
+                    job_context,
+                )
                 return False
             claimed = True
             provider_name = job.provider
+            job_context.update(
+                {
+                    "provider": job.provider,
+                    "model": job.model_name,
+                    "attempt": job.attempts,
+                    "max_attempts": job.max_attempts,
+                    "source_tweet_id": job.source_tweet_id,
+                    "feature_code": job.feature_code,
+                    "skill_count": len(job.skill_snapshot or []),
+                }
+            )
+            self._log_stage(
+                "AI generation job claimed",
+                "job_claimed",
+                started_perf,
+                job_context,
+            )
             renew_task = asyncio.create_task(
                 self._renew_lease(job_id, lock_key, claim_token, lost_lock)
             )
+            self._log_stage(
+                "AI data source resolution started",
+                "data_source_resolution_started",
+                started_perf,
+                job_context,
+            )
             request = await self._provider_request(job)
             provider_name = request.provider
-            result = await self._generate_with_lease(request, lost_lock)
+            job_context.update(
+                {
+                    "provider": request.provider,
+                    "model": request.model,
+                    "source_character_count": len(str(request.source.get("text") or "")),
+                    "request_timeout_seconds": request.timeout_seconds,
+                    "max_output_tokens": request.max_output_tokens,
+                }
+            )
+            self._log_stage(
+                "AI data source resolved",
+                "data_source_resolved",
+                started_perf,
+                job_context,
+            )
+            self._log_stage(
+                "AI provider request prepared",
+                "provider_request_prepared",
+                started_perf,
+                job_context,
+            )
+            self._log_stage(
+                "AI provider request started",
+                "provider_request_started",
+                started_perf,
+                job_context,
+            )
+            result = await self._generate_with_lease(
+                request,
+                lost_lock,
+                started_perf=started_perf,
+                job_context=job_context,
+            )
+            response_id = result.response_snapshot.get("id")
+            response_fields: dict[str, Any] = {
+                "title_character_count": len(result.draft.title),
+                "output_character_count": len(result.draft.content),
+            }
+            if isinstance(response_id, (str, int)):
+                response_fields["provider_response_id"] = str(response_id)[:128]
+            self._log_stage(
+                "AI provider response parsed and validated",
+                "provider_response_validated",
+                started_perf,
+                job_context,
+                **response_fields,
+            )
             await self._assert_lock(lock_key, claim_token, lost_lock)
+            self._log_stage(
+                "AI draft persistence started",
+                "draft_persistence_started",
+                started_perf,
+                job_context,
+            )
             applied = await self._commit_success(
                 job_id,
                 claim_token,
@@ -232,10 +355,40 @@ class AIGenerationWorker:
                 result.source_text_hash,
             )
             outcome = "succeeded" if applied else "superseded"
+            if applied:
+                self._log_stage(
+                    "AI draft persisted",
+                    "draft_persisted",
+                    started_perf,
+                    job_context,
+                    **response_fields,
+                )
+                author = request.author_context.get("author") or {}
+                if int(author.get("monitored_user_id") or 0):
+                    self._log_stage(
+                        "AI author profile persisted",
+                        "author_profile_persisted",
+                        started_perf,
+                        job_context,
+                    )
+                self._log_stage(
+                    "AI generation job completed",
+                    "job_completed",
+                    started_perf,
+                    job_context,
+                    outcome=outcome,
+                )
+            else:
+                logger.warning(
+                    "AI generation job was superseded before persistence",
+                    extra=self._stage_extra(
+                        "job_superseded", started_perf, job_context, outcome=outcome
+                    ),
+                )
             self._observe(outcome, provider_name, started_perf)
             return applied
         except AIProviderError as exc:
-            outcome = await self._commit_failure(
+            failure = await self._commit_failure(
                 job_id,
                 claim_token,
                 lock_key,
@@ -244,12 +397,20 @@ class AIGenerationWorker:
                 retryable=exc.retryable,
                 status_code=exc.status_code,
             )
-            self._observe(outcome, provider_name, started_perf)
+            self._log_failure_outcome(
+                failure,
+                exc,
+                started_perf=started_perf,
+                job_context=job_context,
+                retryable=exc.retryable,
+                status_code=exc.status_code,
+            )
+            self._observe(failure.outcome, provider_name, started_perf)
             return False
         except AILockLostError:
             logger.warning(
                 "AI generation lease lost; result discarded",
-                extra={"ai_job_id": job_id, "worker_id": self.worker_id},
+                extra=self._stage_extra("lease_lost", started_perf, job_context),
             )
             self._observe("lock_lost", provider_name, started_perf)
             return False
@@ -257,10 +418,25 @@ class AIGenerationWorker:
             if claimed:
                 with suppress(Exception):
                     await self._requeue_cancelled(job_id, claim_token, lock_key, lost_lock)
+                logger.info(
+                    "AI generation job requeued during worker shutdown",
+                    extra=self._stage_extra(
+                        "job_requeued_on_shutdown", started_perf, job_context
+                    ),
+                )
             raise
         except Exception as exc:
-            logger.exception("Unexpected AI generation failure", extra={"ai_job_id": job_id})
-            outcome = await self._commit_failure(
+            logger.exception(
+                "Unexpected AI generation failure",
+                extra=self._stage_extra(
+                    "unexpected_failure",
+                    started_perf,
+                    job_context,
+                    error_type=type(exc).__name__,
+                    error_summary=self._safe_error_summary(exc),
+                ),
+            )
+            failure = await self._commit_failure(
                 job_id,
                 claim_token,
                 lock_key,
@@ -269,7 +445,14 @@ class AIGenerationWorker:
                 retryable=True,
                 status_code=None,
             )
-            self._observe(outcome, provider_name, started_perf)
+            self._log_failure_outcome(
+                failure,
+                exc,
+                started_perf=started_perf,
+                job_context=job_context,
+                retryable=True,
+            )
+            self._observe(failure.outcome, provider_name, started_perf)
             return False
         finally:
             if renew_task is not None:
@@ -370,19 +553,43 @@ class AIGenerationWorker:
             api_key=data_source.api_key,
         )
 
-    async def _generate_with_lease(self, request: ProviderRequest, lost_lock: asyncio.Event):
+    async def _generate_with_lease(
+        self,
+        request: ProviderRequest,
+        lost_lock: asyncio.Event,
+        *,
+        started_perf: float,
+        job_context: dict[str, Any],
+    ):
         generation_task = asyncio.create_task(self.provider.generate(request))
         lost_task = asyncio.create_task(lost_lock.wait())
-        done, _ = await asyncio.wait(
-            {generation_task, lost_task}, return_when=asyncio.FIRST_COMPLETED
-        )
-        if lost_task in done and lost_lock.is_set() and not generation_task.done():
-            generation_task.cancel()
-            await asyncio.gather(generation_task, return_exceptions=True)
-            raise AILockLostError("AI generation lease was lost")
-        lost_task.cancel()
-        await asyncio.gather(lost_task, return_exceptions=True)
-        return await generation_task
+        provider_started_perf = time.perf_counter()
+        try:
+            while True:
+                done, _ = await asyncio.wait(
+                    {generation_task, lost_task},
+                    timeout=AI_PROVIDER_PROGRESS_INTERVAL_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if lost_task in done and lost_lock.is_set() and not generation_task.done():
+                    raise AILockLostError("AI generation lease was lost")
+                if generation_task in done:
+                    return await generation_task
+                self._log_stage(
+                    "AI provider request still in progress",
+                    "provider_request_in_progress",
+                    started_perf,
+                    job_context,
+                    provider_elapsed_ms=round(
+                        (time.perf_counter() - provider_started_perf) * 1000
+                    ),
+                    request_timeout_seconds=request.timeout_seconds,
+                )
+        finally:
+            lost_task.cancel()
+            if not generation_task.done():
+                generation_task.cancel()
+            await asyncio.gather(generation_task, lost_task, return_exceptions=True)
 
     async def _commit_success(
         self,
@@ -485,13 +692,13 @@ class AIGenerationWorker:
         message: str,
         retryable: bool,
         status_code: int | None,
-    ) -> str:
+    ) -> FailureCommitResult:
         await self._assert_lock(lock_key, claim_token, lost_lock)
         now = datetime.now(UTC)
         async with AsyncSessionFactory() as session, session.begin():
             job = await session.get(AIGenerationJob, job_id, with_for_update=True)
             if job is None or job.claim_token != claim_token or job.status != "running":
-                return "superseded"
+                return FailureCommitResult(outcome="superseded")
             await self._assert_lock(lock_key, claim_token, lost_lock)
             should_retry = retryable and job.attempts < job.max_attempts
             if should_retry:
@@ -513,7 +720,13 @@ class AIGenerationWorker:
             job.claim_token = None
             job.claimed_by = None
             job.lease_expires_at = None
-            return outcome
+            return FailureCommitResult(
+                outcome=outcome,
+                attempt=job.attempts,
+                max_attempts=job.max_attempts,
+                retry_delay_seconds=delay if should_retry else None,
+                next_attempt_at=job.next_attempt_at if should_retry else None,
+            )
 
     async def _requeue_cancelled(
         self,
@@ -658,6 +871,82 @@ class AIGenerationWorker:
         AI_JOB_DURATION.labels(status=status, provider=provider).observe(
             time.perf_counter() - started_perf
         )
+
+    def _stage_extra(
+        self,
+        stage: str,
+        started_perf: float,
+        job_context: dict[str, Any],
+        **fields: Any,
+    ) -> dict[str, Any]:
+        return {
+            **job_context,
+            "worker_id": self.worker_id,
+            "stage": stage,
+            "elapsed_ms": round((time.perf_counter() - started_perf) * 1000),
+            **fields,
+        }
+
+    def _log_stage(
+        self,
+        message: str,
+        stage: str,
+        started_perf: float,
+        job_context: dict[str, Any],
+        **fields: Any,
+    ) -> None:
+        logger.info(
+            message,
+            extra=self._stage_extra(stage, started_perf, job_context, **fields),
+        )
+
+    def _log_failure_outcome(
+        self,
+        failure: FailureCommitResult,
+        exc: Exception,
+        *,
+        started_perf: float,
+        job_context: dict[str, Any],
+        retryable: bool,
+        status_code: int | None = None,
+    ) -> None:
+        if failure.outcome == "retry_wait":
+            stage = "job_retry_scheduled"
+            message = "AI generation job scheduled for retry"
+            log = logger.warning
+        elif failure.outcome == "failed":
+            stage = "job_failed_permanently"
+            message = "AI generation job failed permanently"
+            log = logger.error
+        else:
+            stage = "job_failure_superseded"
+            message = "AI generation failure was superseded"
+            log = logger.warning
+        log(
+            message,
+            extra=self._stage_extra(
+                stage,
+                started_perf,
+                job_context,
+                outcome=failure.outcome,
+                attempt=failure.attempt or job_context.get("attempt"),
+                max_attempts=failure.max_attempts or job_context.get("max_attempts"),
+                error_type=type(exc).__name__,
+                error_summary=self._safe_error_summary(exc),
+                retryable=retryable,
+                status_code=status_code,
+                retry_delay_seconds=failure.retry_delay_seconds,
+                next_attempt_at=(
+                    failure.next_attempt_at.isoformat() if failure.next_attempt_at else None
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _safe_error_summary(exc: Exception) -> str:
+        # Provider errors can contain response bodies or validation input. Keep only
+        # the stable category before the first detail delimiter in operational logs.
+        return str(exc).split(":", 1)[0][:200]
 
 
 async def async_main() -> None:

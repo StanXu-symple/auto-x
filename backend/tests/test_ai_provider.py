@@ -1,4 +1,5 @@
 import json
+import logging
 
 import httpx
 import pytest
@@ -87,7 +88,7 @@ def test_source_prompt_injection_stays_out_of_trusted_instructions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_responses_provider_uses_structured_output_without_leaking_key() -> None:
+async def test_openai_responses_provider_uses_structured_output_without_leaking_key(caplog) -> None:
     captured = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -130,7 +131,8 @@ async def test_openai_responses_provider_uses_structured_output_without_leaking_
     )
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     client = AIProviderClient(settings, http_client)
-    result = await client.generate(provider_request())
+    with caplog.at_level(logging.INFO, logger="app.services.ai_provider"):
+        result = await client.generate(provider_request())
     await http_client.aclose()
 
     assert result.draft.title == "标题"
@@ -140,6 +142,14 @@ async def test_openai_responses_provider_uses_structured_output_without_leaking_
     assert captured["payload"]["store"] is False
     assert "metadata" not in captured["payload"]
     assert "super-secret-key" not in json.dumps(result.response_snapshot)
+    assert [record.stage for record in caplog.records if hasattr(record, "stage")] == [
+        "provider_material_prepared",
+        "provider_http_request_dispatching",
+        "provider_http_response_decoded",
+        "provider_draft_extracted",
+        "provider_draft_validated",
+    ]
+    assert "super-secret-key" not in repr([record.__dict__ for record in caplog.records])
 
 
 @pytest.mark.asyncio
