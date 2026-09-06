@@ -11,7 +11,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import nonebot
 from nonebot import get_adapter, get_driver, on_type
@@ -68,6 +68,7 @@ logger = logging.getLogger(__name__)
 
 QQ_SEND_GATE = "xsentinel:qq:send-gate"
 QQ_LAST_SENT_AT = "xsentinel:qq:last-sent-at"
+QQ_SEND_PROGRESS_INTERVAL_SECONDS = 15.0
 
 GROUP_ADD_ROBOT_ACK = "机器人已入群，请在 X Sentinel 中选择本群并配置推送目标。"
 
@@ -201,9 +202,19 @@ class QQDeliveryClaim:
     message_body: str
     attempts: int
     max_attempts: int
+    kind: str = "unknown"
     media_path: str | None = None
     article_id: int | None = None
     sequence: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QQFailureCommitResult:
+    outcome: str
+    attempt: int | None = None
+    max_attempts: int | None = None
+    retry_delay_seconds: int | None = None
+    next_attempt_at: datetime | None = None
 
 
 class QQSender(Protocol):
@@ -430,15 +441,64 @@ class QQDeliveryWorker:
                 )
 
     async def process_delivery(self, delivery_id: int) -> bool:
-        gate_token = await self._acquire_send_gate()
+        started_perf = time.perf_counter()
+        log_context: dict[str, Any] = {
+            "delivery_id": delivery_id,
+            "worker_id": self.worker_id,
+            "attempt": None,
+            "max_attempts": None,
+        }
+        self._log_stage(
+            "QQ delivery entered processing",
+            "delivery_discovered",
+            started_perf,
+            log_context,
+        )
+        self._log_stage(
+            "QQ delivery waiting for global send gate",
+            "send_gate_wait_started",
+            started_perf,
+            log_context,
+        )
+        gate_wait_started = time.perf_counter()
+        gate_token = await self._acquire_send_gate(
+            started_perf=started_perf,
+            log_context=log_context,
+        )
         try:
-            await self._wait_for_send_interval()
-            return await self._process_delivery_locked(delivery_id)
+            self._log_stage(
+                "QQ global send gate acquired",
+                "send_gate_acquired",
+                started_perf,
+                log_context,
+                gate_wait_ms=round((time.perf_counter() - gate_wait_started) * 1000),
+            )
+            await self._wait_for_send_interval(
+                started_perf=started_perf,
+                log_context=log_context,
+            )
+            return await self._process_delivery_locked(
+                delivery_id,
+                started_perf=started_perf,
+                log_context=log_context,
+            )
         finally:
             with suppress(Exception):
                 await self.redis.eval(RELEASE_LOCK_SCRIPT, 1, QQ_SEND_GATE, gate_token)
+            self._log_stage(
+                "QQ global send gate released",
+                "send_gate_released",
+                started_perf,
+                log_context,
+            )
 
-    async def _process_delivery_locked(self, delivery_id: int) -> bool:
+    async def _process_delivery_locked(
+        self,
+        delivery_id: int,
+        *,
+        started_perf: float,
+        log_context: dict[str, Any],
+    ) -> bool:
         lock_key = f"xsentinel:qq:lock:{delivery_id}"
         claim_token = str(uuid.uuid4())
         try:
@@ -449,66 +509,182 @@ class QQDeliveryWorker:
                 ex=self.settings.qq_worker_lock_ttl_seconds,
             )
         except Exception:
-            logger.exception("QQ delivery lock failed", extra={"delivery_id": delivery_id})
+            logger.exception(
+                "QQ delivery lock failed",
+                extra=self._stage_extra(
+                    "delivery_lock_failed", started_perf, log_context
+                ),
+            )
             return False
         if not acquired:
+            self._log_stage(
+                "QQ delivery is already owned by another worker",
+                "delivery_lock_not_acquired",
+                started_perf,
+                log_context,
+            )
             return False
 
-        started_perf = time.perf_counter()
+        self._log_stage(
+            "QQ delivery lock acquired",
+            "delivery_lock_acquired",
+            started_perf,
+            log_context,
+        )
+        metric_started_perf = time.perf_counter()
         try:
+            self._log_stage(
+                "QQ delivery claim started",
+                "delivery_claim_started",
+                started_perf,
+                log_context,
+            )
             claim = await self._claim(delivery_id, claim_token)
             if claim is None:
-                return False
-            await self.redis.set(QQ_LAST_SENT_AT, str(time.time()), ex=3600)
-            if claim.article_id is not None:
-                logger.info(
-                    "Sending article QQ delivery",
-                    extra={
-                        "article_id": claim.article_id,
-                        "sequence": claim.sequence,
-                        "delivery_type": "image" if claim.media_path else "text",
-                        "delivery_id": claim.delivery_id,
-                    },
+                self._log_stage(
+                    "QQ delivery was no longer claimable",
+                    "delivery_claim_skipped",
+                    started_perf,
+                    log_context,
                 )
-            provider_message_id = await self.sender.send_group(claim)
+                return False
+            log_context.update(
+                {
+                    "attempt": claim.attempts,
+                    "max_attempts": claim.max_attempts,
+                    "delivery_kind": claim.kind,
+                    "delivery_type": "image" if claim.media_path else "text",
+                    "message_character_count": len(claim.message_body),
+                    "bot_id": claim.bot_id,
+                    "article_id": claim.article_id,
+                    "sequence": claim.sequence,
+                }
+            )
+            self._log_stage(
+                "QQ delivery claimed and credentials resolved",
+                "delivery_claimed",
+                started_perf,
+                log_context,
+            )
+            await self.redis.set(QQ_LAST_SENT_AT, str(time.time()), ex=3600)
+            self._log_stage(
+                "QQ API send started",
+                "qq_api_send_started",
+                started_perf,
+                log_context,
+            )
+            provider_message_id = await self._send_with_progress(
+                claim,
+                started_perf=started_perf,
+                log_context=log_context,
+            )
+            response_fields: dict[str, Any] = {
+                "provider_message_id_present": bool(provider_message_id)
+            }
+            if provider_message_id:
+                response_fields["provider_message_id"] = str(provider_message_id)[:128]
+            self._log_stage(
+                "QQ API accepted delivery",
+                "qq_api_send_completed",
+                started_perf,
+                log_context,
+                **response_fields,
+            )
+            self._log_stage(
+                "QQ delivery result persistence started",
+                "delivery_persistence_started",
+                started_perf,
+                log_context,
+            )
             applied = await self._commit_success(claim, provider_message_id)
             outcome = "sent" if applied else "superseded"
+            if applied:
+                self._log_stage(
+                    "QQ delivery completed successfully",
+                    "delivery_completed",
+                    started_perf,
+                    log_context,
+                    outcome=outcome,
+                    **response_fields,
+                )
+            else:
+                logger.warning(
+                    "QQ delivery result was superseded before persistence",
+                    extra=self._stage_extra(
+                        "delivery_superseded",
+                        started_perf,
+                        log_context,
+                        outcome=outcome,
+                    ),
+                )
             QQ_DELIVERIES.labels(status=outcome).inc()
-            QQ_DELIVERY_DURATION.labels(status=outcome).observe(time.perf_counter() - started_perf)
+            QQ_DELIVERY_DURATION.labels(status=outcome).observe(
+                time.perf_counter() - metric_started_perf
+            )
             return applied
         except Exception as exc:
             retryable = self._retryable(exc)
-            outcome = await self._commit_failure(
+            failure = await self._commit_failure(
                 delivery_id, claim_token, str(exc), retryable=retryable
             )
-            QQ_DELIVERIES.labels(status=outcome).inc()
-            QQ_DELIVERY_DURATION.labels(status=outcome).observe(time.perf_counter() - started_perf)
-            if outcome in {"failed", "retry_wait"}:
-                logger.warning(
-                    "QQ delivery failed",
-                    extra={"delivery_id": delivery_id, "status": outcome, "error": str(exc)},
-                )
+            self._log_failure_outcome(
+                failure,
+                exc,
+                retryable=retryable,
+                started_perf=started_perf,
+                log_context=log_context,
+            )
+            QQ_DELIVERIES.labels(status=failure.outcome).inc()
+            QQ_DELIVERY_DURATION.labels(status=failure.outcome).observe(
+                time.perf_counter() - metric_started_perf
+            )
             return False
         finally:
             with suppress(Exception):
                 await self.redis.eval(RELEASE_LOCK_SCRIPT, 1, lock_key, claim_token)
 
-    async def _acquire_send_gate(self) -> str:
+    async def _acquire_send_gate(
+        self,
+        *,
+        started_perf: float,
+        log_context: dict[str, Any],
+    ) -> str:
         token = f"{self.worker_id}:{uuid.uuid4().hex}"
         ttl = max(30, int(self.settings.qq_worker_send_interval_seconds) + 30)
+        last_progress_at = time.perf_counter()
         while not self.stop_event.is_set():
             try:
                 if await self.redis.set(QQ_SEND_GATE, token, nx=True, ex=ttl):
                     return token
             except Exception:
-                logger.warning("QQ send gate unavailable; retrying", exc_info=True)
+                logger.warning(
+                    "QQ send gate unavailable; retrying",
+                    exc_info=True,
+                    extra=self._stage_extra(
+                        "send_gate_error", started_perf, log_context
+                    ),
+                )
+            now_perf = time.perf_counter()
+            if now_perf - last_progress_at >= QQ_SEND_PROGRESS_INTERVAL_SECONDS:
+                self._log_stage(
+                    "QQ delivery is still waiting for global send gate",
+                    "send_gate_wait_in_progress",
+                    started_perf,
+                    log_context,
+                )
+                last_progress_at = now_perf
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=0.2)
             except TimeoutError:
                 pass
         raise asyncio.CancelledError
 
-    async def _wait_for_send_interval(self) -> None:
+    async def _wait_for_send_interval(
+        self,
+        *,
+        started_perf: float,
+        log_context: dict[str, Any],
+    ) -> None:
         interval = self.settings.qq_worker_send_interval_seconds
         if interval <= 0:
             return
@@ -518,10 +694,56 @@ class QQDeliveryWorker:
         except (TypeError, ValueError, OSError):
             remaining = 0
         if remaining > 0:
+            self._log_stage(
+                "QQ delivery waiting for configured send interval",
+                "send_interval_wait_started",
+                started_perf,
+                log_context,
+                wait_seconds=round(remaining, 3),
+            )
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=remaining)
             except TimeoutError:
                 pass
+            self._log_stage(
+                "QQ configured send interval elapsed",
+                "send_interval_wait_completed",
+                started_perf,
+                log_context,
+                wait_seconds=round(remaining, 3),
+            )
+
+    async def _send_with_progress(
+        self,
+        claim: QQDeliveryClaim,
+        *,
+        started_perf: float,
+        log_context: dict[str, Any],
+    ) -> str | None:
+        send_started_perf = time.perf_counter()
+        send_task = asyncio.create_task(self.sender.send_group(claim))
+        try:
+            while True:
+                done, _ = await asyncio.wait(
+                    {send_task},
+                    timeout=QQ_SEND_PROGRESS_INTERVAL_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if send_task in done:
+                    return await send_task
+                self._log_stage(
+                    "QQ API send is still in progress",
+                    "qq_api_send_in_progress",
+                    started_perf,
+                    log_context,
+                    send_elapsed_ms=round(
+                        (time.perf_counter() - send_started_perf) * 1000
+                    ),
+                )
+        finally:
+            if not send_task.done():
+                send_task.cancel()
+            await asyncio.gather(send_task, return_exceptions=True)
 
     async def _claim(self, delivery_id: int, claim_token: str) -> QQDeliveryClaim | None:
         now = datetime.now(UTC)
@@ -662,6 +884,7 @@ class QQDeliveryWorker:
                 media_path=getattr(delivery, "media_path", None),
                 attempts=delivery.attempts,
                 max_attempts=delivery.max_attempts,
+                kind=delivery.kind,
                 article_id=getattr(delivery, "article_id", None),
                 sequence=getattr(delivery, "sequence", None),
             )
@@ -712,17 +935,16 @@ class QQDeliveryWorker:
 
     async def _commit_failure(
         self, delivery_id: int, claim_token: str, message: str, *, retryable: bool
-    ) -> str:
+    ) -> QQFailureCommitResult:
         async with AsyncSessionFactory() as session, session.begin():
             delivery = await session.get(QQDelivery, delivery_id, with_for_update=True)
             if delivery is None or delivery.claim_token != claim_token:
-                return "superseded"
+                return QQFailureCommitResult(outcome="superseded")
             now = datetime.now(UTC)
             if retryable and delivery.attempts < delivery.max_attempts:
                 delivery.status = "retry_wait"
-                delivery.next_attempt_at = now + timedelta(
-                    seconds=min(900, 10 * (2 ** max(0, delivery.attempts - 1)))
-                )
+                delay = min(900, 10 * (2 ** max(0, delivery.attempts - 1)))
+                delivery.next_attempt_at = now + timedelta(seconds=delay)
                 outcome = "retry_wait"
             else:
                 delivery.status = "failed"
@@ -747,7 +969,89 @@ class QQDeliveryWorker:
                 ):
                     article.publish_status = "failed"
                     article.publish_error = message[:2000]
-            return outcome
+            return QQFailureCommitResult(
+                outcome=outcome,
+                attempt=delivery.attempts,
+                max_attempts=delivery.max_attempts,
+                retry_delay_seconds=delay if outcome == "retry_wait" else None,
+                next_attempt_at=(
+                    delivery.next_attempt_at if outcome == "retry_wait" else None
+                ),
+            )
+
+    def _stage_extra(
+        self,
+        stage: str,
+        started_perf: float,
+        log_context: dict[str, Any],
+        **fields: Any,
+    ) -> dict[str, Any]:
+        return {
+            **log_context,
+            "worker_id": self.worker_id,
+            "stage": stage,
+            "elapsed_ms": round((time.perf_counter() - started_perf) * 1000),
+            **fields,
+        }
+
+    def _log_stage(
+        self,
+        message: str,
+        stage: str,
+        started_perf: float,
+        log_context: dict[str, Any],
+        **fields: Any,
+    ) -> None:
+        logger.info(
+            message,
+            extra=self._stage_extra(stage, started_perf, log_context, **fields),
+        )
+
+    def _log_failure_outcome(
+        self,
+        failure: QQFailureCommitResult,
+        exc: Exception,
+        *,
+        retryable: bool,
+        started_perf: float,
+        log_context: dict[str, Any],
+    ) -> None:
+        if failure.outcome == "retry_wait":
+            stage = "delivery_retry_scheduled"
+            message = "QQ delivery scheduled for retry"
+            log = logger.warning
+        elif failure.outcome == "failed":
+            stage = "delivery_failed_permanently"
+            message = "QQ delivery failed permanently"
+            log = logger.error
+        else:
+            stage = "delivery_failure_superseded"
+            message = "QQ delivery failure was superseded"
+            log = logger.warning
+        status_code = getattr(exc, "status_code", None)
+        log(
+            message,
+            extra=self._stage_extra(
+                stage,
+                started_perf,
+                log_context,
+                outcome=failure.outcome,
+                attempt=failure.attempt or log_context.get("attempt"),
+                max_attempts=failure.max_attempts or log_context.get("max_attempts"),
+                error_type=type(exc).__name__,
+                error_summary=self._safe_error_summary(exc),
+                retryable=retryable,
+                qq_status_code=status_code if isinstance(status_code, int) else None,
+                retry_delay_seconds=failure.retry_delay_seconds,
+                next_attempt_at=(
+                    failure.next_attempt_at.isoformat() if failure.next_attempt_at else None
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _safe_error_summary(exc: Exception) -> str:
+        return str(exc).split(":", 1)[0][:200]
 
     @staticmethod
     def _retryable(exc: Exception) -> bool:

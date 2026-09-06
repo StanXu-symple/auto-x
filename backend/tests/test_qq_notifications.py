@@ -1,4 +1,6 @@
-from datetime import UTC, datetime
+import asyncio
+import logging
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -8,7 +10,12 @@ from nonebot.internal.driver import Response
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.qq_worker import NoneBotQQSender, QQDeliveryClaim, QQDeliveryWorker
+from app.qq_worker import (
+    NoneBotQQSender,
+    QQDeliveryClaim,
+    QQDeliveryWorker,
+    QQFailureCommitResult,
+)
 from app.schemas.qq import QQTargetCreate, validate_message_template
 from app.services.qq_notifications import (
     QQCredentialValidationError,
@@ -204,3 +211,194 @@ def test_qq_worker_retry_classification() -> None:
     assert QQDeliveryWorker._retryable(ActionFailed(Response(503))) is True
     assert QQDeliveryWorker._retryable(ActionFailed(Response(403))) is False
     assert QQDeliveryWorker._retryable(UnauthorizedException(Response(401))) is False
+
+
+class WorkerRedis:
+    async def set(self, *_args, **_kwargs):
+        return True
+
+    async def get(self, *_args):
+        return None
+
+    async def eval(self, *_args):
+        return 1
+
+
+def delivery_claim() -> QQDeliveryClaim:
+    return QQDeliveryClaim(
+        delivery_id=11,
+        claim_token="claim-token",
+        bot_id=2,
+        bot_version=1,
+        app_id="app-id",
+        app_secret="SECRET QQ APP SECRET",
+        group_openid="SECRET GROUP OPENID",
+        message_body="SECRET MESSAGE BODY",
+        attempts=1,
+        max_attempts=3,
+        kind="article",
+        article_id=7,
+        sequence=2,
+    )
+
+
+def delivery_worker(sender) -> QQDeliveryWorker:
+    worker = QQDeliveryWorker.__new__(QQDeliveryWorker)
+    worker.settings = Settings(
+        _env_file=None,
+        qq_worker_lock_ttl_seconds=60,
+        qq_worker_send_interval_seconds=0,
+    )
+    worker.sender = sender
+    worker.worker_id = "qq-worker-test"
+    worker.redis = WorkerRedis()  # type: ignore[assignment]
+    worker.stop_event = asyncio.Event()
+    return worker
+
+
+@pytest.mark.asyncio
+async def test_qq_delivery_logs_ordered_safe_success_stages(caplog) -> None:
+    class Sender:
+        async def send_group(self, _claim):
+            return "message-id"
+
+    worker = delivery_worker(Sender())
+    claim = delivery_claim()
+
+    async def claim_delivery(*_args):
+        return claim
+
+    async def commit_success(*_args):
+        return True
+
+    worker._claim = claim_delivery  # type: ignore[method-assign]
+    worker._commit_success = commit_success  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.INFO, logger="app.qq_worker"):
+        assert await worker.process_delivery(claim.delivery_id) is True
+
+    stages = [record.stage for record in caplog.records if hasattr(record, "stage")]
+    assert stages == [
+        "delivery_discovered",
+        "send_gate_wait_started",
+        "send_gate_acquired",
+        "delivery_lock_acquired",
+        "delivery_claim_started",
+        "delivery_claimed",
+        "qq_api_send_started",
+        "qq_api_send_completed",
+        "delivery_persistence_started",
+        "delivery_completed",
+        "send_gate_released",
+    ]
+    completed = next(record for record in caplog.records if record.stage == "delivery_completed")
+    assert completed.delivery_id == 11
+    assert completed.worker_id == "qq-worker-test"
+    assert completed.delivery_kind == "article"
+    assert completed.delivery_type == "text"
+    assert completed.article_id == 7
+    assert completed.sequence == 2
+    assert completed.attempt == 1
+    assert completed.max_attempts == 3
+    assert completed.message_character_count == len(claim.message_body)
+    log_values = repr([record.__dict__ for record in caplog.records])
+    assert "SECRET QQ APP SECRET" not in log_values
+    assert "SECRET GROUP OPENID" not in log_values
+    assert "SECRET MESSAGE BODY" not in log_values
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "expected_stage", "retryable", "retry_delay"),
+    [
+        ("retry_wait", "delivery_retry_scheduled", True, 10),
+        ("failed", "delivery_failed_permanently", False, None),
+    ],
+)
+async def test_qq_delivery_logs_retry_or_permanent_failure(
+    caplog,
+    outcome: str,
+    expected_stage: str,
+    retryable: bool,
+    retry_delay: int | None,
+) -> None:
+    class Sender:
+        async def send_group(self, _claim):
+            if retryable:
+                raise NetworkError("QQ transport failed: SECRET RESPONSE")
+            raise RuntimeError("QQ rejected request: SECRET RESPONSE")
+
+    worker = delivery_worker(Sender())
+    claim = delivery_claim()
+
+    async def claim_delivery(*_args):
+        return claim
+
+    async def commit_failure(*_args, **_kwargs):
+        return QQFailureCommitResult(
+            outcome=outcome,
+            attempt=1,
+            max_attempts=3,
+            retry_delay_seconds=retry_delay,
+            next_attempt_at=(datetime.now(UTC) + timedelta(seconds=10))
+            if retry_delay
+            else None,
+        )
+
+    worker._claim = claim_delivery  # type: ignore[method-assign]
+    worker._commit_failure = commit_failure  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.INFO, logger="app.qq_worker"):
+        assert await worker.process_delivery(claim.delivery_id) is False
+
+    failure = next(record for record in caplog.records if record.stage == expected_stage)
+    assert failure.outcome == outcome
+    assert failure.retryable is retryable
+    assert failure.retry_delay_seconds == retry_delay
+    assert failure.error_summary.endswith(
+        "QQ transport failed" if retryable else "QQ rejected request"
+    )
+    assert "SECRET RESPONSE" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_slow_qq_send_logs_progress_and_cleans_up(monkeypatch, caplog) -> None:
+    finished = asyncio.Event()
+    sender_cancelled = asyncio.Event()
+
+    class Sender:
+        async def send_group(self, _claim):
+            try:
+                await finished.wait()
+                return "message-id"
+            except asyncio.CancelledError:
+                sender_cancelled.set()
+                raise
+
+    worker = delivery_worker(Sender())
+    monkeypatch.setattr("app.qq_worker.QQ_SEND_PROGRESS_INTERVAL_SECONDS", 0.01)
+    context = {
+        "delivery_id": 11,
+        "attempt": 1,
+        "max_attempts": 3,
+        "delivery_type": "text",
+    }
+
+    with caplog.at_level(logging.INFO, logger="app.qq_worker"):
+        task = asyncio.create_task(
+            worker._send_with_progress(
+                delivery_claim(),
+                started_perf=asyncio.get_running_loop().time(),
+                log_context=context,
+            )
+        )
+        await asyncio.sleep(0.025)
+        finished.set()
+        assert await task == "message-id"
+
+    progress = [
+        record for record in caplog.records if record.stage == "qq_api_send_in_progress"
+    ]
+    assert progress
+    assert progress[0].send_elapsed_ms >= 0
+    assert not sender_cancelled.is_set()
