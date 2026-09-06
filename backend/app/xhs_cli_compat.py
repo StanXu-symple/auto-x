@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+import struct
 import time
+import zlib
 from collections.abc import Iterable
 from typing import Any
 
@@ -204,6 +206,122 @@ def _wait_for_publish_button(page: Any, timeout_seconds: float) -> Any | None:
     return None
 
 
+def _paeth_predictor(left: int, above: int, upper_left: int) -> int:
+    estimate = left + above - upper_left
+    left_distance = abs(estimate - left)
+    above_distance = abs(estimate - above)
+    upper_left_distance = abs(estimate - upper_left)
+    if left_distance <= above_distance and left_distance <= upper_left_distance:
+        return left
+    if above_distance <= upper_left_distance:
+        return above
+    return upper_left
+
+
+def _decode_png(png: bytes) -> tuple[int, int, int, bytes]:
+    if not png.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("截图不是 PNG 格式")
+    width = height = channels = 0
+    compressed = bytearray()
+    offset = 8
+    while offset + 12 <= len(png):
+        length = struct.unpack(">I", png[offset : offset + 4])[0]
+        chunk_type = png[offset + 4 : offset + 8]
+        chunk_data = png[offset + 8 : offset + 8 + length]
+        offset += length + 12
+        if chunk_type == b"IHDR":
+            width, height, bit_depth, color_type, _compression, _filter, interlace = (
+                struct.unpack(">IIBBBBB", chunk_data)
+            )
+            if bit_depth != 8 or interlace != 0 or color_type not in {2, 6}:
+                raise ValueError(
+                    f"不支持的 PNG 格式：bit_depth={bit_depth} "
+                    f"color_type={color_type} interlace={interlace}"
+                )
+            channels = 3 if color_type == 2 else 4
+        elif chunk_type == b"IDAT":
+            compressed.extend(chunk_data)
+        elif chunk_type == b"IEND":
+            break
+    if not width or not height or not channels or not compressed:
+        raise ValueError("PNG 截图数据不完整")
+
+    encoded = zlib.decompress(bytes(compressed))
+    stride = width * channels
+    expected_size = height * (stride + 1)
+    if len(encoded) != expected_size:
+        raise ValueError(f"PNG 像素长度异常：expected={expected_size} actual={len(encoded)}")
+
+    decoded = bytearray(height * stride)
+    previous = bytearray(stride)
+    source_offset = 0
+    for row_index in range(height):
+        filter_type = encoded[source_offset]
+        source_offset += 1
+        source = encoded[source_offset : source_offset + stride]
+        source_offset += stride
+        row = bytearray(stride)
+        for index, value in enumerate(source):
+            left = row[index - channels] if index >= channels else 0
+            above = previous[index]
+            upper_left = previous[index - channels] if index >= channels else 0
+            if filter_type == 0:
+                predictor = 0
+            elif filter_type == 1:
+                predictor = left
+            elif filter_type == 2:
+                predictor = above
+            elif filter_type == 3:
+                predictor = (left + above) // 2
+            elif filter_type == 4:
+                predictor = _paeth_predictor(left, above, upper_left)
+            else:
+                raise ValueError(f"不支持的 PNG filter type：{filter_type}")
+            row[index] = (value + predictor) & 0xFF
+        start = row_index * stride
+        decoded[start : start + stride] = row
+        previous = row
+    return width, height, channels, bytes(decoded)
+
+
+def _find_red_button_position(png: bytes) -> dict[str, float]:
+    width, height, channels, pixels = _decode_png(png)
+    red_pixels: set[tuple[int, int]] = set()
+    for y in range(height):
+        for x in range(width):
+            offset = (y * width + x) * channels
+            red, green, blue = pixels[offset : offset + 3]
+            alpha = pixels[offset + 3] if channels == 4 else 255
+            if alpha >= 192 and red >= 180 and red - green >= 55 and red - blue >= 35:
+                red_pixels.add((x, y))
+
+    largest: list[tuple[int, int]] = []
+    remaining = set(red_pixels)
+    while remaining:
+        start = remaining.pop()
+        component = [start]
+        stack = [start]
+        while stack:
+            x, y = stack.pop()
+            for neighbor in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                if neighbor in remaining:
+                    remaining.remove(neighbor)
+                    component.append(neighbor)
+                    stack.append(neighbor)
+        if len(component) > len(largest):
+            largest = component
+
+    minimum_area = max(100, round(width * height * 0.005))
+    if len(largest) < minimum_area:
+        raise ValueError(
+            f"未识别到红色发布按钮：size={width}x{height} "
+            f"largest_red_area={len(largest)} minimum={minimum_area}"
+        )
+    xs = [point[0] for point in largest]
+    ys = [point[1] for point in largest]
+    return {"x": (min(xs) + max(xs)) / 2, "y": (min(ys) + max(ys)) / 2}
+
+
 def _click_publish(page: Any, element: Any) -> None:
     try:
         tag_name = str(element.evaluate("el => el.tagName.toLowerCase()"))
@@ -263,37 +381,36 @@ def _click_publish(page: Any, element: Any) -> None:
             except Exception as dom_exc:
                 errors.append(f"DOM scroll: {dom_exc}")
 
-        try:
-            box = element.bounding_box()
-            if not box or box["width"] <= 0 or box["height"] <= 0:
-                raise RuntimeError(f"无有效点击区域：{box}")
-            position = {"x": box["width"] / 2, "y": box["height"] / 2}
-            element.click(timeout=5000, force=True, position=position)
-            logger.warning(
-                "Clicked closed Xiaohongshu publish component with a real mouse event: "
-                "box=%s position=%s",
-                box,
-                position,
-            )
-            return
-        except Exception as exc:
-            errors.append(f"component click: {exc}")
+        box = element.bounding_box()
+        position: dict[str, float] | None = None
+        if not box or box["width"] <= 0 or box["height"] <= 0:
+            errors.append(f"无有效点击区域：{box}")
+        else:
+            try:
+                screenshot = element.screenshot(type="png", timeout=10000)
+                screenshot_width, screenshot_height = struct.unpack(">II", screenshot[16:24])
+                pixel_position = _find_red_button_position(screenshot)
+                position = {
+                    "x": pixel_position["x"] * box["width"] / screenshot_width,
+                    "y": pixel_position["y"] * box["height"] / screenshot_height,
+                }
+            except Exception as exc:
+                errors.append(f"red button detection: {exc}")
 
-        try:
-            box = element.bounding_box()
-            if not box or box["width"] <= 0 or box["height"] <= 0:
-                raise RuntimeError(f"无有效点击区域：{box}")
-            x = box["x"] + box["width"] / 2
-            y = box["y"] + box["height"] / 2
-            page.mouse.click(x, y)
-            logger.warning(
-                "Clicked closed Xiaohongshu publish component via page mouse: x=%s y=%s",
-                x,
-                y,
-            )
-            return
-        except Exception as exc:
-            errors.append(f"page mouse: {exc}")
+        if box and position:
+            try:
+                element.click(timeout=5000, force=True, position=position)
+            except Exception as exc:
+                errors.append(f"red button click: {exc}")
+            else:
+                logger.warning(
+                    "Clicked Xiaohongshu red publish button with a real mouse event: "
+                    "box=%s position=%s",
+                    box,
+                    position,
+                )
+                return
+
         raise RuntimeError(f"点击小红书发布按钮失败：{' | '.join(errors)}")
     _click_element(element, "点击小红书发布按钮")
 

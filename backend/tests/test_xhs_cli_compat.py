@@ -1,8 +1,12 @@
+import struct
+import zlib
+
 from app.xhs_cli_compat import (
     _click_element,
     _click_publish,
     _find_element,
     _find_image_input,
+    _find_red_button_position,
     _publish_page_feedback,
     _select_image_text_tab,
     _wait_for_publish_button,
@@ -29,6 +33,7 @@ class FakeElement:
         self.evaluated: list[str] = []
         self.evaluate_result: object | None = None
         self.click_options: list[dict[str, object]] = []
+        self.screenshot_result = b""
 
     def inner_text(self) -> str:
         return self.label
@@ -60,6 +65,9 @@ class FakeElement:
 
     def bounding_box(self) -> dict[str, float]:
         return {"x": 10, "y": 20, "width": 100, "height": 40}
+
+    def screenshot(self, **_kwargs: object) -> bytes:
+        return self.screenshot_result
 
 
 class FakeRoot:
@@ -139,17 +147,50 @@ def test_click_custom_publish_button_uses_dom_button() -> None:
     assert any("立即发布" in script for script in button.evaluated)
 
 
-def test_click_closed_custom_publish_button_uses_real_mouse_event() -> None:
+def _png_with_red_rectangle(
+    width: int,
+    height: int,
+    rectangle: tuple[int, int, int, int],
+) -> bytes:
+    left, top, right, bottom = rectangle
+    rows = bytearray()
+    for y in range(height):
+        rows.append(0)
+        for x in range(width):
+            color = (255, 36, 66) if left <= x <= right and top <= y <= bottom else (255, 255, 255)
+            rows.extend(color)
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        checksum = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", checksum)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(bytes(rows)))
+        + chunk(b"IEND", b"")
+    )
+
+
+def test_find_red_button_position_uses_largest_red_region() -> None:
+    png = _png_with_red_rectangle(100, 40, (60, 8, 91, 31))
+
+    assert _find_red_button_position(png) == {"x": 75.5, "y": 19.5}
+
+
+def test_click_closed_custom_publish_button_uses_red_button_position() -> None:
     page = FakePage()
     button = FakeElement(tag="xhs-publish-btn")
     button.evaluate_result = {"clicked": False, "target": "XHS-PUBLISH-BTN"}
+    button.screenshot_result = _png_with_red_rectangle(100, 40, (60, 8, 91, 31))
 
     _click_publish(page, button)
 
     assert button.scrolled is True
     assert button.clicked is True
     assert button.click_options == [
-        {"timeout": 5000, "force": True, "position": {"x": 50.0, "y": 20.0}}
+        {"timeout": 5000, "force": True, "position": {"x": 75.5, "y": 19.5}}
     ]
     assert page.mouse.clicks == []
 
