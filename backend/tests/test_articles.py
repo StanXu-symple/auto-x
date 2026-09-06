@@ -8,6 +8,10 @@ from app.api.errors import APIError
 from app.api.routes.articles import create_article, delete_article, publish_article, update_article
 from app.models.ai import AIDraft
 from app.schemas.article import ArticleCreate, ArticlePatch, ArticlePublishCreate
+from app.services.xhs_limits import (
+    XHS_NOTE_CONTENT_MAX_LENGTH,
+    XHS_NOTE_TITLE_MAX_LENGTH,
+)
 
 
 class MutationSession:
@@ -158,3 +162,46 @@ async def test_article_cannot_start_parallel_publish() -> None:
         )
 
     assert exc_info.value.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("title", "content", "error_code"),
+    (
+        (
+            "标" * (XHS_NOTE_TITLE_MAX_LENGTH + 1),
+            "正文",
+            "xhs_title_too_long",
+        ),
+        (
+            "标题",
+            "文" * (XHS_NOTE_CONTENT_MAX_LENGTH + 1),
+            "xhs_content_too_long",
+        ),
+    ),
+)
+async def test_article_xhs_publish_rejects_platform_text_limit_before_queueing(
+    title: str,
+    content: str,
+    error_code: str,
+) -> None:
+    article = AIDraft(
+        id=13,
+        article_source="ai",
+        title=title,
+        content=content,
+        images=["1/image.png"],
+        publish_status="unpublished",
+        revision=1,
+    )
+
+    with pytest.raises(APIError) as exc_info:
+        await publish_article(
+            13,
+            ArticlePublishCreate(channel="xhs"),
+            MutationSession(article),  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.code == error_code
+    assert article.publish_status == "unpublished"

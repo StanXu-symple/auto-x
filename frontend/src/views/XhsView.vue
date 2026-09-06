@@ -4,6 +4,10 @@ import { BookOpen, CheckCircle2, Send, ShieldCheck, UploadCloud } from 'lucide-v
 import { ElMessage } from 'element-plus'
 import { xhsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
+import {
+  XHS_NOTE_CONTENT_MAX_LENGTH,
+  XHS_NOTE_TITLE_MAX_LENGTH,
+} from '@/constants/xhs'
 
 const loading = ref(false)
 const statusLoading = ref(true)
@@ -138,6 +142,12 @@ async function publish() {
   if (!form.title || !form.content || !form.images.length) {
     return ElMessage.warning('请填写标题、正文并上传图片')
   }
+  if (Array.from(form.title).length > XHS_NOTE_TITLE_MAX_LENGTH) {
+    return ElMessage.warning(`小红书标题不能超过 ${XHS_NOTE_TITLE_MAX_LENGTH} 个字符`)
+  }
+  if (Array.from(form.content).length > XHS_NOTE_CONTENT_MAX_LENGTH) {
+    return ElMessage.warning(`小红书正文不能超过 ${XHS_NOTE_CONTENT_MAX_LENGTH} 个字符`)
+  }
   loading.value = true
   startVerificationPolling()
   try {
@@ -183,8 +193,8 @@ onBeforeUnmount(() => {
       </section>
       <section class="panel xhs-card">
         <div class="xhs-card__head"><div><span class="xhs-index">02</span><h2>发布图文</h2><p>上传图片后发布到小红书</p></div><UploadCloud :size="22" /></div>
-        <label>标题</label><el-input v-model="form.title" maxlength="80" show-word-limit placeholder="写一个清晰、有记忆点的标题" />
-        <label>正文</label><el-input v-model="form.content" type="textarea" :rows="7" placeholder="分享你的观点、步骤或体验" />
+        <label>标题</label><el-input v-model="form.title" :maxlength="XHS_NOTE_TITLE_MAX_LENGTH" show-word-limit placeholder="写一个清晰、有记忆点的标题" />
+        <label>正文</label><el-input v-model="form.content" type="textarea" :rows="7" :maxlength="XHS_NOTE_CONTENT_MAX_LENGTH" show-word-limit placeholder="分享你的观点、步骤或体验" />
         <label>照片</label>
         <label class="xhs-upload-zone" tabindex="0"><input class="xhs-file-input" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="chooseFiles" /><UploadCloud :size="20" /><strong>选择或粘贴照片</strong><span>支持 JPG、PNG、WebP，可多选，也可直接粘贴剪贴板图片</span></label>
         <div v-if="form.previews.length" class="xhs-photo-grid"><div v-for="(photo, index) in form.previews" :key="photo" class="xhs-photo"><button type="button" aria-label="删除照片" @click.stop="removeImage(index)">×</button><el-image :src="photo" :preview-src-list="form.previews" :initial-index="index" preview-teleported hide-on-click-modal fit="cover" alt="已上传照片" /></div></div>

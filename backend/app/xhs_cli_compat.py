@@ -1131,6 +1131,9 @@ def publish_note_compat(
         feedback = _publish_page_feedback(page)
         if feedback:
             last_feedback = feedback
+            if any(marker in feedback for marker in ("最多支持", "不能超过")):
+                _publish_diagnostics_snapshot(page, publish_button, diagnostics)
+                raise RuntimeError(f"小红书页面校验未通过：{feedback}")
         time.sleep(0.5)
     current_url = page.url or ""
     diagnostic_snapshot = _publish_diagnostics_snapshot(

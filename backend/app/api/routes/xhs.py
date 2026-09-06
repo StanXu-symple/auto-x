@@ -20,6 +20,10 @@ from app.services.xhs_jobs import (
     get_xhs_worker_status,
     submit_xhs_job,
 )
+from app.services.xhs_limits import (
+    XHS_NOTE_CONTENT_MAX_LENGTH,
+    XHS_NOTE_TITLE_MAX_LENGTH,
+)
 from app.services.xhs_verification import (
     clear_verification_image,
     read_verification_image,
@@ -44,8 +48,8 @@ class LoginPayload(BaseModel):
 
 
 class PostPayload(BaseModel):
-    title: str = Field(min_length=1, max_length=80)
-    content: str = Field(min_length=1, max_length=20000)
+    title: str = Field(min_length=1, max_length=XHS_NOTE_TITLE_MAX_LENGTH)
+    content: str = Field(min_length=1, max_length=XHS_NOTE_CONTENT_MAX_LENGTH)
     images: list[str] = Field(min_length=1, max_length=18)
 
 

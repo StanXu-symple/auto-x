@@ -10,6 +10,10 @@ import PaginationBar from '@/components/PaginationBar.vue'
 import { articlesApi, qqApi, xhsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import { useUiStore } from '@/stores/ui'
+import {
+  XHS_NOTE_CONTENT_MAX_LENGTH,
+  XHS_NOTE_TITLE_MAX_LENGTH,
+} from '@/constants/xhs'
 import type {
   Article, ArticlePayload, ArticlePublishChannel, ArticlePublishHistory,
   ArticlePublishStatus, ArticleSource, QQBotAccount, QQJoinedGroup,
@@ -57,6 +61,20 @@ const hasFilters = computed(() => Boolean(filters.keyword.trim() || filters.arti
 const qqPreview = computed(() => publishingArticle.value ? `标题:${publishingArticle.value.title}\n摘要:${publishingArticle.value.excerpt || ''}\n正文:${publishingArticle.value.content}` : '')
 const qqCharCount = computed(() => Array.from(qqPreview.value).length)
 const qqMessageCount = computed(() => Math.max(1, Math.ceil(qqCharCount.value / 2000)))
+const xhsTitleCount = computed(() => Array.from(publishingArticle.value?.title || '').length)
+const xhsContentCount = computed(() => Array.from(publishingArticle.value?.content || '').length)
+const xhsPublishValidationMessage = computed(() => {
+  if (publishForm.channel !== 'xhs') return ''
+  const errors = []
+  if (!publishingArticle.value?.images.length) errors.push('至少需要一张图片')
+  if (xhsTitleCount.value > XHS_NOTE_TITLE_MAX_LENGTH) {
+    errors.push(`标题 ${xhsTitleCount.value}/${XHS_NOTE_TITLE_MAX_LENGTH} 字符`)
+  }
+  if (xhsContentCount.value > XHS_NOTE_CONTENT_MAX_LENGTH) {
+    errors.push(`正文 ${xhsContentCount.value}/${XHS_NOTE_CONTENT_MAX_LENGTH} 字符`)
+  }
+  return errors.length ? `无法推送到小红书：${errors.join('；')}` : ''
+})
 
 const sourceMeta: Record<ArticleSource, { label: string; icon: typeof Bot; type: 'primary' | 'success' }> = {
   ai: { label: 'AI 生成', icon: Bot, type: 'primary' }, user: { label: '用户生成', icon: UserRound, type: 'success' },
@@ -275,7 +293,7 @@ async function publishArticle() {
   const article = publishingArticle.value
   if (!article) return
   if (publishForm.channel === 'qq' && (!publishForm.bot_id || !publishForm.group_openids.length)) return ui.toast('请选择 QQ 机器人和发送群', 'warning')
-  if (publishForm.channel === 'xhs' && !article.images.length) return ui.toast('小红书推送至少需要一张图片', 'warning')
+  if (xhsPublishValidationMessage.value) return ui.toast(xhsPublishValidationMessage.value, 'warning')
   publishing.value = true
   if (publishForm.channel === 'xhs') startVerificationPolling()
   try {
@@ -359,13 +377,13 @@ onBeforeUnmount(() => {
           <el-form-item label="QQ 消息内容"><el-input :model-value="qqPreview" type="textarea" :rows="12" readonly resize="none" /><small class="publish-count" :class="{ 'is-split': qqMessageCount > 1 }">{{ qqCharCount }} 字符，推送时将拆分为 {{ qqMessageCount }} 条文本消息</small></el-form-item>
         </template>
         <template v-else>
-          <el-alert v-if="!publishingArticle?.images.length" title="小红书图文推送至少需要一张图片" type="warning" :closable="false" show-icon />
-          <el-form-item label="笔记标题"><el-input :model-value="publishingArticle?.title" readonly /></el-form-item>
-          <el-form-item label="笔记正文"><el-input :model-value="publishingArticle?.content" type="textarea" :rows="12" readonly resize="none" /></el-form-item>
+          <el-alert v-if="xhsPublishValidationMessage" :title="xhsPublishValidationMessage" type="error" :closable="false" show-icon />
+          <el-form-item label="笔记标题"><el-input :model-value="publishingArticle?.title" readonly :maxlength="XHS_NOTE_TITLE_MAX_LENGTH" show-word-limit /></el-form-item>
+          <el-form-item label="笔记正文"><el-input :model-value="publishingArticle?.content" type="textarea" :rows="12" readonly resize="none" :maxlength="XHS_NOTE_CONTENT_MAX_LENGTH" show-word-limit /></el-form-item>
         </template>
         <el-form-item label="文章图片"><div v-if="publishPreviews.length" class="article-photo-grid is-readonly"><div v-for="(photo, index) in publishPreviews" :key="photo.path" class="article-photo"><el-image :src="photo.url" :preview-src-list="publishPreviews.map((item) => item.url)" :initial-index="index" preview-teleported hide-on-click-modal fit="cover" /></div></div><span v-else class="publish-no-images">未添加图片</span><small v-if="publishForm.channel === 'qq' && publishPreviews.length" class="publish-count">图片将按当前顺序逐张调用 QQ 推送接口</small></el-form-item>
       </el-form>
-      <template #footer><el-button :disabled="publishing" @click="publishOpen = false">取消</el-button><el-button type="primary" :loading="publishing" @click="publishArticle"><Send :size="15" />确认推送</el-button></template>
+      <template #footer><el-button :disabled="publishing" @click="publishOpen = false">取消</el-button><el-button type="primary" :loading="publishing" :disabled="Boolean(xhsPublishValidationMessage)" @click="publishArticle"><Send :size="15" />确认推送</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="historyOpen" class="article-dialog article-history-dialog" :title="`推送历史${historyArticle ? ` · ${historyArticle.title}` : ''}`" width="min(1020px, 94vw)">

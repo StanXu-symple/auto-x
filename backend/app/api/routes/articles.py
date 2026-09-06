@@ -39,6 +39,10 @@ from app.services.xhs_jobs import (
     XHSWorkerUnavailableError,
     submit_xhs_job,
 )
+from app.services.xhs_limits import (
+    XHS_NOTE_CONTENT_MAX_LENGTH,
+    XHS_NOTE_TITLE_MAX_LENGTH,
+)
 from app.services.xhs_verification import clear_verification_image
 
 router = APIRouter(prefix="/articles", tags=["Article Management"])
@@ -406,10 +410,18 @@ async def publish_article(
 
     if not article.images:
         raise APIError(422, "xhs_images_required", "小红书图文推送至少需要一张图片")
-    if len(article.title) > 80:
-        raise APIError(422, "xhs_title_too_long", "小红书标题不能超过 80 个字符")
-    if len(article.content) > 20000:
-        raise APIError(422, "xhs_content_too_long", "小红书正文不能超过 20000 个字符")
+    if len(article.title) > XHS_NOTE_TITLE_MAX_LENGTH:
+        raise APIError(
+            422,
+            "xhs_title_too_long",
+            f"小红书标题不能超过 {XHS_NOTE_TITLE_MAX_LENGTH} 个字符",
+        )
+    if len(article.content) > XHS_NOTE_CONTENT_MAX_LENGTH:
+        raise APIError(
+            422,
+            "xhs_content_too_long",
+            f"小红书正文不能超过 {XHS_NOTE_CONTENT_MAX_LENGTH} 个字符",
+        )
     if not await has_xhs_credentials(db, admin_id=admin.id):
         raise APIError(409, "xhs_credentials_not_configured", "请先保存小红书登录态")
     paths = []

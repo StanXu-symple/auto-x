@@ -1,0 +1,2 @@
+export const XHS_NOTE_TITLE_MAX_LENGTH = 20
+export const XHS_NOTE_CONTENT_MAX_LENGTH = 1000
