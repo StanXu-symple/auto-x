@@ -126,15 +126,10 @@ class FakePage(FakeRoot):
         self.keyboard = FakeKeyboard()
         self.mouse = FakeMouse()
         self.evaluate_result: object | None = None
-        self.context = FakeContext()
+        self.scripts: list[str] = []
 
     def evaluate(self, _script: str) -> object:
         return self.evaluate_result or {"width": 1280, "height": 720}
-
-
-class FakeContext:
-    def __init__(self) -> None:
-        self.scripts: list[str] = []
 
     def add_init_script(self, *, script: str) -> None:
         self.scripts.append(script)
@@ -182,8 +177,9 @@ def test_install_shadow_root_capture_before_navigation() -> None:
 
     _install_shadow_root_capture(page)
 
-    assert len(page.context.scripts) == 1
-    assert "__xsentinelShadowRoots" in page.context.scripts[0]
+    assert len(page.scripts) == 1
+    assert "__xsentinelShadowRoots" in page.scripts[0]
+    assert "mode: 'open'" in page.scripts[0]
 
 
 def test_find_captured_shadow_publish_button() -> None:

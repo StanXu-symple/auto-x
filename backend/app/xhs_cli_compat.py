@@ -45,19 +45,29 @@ IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
 PUBLISH_RESULT_TIMEOUT_SECONDS = 60
 SHADOW_ROOT_CAPTURE_SCRIPT = """
 (() => {
-    if (window.__xsentinelShadowRoots) return;
-    const roots = new WeakMap();
-    Object.defineProperty(window, '__xsentinelShadowRoots', {
-        value: roots,
-        configurable: false,
-        enumerable: false,
-    });
+    const roots = window.__xsentinelShadowRoots || new WeakMap();
+    if (!window.__xsentinelShadowRoots) {
+        Object.defineProperty(window, '__xsentinelShadowRoots', {
+            value: roots,
+            configurable: false,
+            enumerable: false,
+        });
+    }
+    if (Element.prototype.attachShadow.__xsentinelWrapped) return;
     const originalAttachShadow = Element.prototype.attachShadow;
-    Element.prototype.attachShadow = function(init) {
-        const root = originalAttachShadow.call(this, init);
+    const wrappedAttachShadow = function(init) {
+        const options = {...init, mode: 'open'};
+        const root = originalAttachShadow.call(this, options);
         roots.set(this, root);
+        Object.defineProperty(this, '__xsentinelShadowRoot', {
+            value: root,
+            configurable: false,
+            enumerable: false,
+        });
         return root;
     };
+    Object.defineProperty(wrappedAttachShadow, '__xsentinelWrapped', {value: true});
+    Element.prototype.attachShadow = wrappedAttachShadow;
 })();
 """
 
@@ -207,7 +217,7 @@ def _wait_for_publish_button(page: Any, timeout_seconds: float) -> Any | None:
 
 def _install_shadow_root_capture(page: Any) -> None:
     try:
-        page.context.add_init_script(script=SHADOW_ROOT_CAPTURE_SCRIPT)
+        page.add_init_script(script=SHADOW_ROOT_CAPTURE_SCRIPT)
     except Exception as exc:
         raise RuntimeError(f"安装小红书 Shadow DOM 兼容脚本失败：{exc}") from exc
 
@@ -219,6 +229,7 @@ def _find_shadow_publish_button(element: Any) -> Any | None:
                 const capturedRoots = window.__xsentinelShadowRoots;
                 const roots = [
                     el.shadowRoot,
+                    el.__xsentinelShadowRoot,
                     capturedRoots?.get(el),
                 ].filter(Boolean);
                 const candidates = [];
@@ -229,8 +240,10 @@ def _find_shadow_publish_button(element: Any) -> Any | None:
                     visited.add(root);
                     for (const node of root.querySelectorAll('*')) {
                         const openRoot = node.shadowRoot;
+                        const exposedRoot = node.__xsentinelShadowRoot;
                         const capturedRoot = capturedRoots?.get(node);
                         if (openRoot) roots.push(openRoot);
+                        if (exposedRoot) roots.push(exposedRoot);
                         if (capturedRoot) roots.push(capturedRoot);
                         const role = node.getAttribute?.('role');
                         if (node.tagName === 'BUTTON' || role === 'button') {
@@ -255,6 +268,37 @@ def _find_shadow_publish_button(element: Any) -> Any | None:
     button = handle.as_element()
     if button is None:
         handle.dispose()
+        try:
+            diagnostics = element.evaluate(
+                """el => {
+                    const capturedRoots = window.__xsentinelShadowRoots;
+                    const root = el.shadowRoot
+                        || el.__xsentinelShadowRoot
+                        || capturedRoots?.get(el);
+                    return {
+                        captureInstalled: Boolean(capturedRoots),
+                        attachShadowWrapped: Boolean(
+                            Element.prototype.attachShadow.__xsentinelWrapped
+                        ),
+                        hasOpenRoot: Boolean(el.shadowRoot),
+                        hasExposedRoot: Boolean(el.__xsentinelShadowRoot),
+                        hasCapturedRoot: Boolean(capturedRoots?.get(el)),
+                        rootMode: root?.mode || '',
+                        controls: root ? Array.from(
+                            root.querySelectorAll('button, [role="button"]')
+                        ).slice(0, 10).map(node => ({
+                            tag: node.tagName,
+                            text: (node.innerText || node.textContent || '')
+                                .replace(/\\s+/g, ' ').trim().slice(0, 80),
+                            disabled: Boolean(node.disabled)
+                                || node.getAttribute('aria-disabled') === 'true',
+                        })) : [],
+                    };
+                }"""
+            )
+        except Exception as exc:
+            diagnostics = {"diagnostics_error": str(exc)}
+        logger.warning("Xiaohongshu Shadow DOM publish button not found: %s", diagnostics)
         return None
     return button
 
