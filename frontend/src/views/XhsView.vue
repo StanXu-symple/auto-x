@@ -191,10 +191,10 @@ onBeforeUnmount(() => {
         <div class="xhs-compose__foot"><span>{{ form.images.length }} 张图片已上传</span><el-button type="primary" :loading="loading" @click="publish"><Send :size="16" />发布笔记</el-button></div>
       </section>
     </div>
-    <el-dialog v-model="verificationVisible" title="完成小红书安全验证" width="min(92vw, 520px)" :close-on-click-modal="false" append-to-body>
+    <el-dialog v-model="verificationVisible" title="完成小红书安全验证" width="min(94vw, 760px)" :close-on-click-modal="false" append-to-body class="xhs-verification-dialog">
       <div class="xhs-verification">
-        <p>请使用已登录当前账号的小红书 App 扫描二维码，验证完成后页面会自动继续发布。</p>
-        <div class="xhs-verification__image"><img v-if="verificationImage" :src="verificationImage" alt="小红书安全验证二维码" /><span v-else>正在获取验证二维码...</span></div>
+        <p>请使用已登录当前账号的小红书 App 扫描二维码。验证完成后页面会自动继续发布；点击图片可全屏查看。</p>
+        <div class="xhs-verification__image"><el-image v-if="verificationImage" :src="verificationImage" :preview-src-list="[verificationImage]" preview-teleported hide-on-click-modal fit="contain" alt="小红书安全验证二维码" /><span v-else>正在获取验证二维码...</span></div>
       </div>
     </el-dialog>
   </div>

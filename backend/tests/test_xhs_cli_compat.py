@@ -1,5 +1,7 @@
+from pathlib import Path
 from types import SimpleNamespace
 
+from app.services.xhs_verification import verification_image_path
 from app.xhs_cli_compat import (
     _arm_publish_diagnostics,
     _click_element,
@@ -11,6 +13,7 @@ from app.xhs_cli_compat import (
     _is_image_publish_url,
     _publish_diagnostics_snapshot,
     _publish_page_feedback,
+    _save_verification_screenshot,
     _security_verification_visible,
     _wait_for_publish_button,
 )
@@ -37,6 +40,7 @@ class FakeElement:
         self.evaluate_result: object | None = None
         self.click_options: list[dict[str, object]] = []
         self.disposed = False
+        self.handle_result: FakeElement | None = None
 
     def inner_text(self) -> str:
         return self.label
@@ -66,11 +70,30 @@ class FakeElement:
             self.clicked = True
         return self.tag
 
+    def evaluate_handle(self, _script: str) -> "FakeHandle":
+        return FakeHandle(self.handle_result)
+
+    def screenshot(self, *, path: str) -> None:
+        Path(path).write_bytes(b"cropped-verification-panel")
+
     def dispose(self) -> None:
         self.disposed = True
 
     def bounding_box(self) -> dict[str, float]:
         return {"x": 10, "y": 20, "width": 100, "height": 40}
+
+
+class FakeHandle:
+    def __init__(self, element: FakeElement | None) -> None:
+        self.element = element
+        self.disposed = False
+
+    def as_element(self) -> FakeElement | None:
+        return self.element
+
+    def dispose(self) -> None:
+        self.disposed = True
+
 
 class FakeRoot:
     def __init__(self, elements: dict[str, list[FakeElement]] | None = None) -> None:
@@ -285,3 +308,16 @@ def test_security_verification_visible_uses_visible_challenge_text() -> None:
     page = FakePage({"text=Scan to verify": [marker]})
 
     assert _security_verification_visible(page) is True
+
+
+def test_verification_screenshot_prefers_cropped_panel(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("XHS_UPLOAD_DIR", str(tmp_path))
+    panel = FakeElement()
+    marker = FakeElement(label="Scan to verify")
+    marker.handle_result = panel
+    page = FakePage({"text=Scan to verify": [marker]})
+
+    assert _save_verification_screenshot(page, 42) is True
+    assert verification_image_path(42).read_bytes() == b"cropped-verification-panel"

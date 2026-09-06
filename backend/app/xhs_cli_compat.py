@@ -53,6 +53,12 @@ PUBLISH_RESULT_TIMEOUT_SECONDS = 60
 SECURITY_VERIFICATION_TIMEOUT_SECONDS = 90
 SECURITY_VERIFICATION_SETTLE_SECONDS = 5
 PUBLISH_DIAGNOSTIC_LIMIT = 12
+SECURITY_VERIFICATION_TEXT_SELECTORS = (
+    "text=Scan to verify",
+    "text=Scan with logged-in",
+    "text=QR code expires",
+    "text=扫码验证",
+)
 SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
     r"(?i)(a1|web_session|cookie|authorization|token)(\s*[\"']?\s*[:=]\s*[\"']?)"
     r"([^\s,;\"']+)"
@@ -226,6 +232,55 @@ def _save_verification_screenshot(page: Any, admin_id: int) -> bool:
         "账号安全",
         "扫码验证",
     )
+    marker = _find_element(
+        page,
+        SECURITY_VERIFICATION_TEXT_SELECTORS,
+        visible=True,
+    )
+    if marker is not None:
+        handle = None
+        try:
+            handle = marker.evaluate_handle(
+                """node => {
+                    for (let current = node; current && current !== document.body;
+                            current = current.parentElement) {
+                        const rect = current.getBoundingClientRect();
+                        if (rect.width < 180 || rect.height < 180
+                                || rect.width > 1000 || rect.height > 1000) continue;
+                        const hasVisibleQrMedia = [...current.querySelectorAll(
+                            'img, canvas, svg, [class*="qr" i]'
+                        )].some(media => {
+                            const mediaRect = media.getBoundingClientRect();
+                            const style = getComputedStyle(media);
+                            return style.display !== 'none'
+                                && style.visibility !== 'hidden'
+                                && mediaRect.width >= 100
+                                && mediaRect.height >= 100
+                                && mediaRect.width <= 600
+                                && mediaRect.height <= 600;
+                        });
+                        if (hasVisibleQrMedia) return current;
+                    }
+                    return null;
+                }"""
+            )
+            capture_target = handle.as_element()
+            if capture_target is not None:
+                capture_target.screenshot(path=str(temporary_path))
+                temporary_path.chmod(0o640)
+                temporary_path.replace(path)
+                return True
+        except Exception as exc:
+            logger.warning(
+                "Unable to crop Xiaohongshu verification panel: %s",
+                exc,
+            )
+        finally:
+            if handle is not None:
+                try:
+                    handle.dispose()
+                except Exception:
+                    pass
     for root in _roots(page):
         for selector in (
             '[role="dialog"]',
@@ -264,12 +319,7 @@ def _security_verification_visible(page: Any) -> bool:
     return (
         _find_element(
             page,
-            (
-                "text=Scan to verify",
-                "text=Scan with logged-in",
-                "text=QR code expires",
-                "text=扫码验证",
-            ),
+            SECURITY_VERIFICATION_TEXT_SELECTORS,
             visible=True,
         )
         is not None
