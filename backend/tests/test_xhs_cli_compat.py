@@ -12,6 +12,7 @@ from app.xhs_cli_compat import (
     _find_element,
     _find_image_input,
     _is_image_publish_url,
+    _is_image_upload_request,
     _log_stage,
     _publish_diagnostics_snapshot,
     _publish_page_feedback,
@@ -256,6 +257,149 @@ def test_wait_for_image_uploads_rejects_failed_cdn_put() -> None:
         assert "HTTP 500" in str(exc)
     else:
         raise AssertionError("failed image upload should stop publishing")
+
+
+def test_image_upload_request_accepts_changed_method_and_known_upload_path() -> None:
+    assert _is_image_upload_request(
+        SimpleNamespace(
+            method="POST",
+            url="https://edith.xiaohongshu.com/api/media/upload?token=secret",
+        )
+    )
+    assert not _is_image_upload_request(
+        SimpleNamespace(
+            method="POST",
+            url="https://t2.xiaohongshu.com/api/v2/collect",
+        )
+    )
+
+
+def test_wait_for_image_uploads_accepts_stable_editor_dom() -> None:
+    page = FakePage()
+    page.evaluate_result = {
+        "titleVisible": True,
+        "contentVisible": True,
+        "previewCount": 1,
+        "loadingVisible": False,
+        "fileInputCount": 1,
+        "statusCodes": [],
+        "errorCodes": [],
+    }
+    tracker = _arm_image_upload_tracker(page)
+
+    _wait_for_image_uploads(
+        page,
+        tracker,
+        expected_count=1,
+        timeout_seconds=0.1,
+        settle_seconds=0,
+    )
+
+    assert page.listeners["response"] == []
+    assert page.listeners["requestfailed"] == []
+
+
+def test_wait_for_image_uploads_does_not_accept_editor_without_preview() -> None:
+    page = FakePage()
+    page.url = "https://creator.xiaohongshu.com/publish/publish?target=image"
+    page.evaluate_result = {
+        "titleVisible": True,
+        "contentVisible": True,
+        "previewCount": 0,
+        "loadingVisible": False,
+        "fileInputCount": 1,
+        "statusCodes": [],
+        "errorCodes": [],
+    }
+    tracker = _arm_image_upload_tracker(page)
+
+    try:
+        _wait_for_image_uploads(
+            page,
+            tracker,
+            expected_count=1,
+            timeout_seconds=0.01,
+            settle_seconds=0,
+        )
+    except RuntimeError as exc:
+        assert "等待图片上传完成" in str(exc)
+    else:
+        raise AssertionError("editor without a loaded preview is not upload completion")
+
+
+def test_wait_for_image_uploads_rejects_visible_dom_failure() -> None:
+    page = FakePage()
+    page.evaluate_result = {
+        "titleVisible": True,
+        "contentVisible": True,
+        "previewCount": 0,
+        "loadingVisible": False,
+        "fileInputCount": 1,
+        "statusCodes": ["upload_failed"],
+        "errorCodes": ["upload_failed"],
+    }
+    tracker = _arm_image_upload_tracker(page)
+
+    try:
+        _wait_for_image_uploads(
+            page,
+            tracker,
+            expected_count=1,
+            timeout_seconds=0.1,
+            settle_seconds=0,
+        )
+    except RuntimeError as exc:
+        assert "图片上传失败" in str(exc)
+    else:
+        raise AssertionError("visible upload failure should stop publishing")
+
+    assert page.listeners["response"] == []
+    assert page.listeners["requestfailed"] == []
+
+
+def test_image_upload_timeout_has_safe_diagnostics() -> None:
+    page = FakePage()
+    page.url = "https://creator.xiaohongshu.com/publish/publish?token=secret"
+    page.evaluate_result = {
+        "titleVisible": False,
+        "contentVisible": False,
+        "previewCount": 0,
+        "loadingVisible": True,
+        "fileInputCount": 1,
+        "statusCodes": ["upload_in_progress"],
+        "errorCodes": [],
+    }
+    tracker = _arm_image_upload_tracker(page)
+    response = SimpleNamespace(
+        request=SimpleNamespace(
+            method="POST",
+            url="https://edith.xiaohongshu.com/api/prepare?token=secret",
+        ),
+        status=200,
+        url="https://edith.xiaohongshu.com/api/prepare?token=secret",
+    )
+    tracker["responseHandler"](response)
+
+    try:
+        _wait_for_image_uploads(
+            page,
+            tracker,
+            expected_count=1,
+            timeout_seconds=0.01,
+            settle_seconds=0,
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+        assert "网络确认 0/1" in message
+        assert "https://creator.xiaohongshu.com/publish/publish" in message
+        assert "https://edith.xiaohongshu.com/api/prepare" in message
+        assert "secret" not in message
+        assert "upload_in_progress" in message
+    else:
+        raise AssertionError("upload timeout should include diagnostics")
+
+    assert page.listeners["response"] == []
+    assert page.listeners["requestfailed"] == []
 
 
 def test_click_custom_publish_button_dispatches_native_publish_event() -> None:

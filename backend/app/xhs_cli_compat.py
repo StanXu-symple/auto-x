@@ -54,6 +54,7 @@ PUBLISH_BUTTON_SELECTORS = (
 IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
 IMAGE_UPLOAD_TIMEOUT_SECONDS = 120
 IMAGE_UPLOAD_SETTLE_SECONDS = 3
+IMAGE_UPLOAD_DIAGNOSTIC_LIMIT = 12
 PUBLISH_RESULT_TIMEOUT_SECONDS = 60
 SECURITY_VERIFICATION_TIMEOUT_SECONDS = 90
 SECURITY_VERIFICATION_SETTLE_SECONDS = 5
@@ -154,27 +155,174 @@ def _wait_for_image_input(page: Any, timeout_seconds: float) -> Any | None:
 
 def _is_image_upload_request(request: Any) -> bool:
     try:
-        hostname = (urlparse(str(request.url)).hostname or "").lower()
-        return str(request.method).upper() == "PUT" and hostname.endswith("xhscdn.com")
+        parsed = urlparse(str(request.url))
+        hostname = (parsed.hostname or "").lower()
+        path = parsed.path.lower()
+        method = str(request.method).upper()
+        if method not in {"POST", "PUT"}:
+            return False
+        if hostname.endswith("xhscdn.com"):
+            return "upload" in hostname or any(
+                marker in path for marker in ("/spectrum/", "/upload/")
+            )
+        return hostname.endswith("xiaohongshu.com") and any(
+            marker in path
+            for marker in ("/upload", "/image/upload", "/media/upload")
+        )
     except Exception:
         return False
+
+
+def _image_upload_dom_snapshot(page: Any) -> dict[str, Any]:
+    try:
+        snapshot = page.evaluate(
+            """() => {
+                const visible = node => {
+                    if (!node) return false;
+                    const style = getComputedStyle(node);
+                    const rect = node.getBoundingClientRect();
+                    return style.display !== 'none' && style.visibility !== 'hidden'
+                        && rect.width > 0 && rect.height > 0;
+                };
+                const firstVisible = selectors => {
+                    for (const selector of selectors) {
+                        for (const node of document.querySelectorAll(selector)) {
+                            if (visible(node)) return node;
+                        }
+                    }
+                    return null;
+                };
+                const title = firstVisible([
+                    'div.d-input input', 'input[placeholder*="填写标题"]',
+                    'input[placeholder*="标题"]', 'input[class*="title"]',
+                    'textarea[class*="title"]'
+                ]);
+                const content = firstVisible([
+                    'div[role="textbox"][contenteditable="true"]',
+                    'div.tiptap.ProseMirror[contenteditable="true"]',
+                    'div.ProseMirror[contenteditable="true"]', '.ql-editor',
+                    '[contenteditable="true"]'
+                ]);
+                const previewSelectors = [
+                    '[class*="image-preview"] img', '[class*="img-preview"] img',
+                    '[class*="preview-item"] img', '[class*="cover"] img',
+                    '[class*="img-list"] img', '[class*="image-list"] img',
+                    '[class*="upload"] img'
+                ];
+                const previews = new Set();
+                for (const selector of previewSelectors) {
+                    for (const node of document.querySelectorAll(selector)) {
+                        if (visible(node) && node.complete && node.naturalWidth > 0) {
+                            previews.add(node);
+                        }
+                    }
+                }
+                const previewCount = previews.size;
+                const loadingVisible = Boolean(firstVisible([
+                    '[aria-busy="true"]', '[class*="upload"][class*="loading"]',
+                    '[class*="upload"] [class*="loading"]',
+                    '[class*="upload"] [class*="progress"]',
+                    '[class*="upload"] [class*="spinner"]'
+                ]));
+                const statusCodes = [];
+                const errorCodes = [];
+                const inProgressPattern = /(?:图片|照片).{0,12}(?:上传中|处理中)|上传中/;
+                const errorPattern = new RegExp(
+                    '(?:图片|照片).{0,12}(?:上传失败|处理失败)'
+                    + '|上传失败|文件格式不支持'
+                );
+                for (const node of document.querySelectorAll(
+                    '[role="alert"], [class*="toast"], [class*="message"], '
+                    + '[class*="error"], [class*="fail"], [class*="tip"]'
+                )) {
+                    if (!visible(node)) continue;
+                    const text = (node.innerText || node.textContent || '').trim();
+                    if (errorPattern.test(text)) {
+                        if (!statusCodes.includes('upload_failed')) {
+                            statusCodes.push('upload_failed');
+                            errorCodes.push('upload_failed');
+                        }
+                    } else if (inProgressPattern.test(text)
+                            && !statusCodes.includes('upload_in_progress')) {
+                        statusCodes.push('upload_in_progress');
+                    }
+                }
+                return {
+                    titleVisible: Boolean(title),
+                    contentVisible: Boolean(content),
+                    previewCount,
+                    loadingVisible,
+                    fileInputCount: document.querySelectorAll('input[type="file"]').length,
+                    statusCodes,
+                    errorCodes,
+                };
+            }"""
+        )
+    except Exception as exc:
+        return {"snapshotError": _diagnostic_text(exc)}
+    return snapshot if isinstance(snapshot, dict) else {"snapshotError": "invalid"}
+
+
+def _safe_upload_dom_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "titleVisible": bool(snapshot.get("titleVisible")),
+        "contentVisible": bool(snapshot.get("contentVisible")),
+        "previewCount": int(snapshot.get("previewCount") or 0),
+        "loadingVisible": bool(snapshot.get("loadingVisible")),
+        "fileInputCount": int(snapshot.get("fileInputCount") or 0),
+        "statusCodes": list(snapshot.get("statusCodes", []))[:4],
+        "errorCodes": list(snapshot.get("errorCodes", []))[:4],
+        **(
+            {"snapshotError": _diagnostic_text(snapshot["snapshotError"])}
+            if snapshot.get("snapshotError")
+            else {}
+        ),
+    }
 
 
 def _arm_image_upload_tracker(page: Any) -> dict[str, Any]:
     state: dict[str, Any] = {
         "successfulUrls": set(),
         "failures": [],
+        "observed": [],
     }
 
     def record_response(response: Any) -> None:
         try:
             request = response.request
-            if not _is_image_upload_request(request):
+            recognized = _is_image_upload_request(request)
+            parsed = urlparse(str(response.url))
+            hostname = (parsed.hostname or "").lower()
+            method = str(request.method).upper()
+            if recognized or (
+                method != "GET"
+                and hostname.endswith(("xiaohongshu.com", "xhscdn.com"))
+            ):
+                state["observed"].append(
+                    {
+                        "method": method,
+                        "status": int(response.status),
+                        "url": _diagnostic_url(str(response.url)),
+                        "recognized": recognized,
+                    }
+                )
+                del state["observed"][:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+            if not recognized:
                 return
             status = int(response.status)
             url = _diagnostic_url(str(response.url))
             if 200 <= status < 300:
+                previous_count = len(state["successfulUrls"])
                 state["successfulUrls"].add(url)
+                completed = len(state["successfulUrls"])
+                if completed > previous_count:
+                    _log_stage(
+                        "image_upload_progress",
+                        "收到照片上传成功响应",
+                        completed=completed,
+                        method=method,
+                        endpoint=url,
+                    )
             else:
                 state["failures"].append(f"HTTP {status}: {url}")
         except Exception:
@@ -213,31 +361,63 @@ def _wait_for_image_uploads(
     settle_seconds: float = IMAGE_UPLOAD_SETTLE_SECONDS,
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
-    ready_since: float | None = None
+    network_ready_since: float | None = None
+    editor_ready_since: float | None = None
+    last_snapshot: dict[str, Any] = {}
     try:
         while time.monotonic() < deadline:
             page.text_content("body")
             failures = tracker.get("failures") or []
             if failures:
                 raise RuntimeError(f"图片上传失败：{failures[-1]}")
+            last_snapshot = _image_upload_dom_snapshot(page)
+            dom_errors = last_snapshot.get("errorCodes") or []
+            if dom_errors:
+                raise RuntimeError(
+                    f"图片上传失败：{_diagnostic_text(dom_errors[-1])}"
+                )
             completed = len(tracker.get("successfulUrls") or ())
             if completed >= expected_count:
-                ready_since = ready_since or time.monotonic()
-                if time.monotonic() - ready_since >= settle_seconds:
+                network_ready_since = network_ready_since or time.monotonic()
+                if time.monotonic() - network_ready_since >= settle_seconds:
                     logger.info(
                         "Xiaohongshu image uploads completed",
                         extra={"expected": expected_count, "completed": completed},
                     )
                     return
             else:
-                ready_since = None
+                network_ready_since = None
+            editor_ready = (
+                bool(last_snapshot.get("titleVisible"))
+                and bool(last_snapshot.get("contentVisible"))
+                and int(last_snapshot.get("previewCount") or 0) >= expected_count
+                and not bool(last_snapshot.get("loadingVisible"))
+                and "upload_in_progress"
+                not in (last_snapshot.get("statusCodes") or [])
+            )
+            if editor_ready:
+                editor_ready_since = editor_ready_since or time.monotonic()
+                if time.monotonic() - editor_ready_since >= settle_seconds:
+                    _log_stage(
+                        "image_upload_dom_complete",
+                        "图文编辑器已稳定就绪，确认照片已被页面接收",
+                        expected=expected_count,
+                        network_completed=completed,
+                        preview_count=int(last_snapshot.get("previewCount") or 0),
+                    )
+                    return
+            else:
+                editor_ready_since = None
             time.sleep(0.25)
     finally:
         _disarm_image_upload_tracker(page, tracker)
     completed = len(tracker.get("successfulUrls") or ())
     raise RuntimeError(
         f"等待图片上传完成超过 {int(timeout_seconds)} 秒"
-        f"（已完成 {completed}/{expected_count}）"
+        f"（网络确认 {completed}/{expected_count}）；"
+        f"当前页面：{_diagnostic_url(str(getattr(page, 'url', '') or ''))}；"
+        f"上传请求：{tracker.get('observed', [])[-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT:]}；"
+        f"页面状态：{_safe_upload_dom_snapshot(last_snapshot)}"
     )
 
 
@@ -772,6 +952,11 @@ def publish_note_compat(
     upload_tracker = _arm_image_upload_tracker(page)
     try:
         image_input.set_input_files(image_paths)
+        _log_stage(
+            "image_upload_started",
+            "照片已提交至页面，等待上传完成",
+            image_count=len(image_paths),
+        )
         _wait_for_image_uploads(
             page,
             upload_tracker,
