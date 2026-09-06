@@ -28,6 +28,7 @@ class FakeElement:
         self.scrolled = False
         self.evaluated: list[str] = []
         self.evaluate_result: object | None = None
+        self.click_options: list[dict[str, object]] = []
 
     def inner_text(self) -> str:
         return self.label
@@ -35,7 +36,8 @@ class FakeElement:
     def is_visible(self) -> bool:
         return self.visible
 
-    def click(self, **_kwargs: object) -> None:
+    def click(self, **kwargs: object) -> None:
+        self.click_options.append(kwargs)
         if self.fail_click:
             raise RuntimeError("outside viewport")
         self.clicked = True
@@ -135,6 +137,21 @@ def test_click_custom_publish_button_uses_dom_button() -> None:
     assert page.mouse.clicks == []
     assert any("el.shadowRoot" in script for script in button.evaluated)
     assert any("立即发布" in script for script in button.evaluated)
+
+
+def test_click_closed_custom_publish_button_uses_real_mouse_event() -> None:
+    page = FakePage()
+    button = FakeElement(tag="xhs-publish-btn")
+    button.evaluate_result = {"clicked": False, "target": "XHS-PUBLISH-BTN"}
+
+    _click_publish(page, button)
+
+    assert button.scrolled is True
+    assert button.clicked is True
+    assert button.click_options == [
+        {"timeout": 5000, "force": True, "position": {"x": 50.0, "y": 20.0}}
+    ]
+    assert page.mouse.clicks == []
 
 
 def test_wait_for_publish_button_prefers_real_red_button() -> None:

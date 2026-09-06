@@ -210,6 +210,7 @@ def _click_publish(page: Any, element: Any) -> None:
     except Exception:
         tag_name = ""
     if tag_name == "xhs-publish-btn":
+        errors: list[str] = []
         try:
             clicked = element.evaluate(
                 """el => {
@@ -242,16 +243,58 @@ def _click_publish(page: Any, element: Any) -> None:
                     return {clicked: true, target: normalize(button) || button.tagName};
                 }"""
             )
-            if not clicked or not clicked.get("clicked"):
-                target = clicked.get("target", "") if isinstance(clicked, dict) else ""
-                raise RuntimeError(f"组件内部未找到真正的发布按钮（组件文本：{target}）")
-            logger.info(
-                "Clicked Xiaohongshu publish control via DOM",
-                extra={"target": clicked.get("target", "")},
+            if clicked and clicked.get("clicked"):
+                logger.warning(
+                    "Clicked Xiaohongshu publish control via open Shadow DOM: target=%r",
+                    clicked.get("target", ""),
+                )
+                return
+        except Exception as exc:
+            errors.append(f"Shadow DOM: {exc}")
+
+        try:
+            element.scroll_into_view_if_needed(timeout=5000)
+        except Exception as exc:
+            errors.append(f"scroll: {exc}")
+            try:
+                element.evaluate(
+                    "el => el.scrollIntoView({block: 'center', inline: 'center'})"
+                )
+            except Exception as dom_exc:
+                errors.append(f"DOM scroll: {dom_exc}")
+
+        try:
+            box = element.bounding_box()
+            if not box or box["width"] <= 0 or box["height"] <= 0:
+                raise RuntimeError(f"无有效点击区域：{box}")
+            position = {"x": box["width"] / 2, "y": box["height"] / 2}
+            element.click(timeout=5000, force=True, position=position)
+            logger.warning(
+                "Clicked closed Xiaohongshu publish component with a real mouse event: "
+                "box=%s position=%s",
+                box,
+                position,
             )
             return
         except Exception as exc:
-            raise RuntimeError(f"点击小红书发布按钮失败：{exc}") from exc
+            errors.append(f"component click: {exc}")
+
+        try:
+            box = element.bounding_box()
+            if not box or box["width"] <= 0 or box["height"] <= 0:
+                raise RuntimeError(f"无有效点击区域：{box}")
+            x = box["x"] + box["width"] / 2
+            y = box["y"] + box["height"] / 2
+            page.mouse.click(x, y)
+            logger.warning(
+                "Clicked closed Xiaohongshu publish component via page mouse: x=%s y=%s",
+                x,
+                y,
+            )
+            return
+        except Exception as exc:
+            errors.append(f"page mouse: {exc}")
+        raise RuntimeError(f"点击小红书发布按钮失败：{' | '.join(errors)}")
     _click_element(element, "点击小红书发布按钮")
 
 
