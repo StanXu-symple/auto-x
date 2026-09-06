@@ -50,6 +50,8 @@ async def test_manual_article_is_created_with_user_source() -> None:
     assert result.content == "正文内容"
     assert result.job_id is None
     assert result.source_tweet_id is None
+    assert result.images == []
+    assert result.publish_status == "unpublished"
 
 
 async def test_article_update_increments_revision() -> None:
@@ -100,3 +102,13 @@ def test_article_payload_rejects_blank_content_and_empty_patch() -> None:
         ArticleCreate(title="标题", content="   ")
     with pytest.raises(ValidationError):
         ArticlePatch(revision=1)
+
+
+def test_article_payload_deduplicates_publish_groups() -> None:
+    from app.schemas.article import ArticlePublishCreate
+
+    payload = ArticlePublishCreate(
+        channel="qq", bot_id=1, group_openids=[" group-a ", "group-a", "group-b"]
+    )
+
+    assert payload.group_openids == ["group-a", "group-b"]

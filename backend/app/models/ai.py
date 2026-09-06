@@ -207,7 +207,15 @@ class AIDraft(Base):
     title: Mapped[str] = mapped_column(String(300))
     content: Mapped[str] = mapped_column(Text)
     excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    images: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(24), default="draft", server_default="draft")
+    publish_status: Mapped[str] = mapped_column(
+        String(24), default="unpublished", server_default="unpublished", index=True
+    )
+    publish_channel: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    publish_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    publish_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     draft_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSON, nullable=True)
     revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

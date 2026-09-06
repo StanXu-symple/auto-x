@@ -54,6 +54,7 @@ services:
   backend:
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
+      - article_uploads:/var/lib/xsentinel/article-uploads
       - runtime_logs:/var/log/xsentinel
     environment:
       HOME: /var/lib/xsentinel/xhs-home
@@ -129,6 +130,9 @@ services:
 
 
   qq-worker:
+    volumes:
+      - article_uploads:/var/lib/xsentinel/article-uploads:ro
+      - runtime_logs:/var/log/xsentinel
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
@@ -153,6 +157,11 @@ services:
           memory: 128m
 
   xhs-worker:
+    volumes:
+      - xhs_uploads:/var/lib/xsentinel/xhs-uploads
+      - article_uploads:/var/lib/xsentinel/article-uploads:ro
+      - xhs_home:/var/lib/xsentinel/xhs-home
+      - runtime_logs:/var/log/xsentinel
     environment:
       HOME: /var/lib/xsentinel/xhs-home
       ENVIRONMENT: production

@@ -97,6 +97,25 @@ def chunk_qq_messages(messages: list[str], *, max_chars: int = QQ_MESSAGE_MAX_CH
     return chunks
 
 
+def split_qq_text(text: str, *, max_chars: int = QQ_MESSAGE_MAX_CHARS) -> list[str]:
+    """Split arbitrary text without truncation, preferring paragraph boundaries."""
+    if max_chars < 1:
+        raise ValueError("max_chars must be positive")
+    chunks: list[str] = []
+    current = ""
+    for paragraph in text.splitlines(keepends=True):
+        if current and len(current) + len(paragraph) > max_chars:
+            chunks.append(current)
+            current = ""
+        while len(paragraph) > max_chars:
+            chunks.append(paragraph[:max_chars])
+            paragraph = paragraph[max_chars:]
+        current += paragraph
+    if current:
+        chunks.append(current)
+    return [chunk for chunk in chunks if chunk]
+
+
 async def validate_qq_credentials(
     app_id: str,
     app_secret: str,

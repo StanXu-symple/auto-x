@@ -17,6 +17,7 @@ from app.services.qq_notifications import (
     render_qq_message,
     secret_fingerprint,
     secret_hint,
+    split_qq_text,
     validate_qq_credentials,
 )
 
@@ -38,6 +39,15 @@ def test_qq_secret_round_trip_is_encrypted_and_masked() -> None:
     assert decrypt_app_secret(encrypted, settings) == secret
     assert secret_hint(secret) == "••••••••1234"
     assert len(secret_fingerprint(secret)) == 64
+
+
+def test_split_qq_text_preserves_all_content_without_oversized_chunks() -> None:
+    text = "第一段\n" + ("长" * 25) + "\n最后一段"
+
+    chunks = split_qq_text(text, max_chars=10)
+
+    assert all(len(chunk) <= 10 for chunk in chunks)
+    assert "".join(chunks) == text
 
 
 def test_qq_target_requires_a_subscription_scope() -> None:
@@ -148,6 +158,44 @@ async def test_nonebot_sender_keeps_multiple_bots_and_replaces_old_versions(
 
     assert await sender.send_group(claim(1, 2)) == "message-1"
     assert set(sender.bots) == {(1, 2), (2, 1)}
+
+
+@pytest.mark.asyncio
+async def test_nonebot_sender_sends_article_image_as_local_attachment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    image = tmp_path / "article.png"
+    image.write_bytes(b"image-bytes")
+    sent = {}
+
+    class FakeBot:
+        def __init__(self, *_args) -> None:
+            pass
+
+        async def send_to_group(self, **kwargs):
+            sent.update(kwargs)
+            return SimpleNamespace(id="image-message")
+
+    monkeypatch.setattr("app.qq_worker.Bot", FakeBot)
+    monkeypatch.setattr("app.qq_worker.article_delivery_media_path", lambda _path: image)
+    sender = NoneBotQQSender(object(), qq_settings())  # type: ignore[arg-type]
+    claim = QQDeliveryClaim(
+        delivery_id=1,
+        claim_token="claim",
+        bot_id=1,
+        bot_version=1,
+        app_id="1",
+        app_secret="secret-value",
+        group_openid="group-open-id",
+        message_body="",
+        attempts=1,
+        max_attempts=3,
+        media_path=str(image),
+    )
+
+    assert await sender.send_group(claim) == "image-message"
+    assert sent["message"].type == "file_image"
+    assert sent["message"].data["content"] == b"image-bytes"
 
 
 def test_qq_worker_retry_classification() -> None:

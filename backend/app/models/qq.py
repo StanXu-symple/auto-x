@@ -38,9 +38,7 @@ class QQBotAccount(Base):
 
 class QQJoinedGroup(Base):
     __tablename__ = "qq_joined_groups"
-    __table_args__ = (
-        Index("uq_qq_joined_group", "bot_id", "app_id", "group_openid", unique=True),
-    )
+    __table_args__ = (Index("uq_qq_joined_group", "bot_id", "app_id", "group_openid", unique=True),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     bot_id: Mapped[int] = mapped_column(
@@ -110,19 +108,29 @@ class QQScheduledTask(Base):
     next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class QQScheduledTaskBot(Base):
     __tablename__ = "qq_scheduled_task_bots"
-    task_id: Mapped[int] = mapped_column(ForeignKey("qq_scheduled_tasks.id", ondelete="CASCADE"), primary_key=True)
-    bot_id: Mapped[int] = mapped_column(ForeignKey("qq_bot_accounts.id", ondelete="CASCADE"), primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("qq_scheduled_tasks.id", ondelete="CASCADE"), primary_key=True
+    )
+    bot_id: Mapped[int] = mapped_column(
+        ForeignKey("qq_bot_accounts.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class QQScheduledTaskGroup(Base):
     __tablename__ = "qq_scheduled_task_groups"
-    task_id: Mapped[int] = mapped_column(ForeignKey("qq_scheduled_tasks.id", ondelete="CASCADE"), primary_key=True)
-    bot_id: Mapped[int] = mapped_column(ForeignKey("qq_bot_accounts.id", ondelete="CASCADE"), primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("qq_scheduled_tasks.id", ondelete="CASCADE"), primary_key=True
+    )
+    bot_id: Mapped[int] = mapped_column(
+        ForeignKey("qq_bot_accounts.id", ondelete="CASCADE"), primary_key=True
+    )
     group_openid: Mapped[str] = mapped_column(String(128), primary_key=True)
 
 
@@ -134,13 +142,23 @@ class QQDelivery(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    task_id: Mapped[int | None] = mapped_column(ForeignKey("qq_scheduled_tasks.id", ondelete="SET NULL"), nullable=True, index=True)
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qq_scheduled_tasks.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     target_id: Mapped[int | None] = mapped_column(
         ForeignKey("qq_notification_targets.id", ondelete="SET NULL"), nullable=True, index=True
     )
     source_tweet_id: Mapped[int | None] = mapped_column(
         ForeignKey("tweets.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    article_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_drafts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    article_publish_attempt_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    media_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     kind: Mapped[str] = mapped_column(String(24), default="tweet", server_default="tweet")
     idempotency_key: Mapped[str] = mapped_column(String(191), unique=True)
     bot_name: Mapped[str] = mapped_column(String(100))

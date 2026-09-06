@@ -614,6 +614,8 @@ export type AiJobStatus =
 
 export type AiDraftStatus = 'draft' | 'approved' | 'rejected'
 export type ArticleSource = 'ai' | 'user'
+export type ArticlePublishStatus = 'unpublished' | 'queued' | 'published' | 'failed'
+export type ArticlePublishChannel = 'qq' | 'xhs'
 
 export interface AiDraft {
   id: EntityId
@@ -700,7 +702,12 @@ export interface Article {
   title: string
   content: string
   excerpt?: string | null
+  images: string[]
   status: AiDraftStatus
+  publish_status: ArticlePublishStatus
+  publish_channel?: ArticlePublishChannel | null
+  publish_error?: string | null
+  published_at?: string | null
   revision: number
   created_at: string
   updated_at: string
@@ -710,13 +717,28 @@ export interface ArticleQuery extends PaginationQuery {
   keyword?: string
   article_source?: ArticleSource
   status?: AiDraftStatus
+  publish_status?: ArticlePublishStatus
 }
 
 export interface ArticlePayload {
   title: string
   content: string
   excerpt?: string | null
+  images: string[]
   status: AiDraftStatus
+}
+
+export interface ArticlePublishPayload {
+  channel: ArticlePublishChannel
+  bot_id?: EntityId
+  group_openids?: string[]
+}
+
+export interface ArticlePublishResult {
+  message: string
+  channel: ArticlePublishChannel
+  publish_status: ArticlePublishStatus
+  delivery_ids: EntityId[]
 }
 
 export interface UpdateArticlePayload extends Partial<ArticlePayload> {

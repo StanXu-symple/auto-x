@@ -16,6 +16,8 @@ import type {
   AiUserProfile,
   AiUserSkillBinding,
   Article,
+  ArticlePublishPayload,
+  ArticlePublishResult,
   ArticlePayload,
   ArticleQuery,
   ApiEnvelope,
@@ -401,5 +403,20 @@ export const articlesApi = {
   },
   async remove(id: EntityId) {
     await http.delete(`/articles/${id}`)
+  },
+  async upload(files: File[]) {
+    const body = new FormData()
+    files.forEach((file) => body.append('files', file))
+    return dataOf(await http.post<Wrapped<{ files: Array<{ path: string }> }>>('/articles/uploads', body))
+  },
+  async image(path: string) {
+    return (await http.get(`/articles/images/${path.split('/').map(encodeURIComponent).join('/')}`, {
+      responseType: 'blob',
+    })).data as Blob
+  },
+  async publish(id: EntityId, payload: ArticlePublishPayload) {
+    return dataOf(await http.post<Wrapped<ArticlePublishResult>>(`/articles/${id}/publish`, payload, {
+      timeout: payload.channel === 'xhs' ? 320_000 : undefined,
+    }))
   },
 }

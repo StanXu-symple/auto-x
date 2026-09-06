@@ -23,6 +23,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
 from app.db.session import AsyncSessionFactory, engine
+from app.services.article_media import article_delivery_media_path
 from app.services.metrics import (
     XHS_JOB_DURATION,
     XHS_JOBS,
@@ -60,7 +61,7 @@ def _validated_image_path(image: object) -> Path | None:
     path = Path(str(image)).resolve()
     if path.is_file() and UPLOAD_DIR in path.parents:
         return path
-    return None
+    return article_delivery_media_path(str(image))
 
 
 def _cgroup_memory_snapshot(root: Path = CGROUP_MEMORY_ROOT) -> dict[str, Any]:
@@ -134,9 +135,7 @@ async def _capture_cli_stream(
         stage = _parse_cli_stage_line(decoded)
         if stage is not None:
             details = {
-                key: value
-                for key, value in stage.items()
-                if key not in {"level", "message"}
+                key: value for key, value in stage.items() if key not in {"level", "message"}
             }
             logger.info(
                 str(stage["message"]),
@@ -388,8 +387,7 @@ class XiaohongshuWorker:
         )
         if process.returncode and oom_kill_delta:
             err = (
-                f"{err.rstrip()}\nXHS_WORKER_CGROUP_OOM: "
-                f"oom_kill increased by {oom_kill_delta}"
+                f"{err.rstrip()}\nXHS_WORKER_CGROUP_OOM: oom_kill increased by {oom_kill_delta}"
             ).lstrip()
         logger.info(
             "Xiaohongshu CLI finished",

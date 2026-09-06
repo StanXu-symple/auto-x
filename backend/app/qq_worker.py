@@ -10,6 +10,7 @@ import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Protocol
 
 import nonebot
@@ -20,6 +21,7 @@ from nonebot.adapters.qq import (
     GroupAddRobotEvent,
     GroupDelRobotEvent,
     GroupMessageCreateEvent,
+    MessageSegment,
     NetworkError,
     RateLimitException,
     UnauthorizedException,
@@ -35,6 +37,7 @@ from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
 from app.core.time import as_utc
 from app.db.session import AsyncSessionFactory, engine
+from app.models.ai import AIDraft
 from app.models.qq import (
     QQBotAccount,
     QQDelivery,
@@ -44,6 +47,7 @@ from app.models.qq import (
     QQScheduledTaskBot,
     QQScheduledTaskGroup,
 )
+from app.services.article_media import article_delivery_media_path
 from app.services.metrics import (
     QQ_DELIVERIES,
     QQ_DELIVERY_DURATION,
@@ -80,7 +84,8 @@ async def acknowledge_group_add(bot: Bot, event: GroupAddRobotEvent) -> None:
 
 
 async def handle_group_event(
-    bot: Bot, event: GroupAddRobotEvent | GroupDelRobotEvent | GroupMessageCreateEvent,
+    bot: Bot,
+    event: GroupAddRobotEvent | GroupDelRobotEvent | GroupMessageCreateEvent,
 ) -> None:
     # Membership persists even when the optional welcome message is rejected.
     event_at = event.timestamp
@@ -88,8 +93,11 @@ async def handle_group_event(
         event_at = datetime.fromisoformat(event_at.replace("Z", "+00:00"))
     async with AsyncSessionFactory() as session:
         changed = await record_group_presence(
-            session, app_id=bot.self_id, group_openid=event.group_openid,
-            is_joined=not isinstance(event, GroupDelRobotEvent), event_at=event_at,
+            session,
+            app_id=bot.self_id,
+            group_openid=event.group_openid,
+            is_joined=not isinstance(event, GroupDelRobotEvent),
+            event_at=event_at,
         )
         await session.commit()
     if changed and isinstance(event, GroupAddRobotEvent):
@@ -112,9 +120,7 @@ async def load_inbound_bot_infos() -> list[BotInfo]:
     """Build webhook bot entries from the encrypted bot accounts in MySQL."""
     async with AsyncSessionFactory() as session:
         rows = (
-            await session.scalars(
-                select(QQBotAccount).where(QQBotAccount.is_enabled.is_(True))
-            )
+            await session.scalars(select(QQBotAccount).where(QQBotAccount.is_enabled.is_(True)))
         ).all()
     settings = get_settings()
     result: list[BotInfo] = []
@@ -168,9 +174,7 @@ async def refresh_inbound_bots(
 
 async def publish_bot_status(redis: Redis, adapter: QQAdapter, *, ttl: int = 30) -> None:
     """Publish per-AppID Gateway state for the administration UI."""
-    status = {
-        info.id: "connecting" for info in adapter.qq_config.qq_bots
-    }
+    status = {info.id: "connecting" for info in adapter.qq_config.qq_bots}
     for bot in adapter.bots.values():
         status[bot.self_id] = "online" if bot.ready else "connecting"
     await redis.set(QQ_BOT_STATUS, json.dumps(status), ex=ttl)
@@ -197,6 +201,9 @@ class QQDeliveryClaim:
     message_body: str
     attempts: int
     max_attempts: int
+    media_path: str | None = None
+    article_id: int | None = None
+    sequence: int | None = None
 
 
 class QQSender(Protocol):
@@ -226,9 +233,15 @@ class NoneBotQQSender:
                 ),
             )
             self.bots[key] = bot
+        message = claim.message_body
+        if claim.media_path:
+            path = article_delivery_media_path(claim.media_path)
+            if path is None:
+                raise RuntimeError("文章图片不存在或路径无效")
+            message = MessageSegment.file_image(Path(path))
         result = await bot.send_to_group(
             group_openid=claim.group_openid,
-            message=claim.message_body,
+            message=message,
         )
         return delivery_message_id(result)
 
@@ -391,8 +404,7 @@ class QQDeliveryWorker:
                                 source_tweet_id=None,
                                 kind="scheduled",
                                 idempotency_key=(
-                                    f"scheduled:{task.id}:{now.isoformat()}:"
-                                    f"{bot_id}:{group}"
+                                    f"scheduled:{task.id}:{now.isoformat()}:{bot_id}:{group}"
                                 ),
                                 bot_name=bot.name,
                                 bot_app_id=bot.app_id,
@@ -448,6 +460,16 @@ class QQDeliveryWorker:
             if claim is None:
                 return False
             await self.redis.set(QQ_LAST_SENT_AT, str(time.time()), ex=3600)
+            if claim.article_id is not None:
+                logger.info(
+                    "Sending article QQ delivery",
+                    extra={
+                        "article_id": claim.article_id,
+                        "sequence": claim.sequence,
+                        "delivery_type": "image" if claim.media_path else "text",
+                        "delivery_id": claim.delivery_id,
+                    },
+                )
             provider_message_id = await self.sender.send_group(claim)
             applied = await self._commit_success(claim, provider_message_id)
             outcome = "sent" if applied else "superseded"
@@ -519,29 +541,52 @@ class QQDeliveryWorker:
             if not due and not stale:
                 return None
             cancel_reason = None
-            if delivery.kind in {"batch", "scheduled"}:
+            if delivery.kind in {"batch", "scheduled", "article"}:
                 # Manual batches select a joined group without a subscription target.
-                bot = await session.scalar(select(QQBotAccount).where(
-                    QQBotAccount.app_id == delivery.bot_app_id,
-                ))
+                bot = await session.scalar(
+                    select(QQBotAccount).where(
+                        QQBotAccount.app_id == delivery.bot_app_id,
+                    )
+                )
                 group_openid = delivery.group_openid
                 if bot is None or not bot.is_enabled:
                     cancel_reason = "机器人已删除或停用"
                 elif bot.version != delivery.bot_version:
                     cancel_reason = "机器人凭据已变更，请重新提交批量推送"
                 else:
-                    joined = await session.scalar(select(QQJoinedGroup.id).where(
-                        QQJoinedGroup.bot_id == bot.id,
-                        QQJoinedGroup.app_id == bot.app_id,
-                        QQJoinedGroup.group_openid == group_openid,
-                        QQJoinedGroup.is_joined.is_(True),
-                    ))
+                    joined = await session.scalar(
+                        select(QQJoinedGroup.id).where(
+                            QQJoinedGroup.bot_id == bot.id,
+                            QQJoinedGroup.app_id == bot.app_id,
+                            QQJoinedGroup.group_openid == group_openid,
+                            QQJoinedGroup.is_joined.is_(True),
+                        )
+                    )
                     if joined is None:
                         cancel_reason = "机器人已退出目标群或未记录入群状态"
+                if delivery.kind == "article" and not cancel_reason:
+                    prior_status = await session.scalar(
+                        select(QQDelivery.status)
+                        .where(
+                            QQDelivery.article_publish_attempt_id
+                            == delivery.article_publish_attempt_id,
+                            QQDelivery.group_openid == delivery.group_openid,
+                            QQDelivery.sequence < delivery.sequence,
+                            QQDelivery.status != "sent",
+                        )
+                        .order_by(QQDelivery.sequence.desc())
+                        .limit(1)
+                    )
+                    if prior_status in {"failed", "cancelled"}:
+                        cancel_reason = "同一文章的前序消息发送失败"
+                    elif prior_status is not None:
+                        delivery.next_attempt_at = now + timedelta(seconds=5)
+                        return None
             else:
                 target = (
                     await session.get(QQNotificationTarget, delivery.target_id)
-                    if delivery.target_id is not None else None
+                    if delivery.target_id is not None
+                    else None
                 )
                 bot = await session.get(QQBotAccount, target.bot_id) if target else None
                 group_openid = target.group_openid if target else delivery.group_openid
@@ -554,6 +599,14 @@ class QQDeliveryWorker:
                 delivery.claim_token = None
                 delivery.claimed_by = None
                 delivery.lease_expires_at = None
+                if delivery.kind == "article" and delivery.article_id:
+                    article = await session.get(AIDraft, delivery.article_id, with_for_update=True)
+                    if (
+                        article is not None
+                        and article.publish_attempt_id == delivery.article_publish_attempt_id
+                    ):
+                        article.publish_status = "failed"
+                        article.publish_error = cancel_reason
                 return None
             try:
                 app_secret = decrypt_app_secret(bot.encrypted_app_secret, self.settings)
@@ -565,6 +618,14 @@ class QQDeliveryWorker:
                 delivery.claim_token = None
                 delivery.claimed_by = None
                 delivery.lease_expires_at = None
+                if delivery.kind == "article" and delivery.article_id:
+                    article = await session.get(AIDraft, delivery.article_id, with_for_update=True)
+                    if (
+                        article is not None
+                        and article.publish_attempt_id == delivery.article_publish_attempt_id
+                    ):
+                        article.publish_status = "failed"
+                        article.publish_error = str(exc)[:2000]
                 return None
             delivery.status = "sending"
             delivery.attempts += 1
@@ -584,8 +645,11 @@ class QQDeliveryWorker:
                 app_secret=app_secret,
                 group_openid=group_openid,
                 message_body=delivery.message_body,
+                media_path=getattr(delivery, "media_path", None),
                 attempts=delivery.attempts,
                 max_attempts=delivery.max_attempts,
+                article_id=getattr(delivery, "article_id", None),
+                sequence=getattr(delivery, "sequence", None),
             )
 
     async def _commit_success(
@@ -601,6 +665,27 @@ class QQDeliveryWorker:
             delivery.claim_token = None
             delivery.claimed_by = None
             delivery.lease_expires_at = None
+            if delivery.kind == "article" and delivery.article_id is not None:
+                await session.flush()
+                remaining = int(
+                    await session.scalar(
+                        select(func.count(QQDelivery.id)).where(
+                            QQDelivery.article_publish_attempt_id
+                            == delivery.article_publish_attempt_id,
+                            QQDelivery.status != "sent",
+                        )
+                    )
+                    or 0
+                )
+                article = await session.get(AIDraft, delivery.article_id, with_for_update=True)
+                if (
+                    remaining == 0
+                    and article is not None
+                    and article.publish_attempt_id == delivery.article_publish_attempt_id
+                ):
+                    article.publish_status = "published"
+                    article.published_at = datetime.now(UTC)
+                    article.publish_error = None
             return True
 
     async def _commit_failure(
@@ -625,6 +710,14 @@ class QQDeliveryWorker:
             delivery.claim_token = None
             delivery.claimed_by = None
             delivery.lease_expires_at = None
+            if outcome == "failed" and delivery.kind == "article" and delivery.article_id:
+                article = await session.get(AIDraft, delivery.article_id, with_for_update=True)
+                if (
+                    article is not None
+                    and article.publish_attempt_id == delivery.article_publish_attempt_id
+                ):
+                    article.publish_status = "failed"
+                    article.publish_error = message[:2000]
             return outcome
 
     @staticmethod
@@ -633,9 +726,7 @@ class QQDeliveryWorker:
             return True
         if isinstance(exc, UnauthorizedException):
             return False
-        return isinstance(exc, ActionFailed) and (
-            exc.status_code == 429 or exc.status_code >= 500
-        )
+        return isinstance(exc, ActionFailed) and (exc.status_code == 429 or exc.status_code >= 500)
 
     async def _heartbeat(self) -> None:
         now = datetime.now(UTC)
@@ -704,6 +795,7 @@ def main() -> None:
             await refresh_inbound_bots(get_adapter(QQAdapter), websocket_started)
         except Exception:
             logger.exception("Unable to load QQ bot accounts for inbound events")
+
         # Keep the adapter's webhook allow-list in sync with the UI-managed
         # accounts so GROUP_ADD_ROBOT callbacks can be dispatched per bot.
         async def sync_inbound_bots() -> None:

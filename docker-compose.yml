@@ -70,6 +70,7 @@ x-backend: &backend-common
     XHS_JOB_RESULT_TTL_SECONDS: ${XHS_JOB_RESULT_TTL_SECONDS:-300}
     XHS_WORKER_HEARTBEAT_TTL_SECONDS: ${XHS_WORKER_HEARTBEAT_TTL_SECONDS:-30}
     XHS_WORKER_METRICS_PORT: "8005"
+    ARTICLE_UPLOAD_DIR: /var/lib/xsentinel/article-uploads
     DEFAULT_POLL_INTERVAL_SECONDS: ${DEFAULT_POLL_INTERVAL_SECONDS:-300}
     WORKER_SCAN_INTERVAL_SECONDS: ${WORKER_SCAN_INTERVAL_SECONDS:-2}
     WORKER_MAX_CONCURRENCY: ${WORKER_MAX_CONCURRENCY:-5}
@@ -250,6 +251,7 @@ services:
       SERVICE_NAME: backend
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
+      - article_uploads:/var/lib/xsentinel/article-uploads
       - runtime_logs:/var/log/xsentinel
     command:
       - uvicorn
@@ -365,6 +367,7 @@ services:
       <<: *backend-environment
       SERVICE_NAME: qq-worker
     volumes:
+      - article_uploads:/var/lib/xsentinel/article-uploads:ro
       - runtime_logs:/var/log/xsentinel
     command:
       - python
@@ -412,6 +415,7 @@ services:
       - /tmp:size=256m,mode=1777
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
+      - article_uploads:/var/lib/xsentinel/article-uploads:ro
       - xhs_home:/var/lib/xsentinel/xhs-home
       - runtime_logs:/var/log/xsentinel
     expose:
@@ -671,6 +675,7 @@ networks:
 volumes:
   runtime_logs:
   xhs_uploads:
+  article_uploads:
   xhs_home:
   mysql_data:
   redis_data:
