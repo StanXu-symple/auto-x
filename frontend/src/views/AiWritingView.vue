@@ -534,6 +534,17 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
           <div class="ai-pane ai-data-source-pane"><AiDataSourceView embedded @updated="loadSettings" /></div>
         </el-tab-pane>
 
+        <el-tab-pane name="skills"><template #label><span class="ai-tab-label"><WandSparkles :size="15" />Skills</span></template>
+          <div class="ai-pane">
+            <header class="ai-pane__toolbar"><div><h3>创作 Skills</h3><p>把写作方法拆成可复用、可组合的提示指令</p></div><div class="ai-pane__actions"><el-button :loading="loading.skills" @click="loadSkills"><RefreshCw v-if="!loading.skills" :size="15" />刷新</el-button><el-button type="primary" @click="openCreateSkill"><Plus :size="15" />新建 Skill</el-button></div></header>
+            <el-alert v-if="errors.skills" :title="errors.skills" type="error" :closable="false" show-icon />
+            <div v-loading="loading.skills" class="skill-grid">
+              <article v-for="skill in skills" :key="skill.id" class="skill-card" :class="{ 'is-inactive': !skill.is_active }"><header><span class="skill-card__icon"><Sparkles :size="17" /></span><div><strong>{{ skill.name }}</strong><small>v{{ skill.version || 1 }} · {{ skill.is_active ? '启用' : '停用' }}</small></div><el-tag :type="skill.is_active ? 'success' : 'info'" size="small" effect="plain">{{ skill.is_active ? '可用' : '停用' }}</el-tag></header><p>{{ skill.description || '暂无说明' }}</p><pre>{{ skill.instructions }}</pre><footer><span>更新于 {{ formatDateTime(skill.updated_at || skill.created_at) }}</span><div><el-button circle size="small" @click="openEditSkill(skill)"><Edit3 :size="14" /></el-button><el-button circle size="small" type="danger" plain @click="removeSkill(skill)"><Trash2 :size="14" /></el-button></div></footer></article>
+            </div>
+            <EmptyState v-if="!loading.skills && !skills.length" compact title="还没有 Skill" description="创建一个 Skill，沉淀你的标题、长文或评论写作方法"><template #icon><WandSparkles :size="26" /></template><el-button type="primary" @click="openCreateSkill">新建 Skill</el-button></EmptyState>
+          </div>
+        </el-tab-pane>
+
         <el-tab-pane name="jobs"><template #label><span class="ai-tab-label"><Clipboard :size="15" />任务与草稿</span></template>
           <div class="ai-pane">
             <header class="ai-pane__toolbar">
@@ -617,16 +628,6 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
           </div>
         </el-tab-pane>
 
-        <el-tab-pane name="skills"><template #label><span class="ai-tab-label"><WandSparkles :size="15" />Skills</span></template>
-          <div class="ai-pane">
-            <header class="ai-pane__toolbar"><div><h3>创作 Skills</h3><p>把写作方法拆成可复用、可组合的提示指令</p></div><div class="ai-pane__actions"><el-button :loading="loading.skills" @click="loadSkills"><RefreshCw v-if="!loading.skills" :size="15" />刷新</el-button><el-button type="primary" @click="openCreateSkill"><Plus :size="15" />新建 Skill</el-button></div></header>
-            <el-alert v-if="errors.skills" :title="errors.skills" type="error" :closable="false" show-icon />
-            <div v-loading="loading.skills" class="skill-grid">
-              <article v-for="skill in skills" :key="skill.id" class="skill-card" :class="{ 'is-inactive': !skill.is_active }"><header><span class="skill-card__icon"><Sparkles :size="17" /></span><div><strong>{{ skill.name }}</strong><small>v{{ skill.version || 1 }} · {{ skill.is_active ? '启用' : '停用' }}</small></div><el-tag :type="skill.is_active ? 'success' : 'info'" size="small" effect="plain">{{ skill.is_active ? '可用' : '停用' }}</el-tag></header><p>{{ skill.description || '暂无说明' }}</p><pre>{{ skill.instructions }}</pre><footer><span>更新于 {{ formatDateTime(skill.updated_at || skill.created_at) }}</span><div><el-button circle size="small" @click="openEditSkill(skill)"><Edit3 :size="14" /></el-button><el-button circle size="small" type="danger" plain @click="removeSkill(skill)"><Trash2 :size="14" /></el-button></div></footer></article>
-            </div>
-            <EmptyState v-if="!loading.skills && !skills.length" compact title="还没有 Skill" description="创建一个 Skill，沉淀你的标题、长文或评论写作方法"><template #icon><WandSparkles :size="26" /></template><el-button type="primary" @click="openCreateSkill">新建 Skill</el-button></EmptyState>
-          </div>
-        </el-tab-pane>
       </el-tabs>
     </section>
 
