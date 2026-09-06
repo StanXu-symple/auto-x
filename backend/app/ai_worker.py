@@ -420,6 +420,7 @@ class AIGenerationWorker:
                 draft = AIDraft(
                     job_id=job.id,
                     source_tweet_id=job.source_tweet_id,
+                    article_source="ai",
                     title=draft_payload["title"],
                     content=draft_payload["content"],
                     excerpt=draft_payload.get("excerpt"),

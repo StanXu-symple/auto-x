@@ -192,11 +192,17 @@ class AIDraft(Base):
     __tablename__ = "ai_drafts"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    job_id: Mapped[int] = mapped_column(
-        ForeignKey("ai_generation_jobs.id", ondelete="CASCADE"), unique=True, index=True
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_generation_jobs.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+        nullable=True,
     )
-    source_tweet_id: Mapped[int] = mapped_column(
-        ForeignKey("tweets.id", ondelete="CASCADE"), index=True
+    source_tweet_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tweets.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    article_source: Mapped[str] = mapped_column(
+        String(16), default="ai", server_default="ai", index=True
     )
     title: Mapped[str] = mapped_column(String(300))
     content: Mapped[str] = mapped_column(Text)
@@ -209,4 +215,4 @@ class AIDraft(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
-    job: Mapped[AIGenerationJob] = relationship(back_populates="draft")
+    job: Mapped[AIGenerationJob | None] = relationship(back_populates="draft")

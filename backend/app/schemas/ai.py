@@ -255,8 +255,9 @@ class AIUserProfileOut(APIModel):
 
 class AIDraftOut(APIModel):
     id: int
-    job_id: int
-    source_tweet_id: int
+    job_id: int | None
+    source_tweet_id: int | None
+    article_source: Literal["ai", "user"]
     title: str
     content: str
     excerpt: str | None

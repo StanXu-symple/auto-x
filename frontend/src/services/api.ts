@@ -15,6 +15,9 @@ import type {
   AiSkillPayload,
   AiUserProfile,
   AiUserSkillBinding,
+  Article,
+  ArticlePayload,
+  ArticleQuery,
   ApiEnvelope,
   AuthUser,
   ChangePasswordPayload,
@@ -48,6 +51,7 @@ import type {
   UpdateMonitoredUserPayload,
   UpdateAiDraftPayload,
   UpdateAiSettingsPayload,
+  UpdateArticlePayload,
   XCredentialSavePayload,
   XCredentialStatus,
   XCredentialTestResult,
@@ -382,5 +386,20 @@ export const aiDataSourceApi = {
   },
   async remove() {
     await http.delete('/ai-data-source')
+  },
+}
+
+export const articlesApi = {
+  async list(params: ArticleQuery) {
+    return pageOf(await http.get<Wrapped<PaginatedResponse<Article>>>('/articles', { params }))
+  },
+  async create(payload: ArticlePayload) {
+    return dataOf(await http.post<Wrapped<Article>>('/articles', payload))
+  },
+  async update(id: EntityId, payload: UpdateArticlePayload) {
+    return dataOf(await http.patch<Wrapped<Article>>(`/articles/${id}`, payload))
+  },
+  async remove(id: EntityId) {
+    await http.delete(`/articles/${id}`)
   },
 }

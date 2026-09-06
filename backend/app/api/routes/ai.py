@@ -79,6 +79,7 @@ def _draft_out(draft: AIDraft | None) -> AIDraftOut | None:
         id=draft.id,
         job_id=draft.job_id,
         source_tweet_id=draft.source_tweet_id,
+        article_source=draft.article_source,
         title=draft.title,
         content=draft.content,
         excerpt=draft.excerpt,

@@ -11,6 +11,7 @@ import {
   Gauge,
   KeyRound,
   LockKeyhole,
+  Library,
   Logs,
   LogOut,
   Menu,
@@ -66,6 +67,7 @@ const navigation = [
     items: [
       { label: 'X 数据源', to: '/x-authorization', icon: KeyRound },
       { label: 'AI 创作', to: '/ai-writing', icon: Sparkles },
+      { label: '文章管理', to: '/articles', icon: Library },
       { label: 'QQ 推送', to: '/qq-notifications', icon: Bot },
       { label: 'QQ 任务', to: '/qq-tasks', icon: Bell },
       { label: '小红书管理', to: '/xhs', icon: BookOpen },

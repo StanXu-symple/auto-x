@@ -64,6 +64,12 @@ const router = createRouter({
           meta: { title: 'AI 创作', description: '把监听内容转化为可审核、可编辑的创作草稿' },
         },
         {
+          path: 'articles',
+          name: 'articles',
+          component: () => import('@/views/ArticlesView.vue'),
+          meta: { title: '文章管理', description: '统一管理 AI 草稿与手动创建的文章' },
+        },
+        {
           path: 'qq-notifications',
           name: 'qq-notifications',
           component: () => import('@/views/QQNotificationsView.vue'),

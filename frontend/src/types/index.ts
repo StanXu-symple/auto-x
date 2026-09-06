@@ -613,11 +613,13 @@ export type AiJobStatus =
   | 'cancelled'
 
 export type AiDraftStatus = 'draft' | 'approved' | 'rejected'
+export type ArticleSource = 'ai' | 'user'
 
 export interface AiDraft {
   id: EntityId
-  job_id: EntityId
-  source_tweet_id: EntityId
+  job_id: EntityId | null
+  source_tweet_id: EntityId | null
+  article_source: ArticleSource
   source_x_tweet_id?: string | null
   title: string
   content: string
@@ -687,6 +689,37 @@ export interface UpdateAiDraftPayload {
   excerpt?: string
   status?: AiDraftStatus | string
   metadata?: Record<string, unknown> | null
+  revision: number
+}
+
+export interface Article {
+  id: EntityId
+  job_id: EntityId | null
+  source_tweet_id: EntityId | null
+  article_source: ArticleSource
+  title: string
+  content: string
+  excerpt?: string | null
+  status: AiDraftStatus
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ArticleQuery extends PaginationQuery {
+  keyword?: string
+  article_source?: ArticleSource
+  status?: AiDraftStatus
+}
+
+export interface ArticlePayload {
+  title: string
+  content: string
+  excerpt?: string | null
+  status: AiDraftStatus
+}
+
+export interface UpdateArticlePayload extends Partial<ArticlePayload> {
   revision: number
 }
 

@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     ai,
     ai_data_source,
+    articles,
     auth,
     dashboard,
     health,
@@ -27,6 +28,7 @@ api_router.include_router(tweets.router, prefix="/posts", include_in_schema=Fals
 api_router.include_router(ai.tweets_router)
 api_router.include_router(ai.router)
 api_router.include_router(ai_data_source.router)
+api_router.include_router(articles.router)
 api_router.include_router(polling_logs.router, prefix="/polling-logs")
 api_router.include_router(polling_logs.router, prefix="/poll-runs", include_in_schema=False)
 api_router.include_router(qq.router)
