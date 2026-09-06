@@ -6,7 +6,6 @@ import {
   Activity,
   Bell,
   Bot,
-  BrainCircuit,
   ChevronDown,
   FileClock,
   Gauge,
@@ -66,7 +65,6 @@ const navigation = [
     label: '内容与渠道',
     items: [
       { label: 'X 数据源', to: '/x-authorization', icon: KeyRound },
-      { label: 'AI 数据源', to: '/ai-data-source', icon: BrainCircuit },
       { label: 'AI 创作', to: '/ai-writing', icon: Sparkles },
       { label: 'QQ 推送', to: '/qq-notifications', icon: Bot },
       { label: 'QQ 任务', to: '/qq-tasks', icon: Bell },

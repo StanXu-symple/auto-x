@@ -287,8 +287,8 @@
 
 .ai-writing-page .ai-tabs .el-tabs__nav {
   display: grid;
-  width: min(100%, 760px);
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: min(100%, 940px);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .ai-writing-page .ai-tabs .el-tabs__item {

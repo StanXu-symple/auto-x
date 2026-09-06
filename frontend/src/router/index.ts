@@ -55,9 +55,7 @@ const router = createRouter({
         },
         {
           path: 'ai-data-source',
-          name: 'ai-data-source',
-          component: () => import('@/views/AiDataSourceView.vue'),
-          meta: { title: 'AI 数据源', description: '统一管理 OpenAI 兼容地址、模型与 API Key' },
+          redirect: { path: '/ai-writing', query: { tab: 'data-source' } },
         },
         {
           path: 'ai-writing',

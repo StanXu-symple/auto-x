@@ -10,6 +10,9 @@ import { getErrorMessage } from '@/services/http'
 import type { AiDataSourceStatus } from '@/types'
 import { formatDateTime } from '@/utils/format'
 
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+const emit = defineEmits<{ updated: [] }>()
+
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
@@ -56,6 +59,7 @@ async function saveSource() {
     form.api_key = ''
     availableModels.value = []
     applyStatus(value)
+    emit('updated')
     ElMessage.success('AI 数据源已加密保存，所有 AI 任务将统一使用此账号')
   } catch (error) { ElMessage.error(getErrorMessage(error, '保存 AI 数据源失败')) }
   finally { saving.value = false }
@@ -68,6 +72,7 @@ async function testSource() {
     availableModels.value = result.models
     result.valid ? ElMessage.success(result.message) : ElMessage.warning(result.message)
     await loadStatus()
+    emit('updated')
   } catch (error) { ElMessage.error(getErrorMessage(error, '测试 AI 数据源失败')) }
   finally { testing.value = false }
 }
@@ -85,7 +90,7 @@ async function removeSource() {
   try { await ElMessageBox.confirm('删除后 AI 创作会自动停用，已有任务和草稿仍会保留。', '删除 AI 数据源', { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }) }
   catch { return }
   saving.value = true
-  try { await aiDataSourceApi.remove(); availableModels.value = []; await loadStatus(); ElMessage.success('AI 数据源已删除') }
+  try { await aiDataSourceApi.remove(); availableModels.value = []; await loadStatus(); emit('updated'); ElMessage.success('AI 数据源已删除') }
   catch (error) { ElMessage.error(getErrorMessage(error, '删除 AI 数据源失败')) }
   finally { saving.value = false }
 }
@@ -94,12 +99,17 @@ onMounted(loadStatus)
 </script>
 
 <template>
-  <div class="ai-data-source-page ai-source-page" v-loading="loading">
-    <section class="source-hero">
+  <div class="ai-data-source-page ai-source-page" :class="{ 'is-embedded': embedded }" v-loading="loading">
+    <section v-if="!embedded" class="source-hero">
       <span class="hero-icon"><BrainCircuit :size="27" /></span>
       <div><span class="eyebrow">UNIFIED AI ACCOUNT</span><h2>统一 AI 数据源</h2><p>一个 OpenAI 兼容账号，服务自动创作、手动生成和全部 AI 能力。</p></div>
       <div class="hero-status" :class="{ ready }"><small>ACCOUNT STATUS</small><strong>{{ ready ? '连接可用' : status?.configured ? '等待测试' : '尚未配置' }}</strong><span><i /> SINGLE ACCOUNT ROUTING</span></div>
     </section>
+
+    <header v-else class="embedded-source-header">
+      <div><span class="hero-icon"><BrainCircuit :size="21" /></span><div><h3>统一 AI 数据源</h3><p>管理 OpenAI 兼容服务地址、模型和加密 API Key。</p></div></div>
+      <el-tag :type="ready ? 'success' : status?.configured ? 'warning' : 'info'" effect="plain">{{ ready ? '连接可用' : status?.configured ? '等待测试' : '尚未配置' }}</el-tag>
+    </header>
 
     <section class="architecture-strip">
       <span><KeyRound :size="17" /><b>OpenAI API Key</b><small>统一凭据</small></span><i>→</i>

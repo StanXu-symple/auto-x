@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   AlertCircle,
   Bot,
+  BrainCircuit,
   Check,
   Clipboard,
   Clock3,
@@ -45,6 +46,7 @@ import type {
 import { formatDateTime, formatRelative } from '@/utils/format'
 import EmptyState from '@/components/EmptyState.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
+import AiDataSourceView from '@/views/AiDataSourceView.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -485,6 +487,14 @@ watch(activeTab, (tab) => {
   router.replace({ query: { ...route.query, tab } })
 })
 
+watch(
+  () => route.query.tab,
+  (tab) => {
+    const nextTab = typeof tab === 'string' ? tab : 'jobs'
+    if (nextTab !== activeTab.value) activeTab.value = nextTab
+  },
+)
+
 watch([selectedUserId, selectedFeatureCode], () => loadUserContext())
 
 let refreshTimer: number | undefined
@@ -520,6 +530,10 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 
     <section class="panel ai-workbench">
       <el-tabs v-model="activeTab" class="ai-tabs">
+        <el-tab-pane name="data-source" lazy><template #label><span class="ai-tab-label"><BrainCircuit :size="15" />AI 数据源</span></template>
+          <div class="ai-pane ai-data-source-pane"><AiDataSourceView embedded @updated="loadSettings" /></div>
+        </el-tab-pane>
+
         <el-tab-pane name="jobs"><template #label><span class="ai-tab-label"><Clipboard :size="15" />任务与草稿</span></template>
           <div class="ai-pane">
             <header class="ai-pane__toolbar">
@@ -545,8 +559,8 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
             <el-alert v-if="errors.settings" :title="errors.settings" type="error" :closable="false" show-icon />
             <div class="settings-sections">
               <section class="settings-block">
-                <header><span><Bot :size="18" /></span><div><h3>统一 AI 数据源</h3><p>模型、服务地址和 API Key 由独立数据源菜单统一管理</p></div><el-tag :type="configured ? 'success' : 'warning'" effect="plain">{{ configured ? '数据源可用' : '等待配置' }}</el-tag></header>
-                <div class="credential-status"><span :class="{ 'is-ready': configured }"><KeyRound :size="15" /></span><div><strong>{{ settings?.model || '尚未配置模型' }}</strong><small>{{ settings?.base_url || '请先配置 OpenAI 兼容 Base URL 与 API Key' }}</small></div><el-button type="primary" plain @click="router.push('/ai-data-source')">管理 AI 数据源</el-button></div>
+                <header><span><Bot :size="18" /></span><div><h3>统一 AI 数据源</h3><p>模型、服务地址和 API Key 由 AI 数据源 Tab 统一管理</p></div><el-tag :type="configured ? 'success' : 'warning'" effect="plain">{{ configured ? '数据源可用' : '等待配置' }}</el-tag></header>
+                <div class="credential-status"><span :class="{ 'is-ready': configured }"><KeyRound :size="15" /></span><div><strong>{{ settings?.model || '尚未配置模型' }}</strong><small>{{ settings?.base_url || '请先配置 OpenAI 兼容 Base URL 与 API Key' }}</small></div><el-button type="primary" plain @click="activeTab = 'data-source'">管理 AI 数据源</el-button></div>
                 <div class="settings-form-grid compact-provider-settings">
                   <el-form-item label="推理强度"><el-select v-model="settingsForm.reasoning_effort"><el-option label="无" value="none" /><el-option label="低" value="low" /><el-option label="中" value="medium" /><el-option label="高" value="high" /><el-option label="超高" value="xhigh" /><el-option label="最大" value="max" /></el-select></el-form-item>
                   <el-form-item label="请求超时"><el-input-number v-model="settingsForm.request_timeout_seconds" :min="5" :max="600" /><span class="field-unit">秒</span></el-form-item>
