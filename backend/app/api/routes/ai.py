@@ -589,7 +589,11 @@ async def generate_from_tweet(
     except ValueError as exc:
         await db.rollback()
         if str(exc) == "ai_disabled":
-            raise APIError(409, "ai_disabled", "AI generation is disabled") from None
+            raise APIError(
+                409,
+                "ai_disabled",
+                "AI 创作已停用，请先在自动生成配置中开启后再创建任务",
+            ) from None
         raise
     except IntegrityError:
         await db.rollback()

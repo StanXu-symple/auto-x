@@ -349,6 +349,9 @@ async function submitGeneration() {
   }
   loading.generate = true
   try {
+    if (!settings.value?.enabled) {
+      applySettings(await aiApi.updateSettings({ enabled: true }))
+    }
     const result = await aiApi.generateFromTweet(generateForm.source_x_tweet_id.trim(), {
       feature_code: generateForm.feature_code,
       skill_ids: generateForm.override_skills ? [...generateForm.skill_ids] : undefined,
@@ -639,7 +642,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
         <el-form-item><el-switch v-model="generateForm.override_skills" active-text="本次手动覆盖用户 Skill 策略" inactive-text="按用户与功能点动态加载 Skills" /></el-form-item>
         <el-form-item v-if="generateForm.override_skills" label="本次使用的 Skills"><el-select v-model="generateForm.skill_ids" multiple collapse-tags collapse-tags-tooltip placeholder="选择本次覆盖组合"><el-option v-for="skill in skills.filter((item) => item.is_active)" :key="skill.id" :label="skill.name" :value="skill.id" /></el-select></el-form-item>
       </el-form>
-      <template #footer><el-button @click="generateDialogOpen = false">取消</el-button><el-button type="primary" :loading="loading.generate" @click="submitGeneration"><Sparkles v-if="!loading.generate" :size="15" />加入生成队列</el-button></template>
+      <template #footer><el-button @click="generateDialogOpen = false">取消</el-button><el-button type="primary" :loading="loading.generate" @click="submitGeneration"><Sparkles v-if="!loading.generate" :size="15" />{{ settings?.enabled ? '加入生成队列' : '启用并加入生成队列' }}</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="skillDialogOpen" class="ai-writing-dialog" :title="editingSkill ? '编辑 Skill' : '新建 Skill'" width="min(650px, 94vw)" destroy-on-close>

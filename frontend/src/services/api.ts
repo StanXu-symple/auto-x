@@ -317,7 +317,7 @@ export const aiApi = {
   async settings() {
     return dataOf(await http.get<Wrapped<AiSettings>>('/ai/settings'))
   },
-  async updateSettings(payload: UpdateAiSettingsPayload) {
+  async updateSettings(payload: Partial<UpdateAiSettingsPayload>) {
     return dataOf(await http.patch<Wrapped<AiSettings>>('/ai/settings', payload))
   },
   async skills(params: AiSkillQuery = { page: 1, page_size: 100 }) {
