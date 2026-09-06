@@ -12,6 +12,7 @@ from app.xhs_cli_compat import (
     _find_element,
     _find_image_input,
     _is_image_publish_url,
+    _log_stage,
     _publish_diagnostics_snapshot,
     _publish_page_feedback,
     _save_verification_screenshot,
@@ -166,6 +167,16 @@ def test_image_publish_url_requires_image_target() -> None:
     assert not _is_image_publish_url(
         "https://creator.xiaohongshu.com/publish/publish?source=official&from=tab_switch"
     )
+
+
+def test_stage_log_is_structured_and_written_to_stderr(capsys) -> None:
+    _log_stage("title_filled", "加入标题成功", character_count=12)
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err.startswith("XHS_STAGE ")
+    assert '"stage": "title_filled"' in output.err
+    assert '"character_count": 12' in output.err
 
 
 def test_find_element_skips_hidden_candidate() -> None:
@@ -352,6 +363,7 @@ def test_publish_diagnostics_detects_security_verification_response() -> None:
     diagnostics["responseHandler"](response)
 
     assert diagnostics["state"]["securityRequired"] is True
+    assert diagnostics["state"]["publishResponseStatus"] == 461
 
 
 def test_click_element_falls_back_to_dom_when_outside_viewport() -> None:

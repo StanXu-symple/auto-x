@@ -39,6 +39,7 @@ from app.services.xhs_jobs import (
 )
 
 logger = logging.getLogger(__name__)
+XHS_STAGE_LOG_PREFIX = "XHS_STAGE "
 CLI_HOME_ROOT = Path(os.getenv("XHS_CLI_HOME") or os.getenv("HOME", "/tmp/xsentinel-xhs"))
 UPLOAD_DIR = Path(os.getenv("XHS_UPLOAD_DIR", "/var/lib/xsentinel/xhs-uploads"))
 CGROUP_MEMORY_ROOT = Path("/sys/fs/cgroup")
@@ -99,6 +100,62 @@ def _cli_executable(args: tuple[str, ...]) -> tuple[str, ...]:
     if args and args[0] == "post":
         return sys.executable, "-m", "app.xhs_cli_compat"
     return ("xhs",)
+
+
+def _parse_cli_stage_line(line: str) -> dict[str, Any] | None:
+    if not line.startswith(XHS_STAGE_LOG_PREFIX):
+        return None
+    try:
+        payload = json.loads(line.removeprefix(XHS_STAGE_LOG_PREFIX))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or not payload.get("message"):
+        return None
+    return payload
+
+
+def _strip_cli_stage_lines(output: str) -> str:
+    return "\n".join(
+        line for line in output.splitlines() if not line.startswith(XHS_STAGE_LOG_PREFIX)
+    )
+
+
+async def _capture_cli_stream(
+    stream: asyncio.StreamReader,
+    chunks: list[bytes],
+    *,
+    command: str,
+    stream_name: str,
+    admin_id: int,
+) -> None:
+    while line := await stream.readline():
+        chunks.append(line)
+        decoded = line.decode(errors="replace").rstrip("\r\n")
+        stage = _parse_cli_stage_line(decoded)
+        if stage is not None:
+            details = {
+                key: value
+                for key, value in stage.items()
+                if key not in {"level", "message"}
+            }
+            logger.info(
+                str(stage["message"]),
+                extra={
+                    "command": command,
+                    "admin_id": admin_id,
+                    **details,
+                },
+            )
+        elif decoded:
+            logger.info(
+                "Xiaohongshu CLI output",
+                extra={
+                    "command": command,
+                    "admin_id": admin_id,
+                    "stream": stream_name,
+                    "output": decoded[:4000],
+                },
+            )
 
 
 class XiaohongshuWorker:
@@ -285,20 +342,45 @@ class XiaohongshuWorker:
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
+        command = args[0] if args else "unknown"
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        stdout_task = asyncio.create_task(
+            _capture_cli_stream(
+                process.stdout,
+                stdout_chunks,
+                command=command,
+                stream_name="stdout",
+                admin_id=admin_id,
+            )
+        )
+        stderr_task = asyncio.create_task(
+            _capture_cli_stream(
+                process.stderr,
+                stderr_chunks,
+                command=command,
+                stream_name="stderr",
+                admin_id=admin_id,
+            )
+        )
         try:
-            stdout, stderr = await process.communicate()
+            await process.wait()
+            await asyncio.gather(stdout_task, stderr_task)
         except asyncio.CancelledError:
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGTERM)
             try:
-                await asyncio.wait_for(process.communicate(), timeout=5)
+                await asyncio.wait_for(process.wait(), timeout=5)
             except TimeoutError:
                 with suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
-                await process.communicate()
+                await process.wait()
+            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
             raise
+        stdout = b"".join(stdout_chunks)
+        stderr = b"".join(stderr_chunks)
         out = stdout.decode(errors="replace")
-        err = stderr.decode(errors="replace")
+        err = _strip_cli_stage_lines(stderr.decode(errors="replace"))
         memory_after = _cgroup_memory_snapshot()
         oom_kill_delta = max(
             0,

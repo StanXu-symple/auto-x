@@ -1,12 +1,16 @@
 import asyncio
+import logging
 from pathlib import Path
 
 from app.xhs_worker import (
     RELEASE_HEARTBEAT_SCRIPT,
     XiaohongshuWorker,
+    _capture_cli_stream,
     _cgroup_memory_snapshot,
     _cli_executable,
     _oom_kill_count,
+    _parse_cli_stage_line,
+    _strip_cli_stage_lines,
 )
 
 
@@ -69,3 +73,44 @@ def test_cgroup_memory_snapshot(tmp_path: Path) -> None:
 def test_post_uses_compatibility_cli_only() -> None:
     assert _cli_executable(("post", "title"))[-2:] == ("-m", "app.xhs_cli_compat")
     assert _cli_executable(("login", "--cookie", "value")) == ("xhs",)
+
+
+def test_parse_and_strip_cli_stage_lines() -> None:
+    stage_line = (
+        'XHS_STAGE {"level":"INFO","stage":"browser_ready",'
+        '"message":"虚拟浏览器启动成功"}'
+    )
+
+    assert _parse_cli_stage_line(stage_line) == {
+        "level": "INFO",
+        "stage": "browser_ready",
+        "message": "虚拟浏览器启动成功",
+    }
+    assert _parse_cli_stage_line("ordinary output") is None
+    assert _strip_cli_stage_lines(f"{stage_line}\nreal error") == "real error"
+
+
+async def test_capture_cli_stream_relays_stage_immediately(caplog) -> None:
+    reader = asyncio.StreamReader()
+    reader.feed_data(
+        'XHS_STAGE {"level":"INFO","stage":"page_ready",'
+        '"message":"小红书图文发布页面进入成功"}\n'.encode()
+    )
+    reader.feed_eof()
+    chunks: list[bytes] = []
+
+    with caplog.at_level(logging.INFO):
+        await _capture_cli_stream(
+            reader,
+            chunks,
+            command="post",
+            stream_name="stderr",
+            admin_id=7,
+        )
+
+    record = next(
+        item for item in caplog.records if item.message == "小红书图文发布页面进入成功"
+    )
+    assert record.stage == "page_ready"
+    assert record.admin_id == 7
+    assert b"XHS_STAGE" in b"".join(chunks)

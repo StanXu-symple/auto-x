@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
+import sys
 import time
 from collections.abc import Iterable
 from typing import Any
@@ -15,6 +17,7 @@ from app.services.xhs_verification import (
 )
 
 logger = logging.getLogger(__name__)
+STAGE_LOG_PREFIX = "XHS_STAGE "
 
 PUBLISH_URL = (
     "https://creator.xiaohongshu.com/publish/publish?from=tab_switch&target=image"
@@ -65,6 +68,14 @@ SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
     r"(?i)(a1|web_session|cookie|authorization|token)(\s*[\"']?\s*[:=]\s*[\"']?)"
     r"([^\s,;\"']+)"
 )
+
+
+def _log_stage(stage: str, message: str, **details: Any) -> None:
+    payload = {"level": "INFO", "stage": stage, "message": message, **details}
+    sys.stderr.write(
+        STAGE_LOG_PREFIX + json.dumps(payload, ensure_ascii=False) + "\n"
+    )
+    sys.stderr.flush()
 
 
 def _roots(page: Any) -> Iterable[Any]:
@@ -420,7 +431,10 @@ def _security_verification_visible(page: Any) -> bool:
 def _arm_publish_diagnostics(page: Any, element: Any) -> dict[str, Any]:
     network: list[dict[str, str | int]] = []
     console: list[dict[str, str]] = []
-    diagnostics_state: dict[str, bool] = {"securityRequired": False}
+    diagnostics_state: dict[str, Any] = {
+        "securityRequired": False,
+        "publishResponseStatus": None,
+    }
 
     def record_response(response: Any) -> None:
         try:
@@ -439,10 +453,10 @@ def _arm_publish_diagnostics(page: Any, element: Any) -> dict[str, Any]:
                         "url": _diagnostic_url(str(response.url)),
                     }
                 )
-            if int(response.status) == 461 and "/web_api/sns/v2/note" in str(
-                response.url
-            ):
-                diagnostics_state["securityRequired"] = True
+            if "/web_api/sns/v2/note" in str(response.url):
+                diagnostics_state["publishResponseStatus"] = int(response.status)
+                if int(response.status) == 461:
+                    diagnostics_state["securityRequired"] = True
         except Exception:
             return
 
@@ -722,6 +736,11 @@ def publish_note_compat(
             raise FileNotFoundError(f"Image not found: {path}")
 
     page = client._page
+    _log_stage(
+        "browser_ready",
+        "虚拟浏览器启动成功",
+        browser="Camoufox/Firefox",
+    )
     client._goto(
         PUBLISH_URL,
         timeout=30000,
@@ -736,10 +755,20 @@ def publish_note_compat(
             "未进入小红书图文发布模式：URL 缺少 target=image；"
             f"当前页面：{page.url or ''}"
         )
+    _log_stage(
+        "page_ready",
+        "小红书图文发布页面进入成功",
+        url=_diagnostic_url(page.url or PUBLISH_URL),
+    )
 
     image_input = _wait_for_image_input(page, timeout_seconds=15)
     if image_input is None:
         raise RuntimeError("找不到图文图片上传控件，页面结构可能已更新")
+    _log_stage(
+        "element_ready",
+        "图片上传元素捕获成功",
+        element="image_input",
+    )
     upload_tracker = _arm_image_upload_tracker(page)
     try:
         image_input.set_input_files(image_paths)
@@ -752,6 +781,11 @@ def publish_note_compat(
     except Exception:
         _disarm_image_upload_tracker(page, upload_tracker)
         raise
+    _log_stage(
+        "image_upload_complete",
+        "照片上传成功",
+        image_count=len(image_paths),
+    )
 
     title_input = _wait_for_element(
         page,
@@ -761,7 +795,17 @@ def publish_note_compat(
     )
     if title_input is None:
         raise RuntimeError("图片上传后找不到标题输入框，请检查上传结果或页面结构")
+    _log_stage(
+        "element_ready",
+        "标题输入元素捕获成功",
+        element="title_input",
+    )
     title_input.fill(title)
+    _log_stage(
+        "title_filled",
+        "加入标题成功",
+        character_count=len(title),
+    )
 
     if content:
         content_input = _wait_for_element(
@@ -772,7 +816,17 @@ def publish_note_compat(
         )
         if content_input is None:
             raise RuntimeError("找不到正文输入框，页面结构可能已更新")
+        _log_stage(
+            "element_ready",
+            "正文输入元素捕获成功",
+            element="content_input",
+        )
         content_input.fill(content)
+        _log_stage(
+            "content_filled",
+            "加入正文成功",
+            character_count=len(content),
+        )
 
     time.sleep(1)
     _click_element(title_input, "发布前重新聚焦标题输入框")
@@ -780,6 +834,11 @@ def publish_note_compat(
     publish_button = _wait_for_publish_button(page, timeout_seconds=15)
     if publish_button is None:
         raise RuntimeError("发布按钮不可点击，请检查标题、正文和图片是否通过页面校验")
+    _log_stage(
+        "element_ready",
+        "发布按钮元素捕获成功",
+        element="publish_button",
+    )
     diagnostics = _arm_publish_diagnostics(page, publish_button)
     try:
         _click_publish(page, publish_button)
@@ -794,11 +853,28 @@ def publish_note_compat(
     note_id = ""
     last_feedback = ""
     verification_captured = False
+    verification_required_logged = False
     verification_missing_since: float | None = None
     verification_retries = 0
+    publishing_without_verification_logged = False
     while time.monotonic() < deadline:
         current_url = page.url or ""
         page_text = page.text_content("body") or ""
+        publish_response_status = diagnostics.get("state", {}).get(
+            "publishResponseStatus"
+        )
+        if (
+            publish_response_status is not None
+            and 200 <= publish_response_status < 300
+            and verification_retries == 0
+            and not publishing_without_verification_logged
+        ):
+            _log_stage(
+                "publishing",
+                "无鉴权二维码，直接发布中",
+                response_status=publish_response_status,
+            )
+            publishing_without_verification_logged = True
         note_id = (
             client._extract_note_id_from_url(current_url)
             or client._extract_note_id_from_page()
@@ -807,6 +883,12 @@ def publish_note_compat(
             _publish_diagnostics_snapshot(page, publish_button, diagnostics)
             if admin_id is not None:
                 clear_verification_image(admin_id)
+            _log_stage(
+                "publish_success",
+                "发布笔记成功",
+                note_id=note_id,
+                url=_diagnostic_url(current_url),
+            )
             result = {"success": True, "note_id": note_id, "url": current_url}
             return result if return_detail else True
         security_required = bool(
@@ -816,6 +898,12 @@ def publish_note_compat(
             for marker in ("scan to verify", "scan with logged-in", "qr code expires")
         )
         verification_visible = security_required and _security_verification_visible(page)
+        if verification_visible and not verification_required_logged:
+            _log_stage(
+                "verification_required",
+                "弹出发布笔记鉴权二维码，等待用户扫码",
+            )
+            verification_required_logged = True
         if verification_visible and not verification_captured and admin_id is not None:
             verification_captured = _save_verification_screenshot(page, admin_id)
             if verification_captured:
@@ -837,9 +925,16 @@ def publish_note_compat(
             ):
                 clear_verification_image(admin_id)
                 diagnostics["state"]["securityRequired"] = False
+                diagnostics["state"]["publishResponseStatus"] = None
                 verification_captured = False
+                verification_required_logged = False
                 verification_missing_since = None
                 verification_retries += 1
+                _log_stage(
+                    "verification_passed",
+                    "二维码鉴权通过，直接发布中",
+                    attempt=verification_retries,
+                )
                 _click_publish(page, publish_button)
                 deadline = max(deadline, time.monotonic() + PUBLISH_RESULT_TIMEOUT_SECONDS)
                 logger.warning(
