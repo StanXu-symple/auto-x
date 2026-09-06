@@ -210,7 +210,6 @@ class AIProviderClient:
             },
             "max_output_tokens": request.max_output_tokens,
             "store": False,
-            "metadata": {"application": "x-sentinel", "job_id": str(request.job_id)},
         }
         payload["reasoning"] = {"effort": request.reasoning_effort}
         url = request.base_url.rstrip("/") + "/responses"

@@ -138,6 +138,7 @@ async def test_openai_responses_provider_uses_structured_output_without_leaking_
     assert captured["payload"]["model"] == "gpt-5.6-terra"
     assert captured["payload"]["text"]["format"]["type"] == "json_schema"
     assert captured["payload"]["store"] is False
+    assert "metadata" not in captured["payload"]
     assert "super-secret-key" not in json.dumps(result.response_snapshot)
 
 
