@@ -5,6 +5,7 @@ from app.xhs_cli_compat import (
     _find_image_input,
     _publish_page_feedback,
     _select_image_text_tab,
+    _wait_for_publish_button,
 )
 
 
@@ -134,6 +135,19 @@ def test_click_custom_publish_button_uses_dom_button() -> None:
     assert page.mouse.clicks == []
     assert any("el.shadowRoot" in script for script in button.evaluated)
     assert any("立即发布" in script for script in button.evaluated)
+
+
+def test_wait_for_publish_button_prefers_real_red_button() -> None:
+    widget = FakeElement(tag="xhs-publish-btn")
+    real_button = FakeElement(tag="button", label="发布")
+    page = FakePage(
+        {
+            'xhs-publish-btn[is-publish="true"]': [widget],
+            ".publish-page-publish-btn button.bg-red": [real_button],
+        }
+    )
+
+    assert _wait_for_publish_button(page, timeout_seconds=0.1) is real_button
 
 
 def test_click_element_falls_back_to_dom_when_outside_viewport() -> None:

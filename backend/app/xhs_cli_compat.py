@@ -30,11 +30,13 @@ CONTENT_SELECTORS = (
     '[contenteditable="true"]',
 )
 PUBLISH_BUTTON_SELECTORS = (
+    ".publish-page-publish-btn button.bg-red",
+    'button:text-is("发布")',
+    'button:has-text("立即发布")',
+    '[role="button"]:text-is("发布")',
+    '[class*="publish-btn"]',
     'xhs-publish-btn[is-publish="true"]',
     "xhs-publish-btn:not([is-publish])",
-    ".publish-page-publish-btn button.bg-red",
-    'button:has-text("发布")',
-    '[class*="publish-btn"]',
 )
 IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
 PUBLISH_RESULT_TIMEOUT_SECONDS = 60
@@ -166,15 +168,38 @@ def _select_image_text_tab(page: Any) -> None:
 def _wait_for_publish_button(page: Any, timeout_seconds: float) -> Any | None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        element = _find_element(page, PUBLISH_BUTTON_SELECTORS, visible=True)
-        if element is not None:
-            try:
-                submit_disabled = element.get_attribute("submit-disabled")
-                disabled = element.get_attribute("disabled")
-            except Exception:
-                submit_disabled = disabled = None
-            if submit_disabled != "true" and disabled is None:
-                return element
+        for selector in PUBLISH_BUTTON_SELECTORS:
+            for root in _roots(page):
+                try:
+                    elements = root.query_selector_all(selector)
+                except Exception:
+                    continue
+                for element in elements:
+                    if not _is_visible(element):
+                        continue
+                    try:
+                        submit_disabled = element.get_attribute("submit-disabled")
+                        disabled = element.get_attribute("disabled")
+                        aria_disabled = element.get_attribute("aria-disabled")
+                        tag_name = element.evaluate("el => el.tagName.toLowerCase()")
+                        label = " ".join((element.inner_text() or "").split())[:120]
+                    except Exception:
+                        submit_disabled = disabled = aria_disabled = None
+                        tag_name = label = "unknown"
+                    if (
+                        submit_disabled != "true"
+                        and disabled is None
+                        and aria_disabled != "true"
+                    ):
+                        logger.warning(
+                            "Selected Xiaohongshu publish control: selector=%s "
+                            "tag=%s text=%r submit_disabled=%r",
+                            selector,
+                            tag_name,
+                            label,
+                            submit_disabled,
+                        )
+                        return element
         time.sleep(0.3)
     return None
 
@@ -209,14 +234,17 @@ def _click_publish(page: Any, element: Any) -> None:
                             || node.getAttribute?.('aria-disabled') === 'true';
                         return !disabled && (text === '发布' || text.includes('立即发布'));
                     });
-                    const target = button || el;
-                    target.scrollIntoView({block: 'center', inline: 'center'});
-                    target.click();
-                    return {clicked: true, target: normalize(target) || target.tagName};
+                    if (!button) {
+                        return {clicked: false, target: normalize(el) || el.tagName};
+                    }
+                    button.scrollIntoView({block: 'center', inline: 'center'});
+                    button.click();
+                    return {clicked: true, target: normalize(button) || button.tagName};
                 }"""
             )
             if not clicked or not clicked.get("clicked"):
-                raise RuntimeError("未找到可点击的发布控件")
+                target = clicked.get("target", "") if isinstance(clicked, dict) else ""
+                raise RuntimeError(f"组件内部未找到真正的发布按钮（组件文本：{target}）")
             logger.info(
                 "Clicked Xiaohongshu publish control via DOM",
                 extra={"target": clicked.get("target", "")},
