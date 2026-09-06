@@ -84,6 +84,7 @@ async def _clear_unreferenced_images(db: DbSession, candidates: list[str]) -> No
 
 
 @router.get("", response_model=Page[ArticleOut])
+@router.get("/", response_model=Page[ArticleOut], include_in_schema=False)
 async def list_articles(
     db: DbSession,
     _: CurrentAdmin,

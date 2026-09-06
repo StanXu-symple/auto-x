@@ -394,7 +394,7 @@ export const aiDataSourceApi = {
 
 export const articlesApi = {
   async list(params: ArticleQuery) {
-    return pageOf(await http.get<Wrapped<PaginatedResponse<Article>>>('/articles', { params }))
+    return pageOf(await http.get<Wrapped<PaginatedResponse<Article>>>('/articles/', { params }))
   },
   async create(payload: ArticlePayload) {
     return dataOf(await http.post<Wrapped<Article>>('/articles', payload))
