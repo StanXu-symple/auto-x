@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from app.xhs_cli_compat import (
     _arm_publish_diagnostics,
     _click_element,
@@ -9,6 +11,7 @@ from app.xhs_cli_compat import (
     _is_image_publish_url,
     _publish_diagnostics_snapshot,
     _publish_page_feedback,
+    _security_verification_visible,
     _wait_for_publish_button,
 )
 
@@ -245,6 +248,21 @@ def test_publish_diagnostics_redacts_url_query_and_collects_snapshot() -> None:
     )
 
 
+def test_publish_diagnostics_detects_security_verification_response() -> None:
+    page = FakePage()
+    button = FakeElement(tag="xhs-publish-btn")
+    diagnostics = _arm_publish_diagnostics(page, button)
+    response = SimpleNamespace(
+        request=SimpleNamespace(method="POST"),
+        status=461,
+        url="https://edith.xiaohongshu.com/web_api/sns/v2/note",
+    )
+
+    diagnostics["responseHandler"](response)
+
+    assert diagnostics["state"]["securityRequired"] is True
+
+
 def test_click_element_falls_back_to_dom_when_outside_viewport() -> None:
     element = FakeElement(fail_click=True)
 
@@ -260,3 +278,10 @@ def test_publish_page_feedback_returns_visible_messages() -> None:
     page.evaluate_result = ["标题不能为空", "图片上传失败"]
 
     assert _publish_page_feedback(page) == "标题不能为空；图片上传失败"
+
+
+def test_security_verification_visible_uses_visible_challenge_text() -> None:
+    marker = FakeElement(label="Scan to verify")
+    page = FakePage({"text=Scan to verify": [marker]})
+
+    assert _security_verification_visible(page) is True

@@ -8,6 +8,12 @@ from collections.abc import Iterable
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlunparse
 
+from app.services.xhs_verification import (
+    clear_verification_image,
+    cli_admin_id,
+    verification_image_path,
+)
+
 logger = logging.getLogger(__name__)
 
 PUBLISH_URL = (
@@ -44,6 +50,8 @@ PUBLISH_BUTTON_SELECTORS = (
 )
 IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
 PUBLISH_RESULT_TIMEOUT_SECONDS = 60
+SECURITY_VERIFICATION_TIMEOUT_SECONDS = 90
+SECURITY_VERIFICATION_SETTLE_SECONDS = 5
 PUBLISH_DIAGNOSTIC_LIMIT = 12
 SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
     r"(?i)(a1|web_session|cookie|authorization|token)(\s*[\"']?\s*[:=]\s*[\"']?)"
@@ -206,9 +214,72 @@ def _diagnostic_text(value: Any) -> str:
     return SENSITIVE_DIAGNOSTIC_PATTERN.sub(r"\1\2***", str(value))[:500]
 
 
+def _save_verification_screenshot(page: Any, admin_id: int) -> bool:
+    path = verification_image_path(admin_id)
+    temporary_path = path.with_suffix(".tmp.png")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.chmod(0o750)
+    challenge_markers = (
+        "scan to verify",
+        "scan with logged-in",
+        "qr code expires",
+        "账号安全",
+        "扫码验证",
+    )
+    for root in _roots(page):
+        for selector in (
+            '[role="dialog"]',
+            '[class*="captcha"]',
+            '[class*="verify"]',
+            '[class*="modal"]',
+        ):
+            try:
+                elements = root.query_selector_all(selector)
+            except Exception:
+                continue
+            for element in elements:
+                try:
+                    text = (element.inner_text() or "").lower()
+                    if _is_visible(element) and any(
+                        marker in text for marker in challenge_markers
+                    ):
+                        element.screenshot(path=str(temporary_path))
+                        temporary_path.chmod(0o640)
+                        temporary_path.replace(path)
+                        return True
+                except Exception:
+                    continue
+    try:
+        page.screenshot(path=str(temporary_path), full_page=False)
+        temporary_path.chmod(0o640)
+        temporary_path.replace(path)
+        return True
+    except Exception as exc:
+        logger.warning("Unable to capture Xiaohongshu verification QR code: %s", exc)
+        temporary_path.unlink(missing_ok=True)
+        return False
+
+
+def _security_verification_visible(page: Any) -> bool:
+    return (
+        _find_element(
+            page,
+            (
+                "text=Scan to verify",
+                "text=Scan with logged-in",
+                "text=QR code expires",
+                "text=扫码验证",
+            ),
+            visible=True,
+        )
+        is not None
+    )
+
+
 def _arm_publish_diagnostics(page: Any, element: Any) -> dict[str, Any]:
     network: list[dict[str, str | int]] = []
     console: list[dict[str, str]] = []
+    diagnostics_state: dict[str, bool] = {"securityRequired": False}
 
     def record_response(response: Any) -> None:
         try:
@@ -227,6 +298,10 @@ def _arm_publish_diagnostics(page: Any, element: Any) -> dict[str, Any]:
                         "url": _diagnostic_url(str(response.url)),
                     }
                 )
+            if int(response.status) == 461 and "/web_api/sns/v2/note" in str(
+                response.url
+            ):
+                diagnostics_state["securityRequired"] = True
         except Exception:
             return
 
@@ -362,6 +437,7 @@ def _arm_publish_diagnostics(page: Any, element: Any) -> dict[str, Any]:
         "requestFailedHandler": record_request_failure,
         "consoleHandler": record_console,
         "pageErrorHandler": record_page_error,
+        "state": diagnostics_state,
     }
 
 
@@ -401,6 +477,9 @@ def _publish_diagnostics_snapshot(
         "browser": browser_state,
         "network": diagnostics.get("network", []),
         "console": diagnostics.get("console", []),
+        "securityRequired": diagnostics.get("state", {}).get(
+            "securityRequired", False
+        ),
     }
 
 
@@ -494,6 +573,9 @@ def publish_note_compat(
     content: str = "",
     return_detail: bool = False,
 ) -> bool | dict[str, str | bool]:
+    admin_id = cli_admin_id()
+    if admin_id is not None:
+        clear_verification_image(admin_id)
     for path in image_paths:
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Image not found: {path}")
@@ -559,6 +641,9 @@ def publish_note_compat(
     deadline = time.monotonic() + PUBLISH_RESULT_TIMEOUT_SECONDS
     note_id = ""
     last_feedback = ""
+    verification_captured = False
+    verification_missing_since: float | None = None
+    verification_retries = 0
     while time.monotonic() < deadline:
         current_url = page.url or ""
         page_text = page.text_content("body") or ""
@@ -568,8 +653,49 @@ def publish_note_compat(
         )
         if client._is_publish_success(page_text, current_url, note_id):
             _publish_diagnostics_snapshot(page, publish_button, diagnostics)
+            if admin_id is not None:
+                clear_verification_image(admin_id)
             result = {"success": True, "note_id": note_id, "url": current_url}
             return result if return_detail else True
+        security_required = bool(
+            diagnostics.get("state", {}).get("securityRequired")
+        ) or any(
+            marker in page_text.lower()
+            for marker in ("scan to verify", "scan with logged-in", "qr code expires")
+        )
+        verification_visible = security_required and _security_verification_visible(page)
+        if verification_visible and not verification_captured and admin_id is not None:
+            verification_captured = _save_verification_screenshot(page, admin_id)
+            if verification_captured:
+                deadline = max(
+                    deadline,
+                    time.monotonic() + SECURITY_VERIFICATION_TIMEOUT_SECONDS,
+                )
+                logger.warning(
+                    "Xiaohongshu account security verification required; "
+                    "QR screenshot is ready",
+                    extra={"admin_id": admin_id},
+                )
+        if verification_captured and not verification_visible:
+            verification_missing_since = verification_missing_since or time.monotonic()
+            if (
+                time.monotonic() - verification_missing_since
+                >= SECURITY_VERIFICATION_SETTLE_SECONDS
+                and verification_retries < 2
+            ):
+                clear_verification_image(admin_id)
+                diagnostics["state"]["securityRequired"] = False
+                verification_captured = False
+                verification_missing_since = None
+                verification_retries += 1
+                _click_publish(page, publish_button)
+                deadline = max(deadline, time.monotonic() + PUBLISH_RESULT_TIMEOUT_SECONDS)
+                logger.warning(
+                    "Xiaohongshu security verification cleared; publish retried",
+                    extra={"attempt": verification_retries},
+                )
+        elif verification_visible:
+            verification_missing_since = None
         feedback = _publish_page_feedback(page)
         if feedback:
             last_feedback = feedback
@@ -579,9 +705,14 @@ def publish_note_compat(
         page, publish_button, diagnostics
     )
     logger.warning("Xiaohongshu publish diagnostics: %s", diagnostic_snapshot)
+    if diagnostic_snapshot.get("securityRequired") or verification_captured:
+        raise RuntimeError(
+            "小红书返回 HTTP 461，要求账号安全扫码验证；"
+            "请在发布期间使用已登录的小红书 App 扫描页面二维码后等待发布完成"
+        )
     detail = f"；页面提示：{last_feedback}" if last_feedback else ""
     raise RuntimeError(
-        f"点击发布后 {PUBLISH_RESULT_TIMEOUT_SECONDS} 秒内未检测到成功状态"
+        "等待小红书发布结果超时"
         f"；当前页面：{current_url}{detail}"
     )
 

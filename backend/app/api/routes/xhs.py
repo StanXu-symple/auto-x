@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 from pathlib import Path
 
@@ -19,9 +20,14 @@ from app.services.xhs_jobs import (
     get_xhs_worker_status,
     submit_xhs_job,
 )
+from app.services.xhs_verification import (
+    clear_verification_image,
+    read_verification_image,
+)
 
 router = APIRouter(prefix="/xhs", tags=["Xiaohongshu"])
 UPLOAD_DIR = Path(os.getenv("XHS_UPLOAD_DIR", "/var/lib/xsentinel/xhs-uploads"))
+WORKER_RESULT_GRACE_SECONDS = 5
 
 
 class LoginPayload(BaseModel):
@@ -63,7 +69,9 @@ async def _submit(redis: RedisClient, *, operation: str, admin_id: int, payload:
             operation=operation,
             admin_id=admin_id,
             payload=payload,
-            timeout_seconds=get_settings().xhs_job_timeout_seconds,
+            timeout_seconds=(
+                get_settings().xhs_job_timeout_seconds + WORKER_RESULT_GRACE_SECONDS
+            ),
         )
     except XHSWorkerUnavailableError as exc:
         raise APIError(503, "xhs_worker_unavailable", str(exc)) from None
@@ -121,6 +129,22 @@ async def upload(_: CurrentAdmin, files: list[UploadFile] = File(...)) -> dict:
     return {"files": result}
 
 
+@router.get("/verification")
+async def verification(admin: CurrentAdmin, version: str | None = None) -> dict:
+    result = await asyncio.to_thread(read_verification_image, admin.id)
+    if result is None:
+        return {"required": False}
+    image, image_version = result
+    current_version = str(image_version)
+    if version == current_version:
+        return {"required": True, "version": current_version}
+    return {
+        "required": True,
+        "image": "data:image/png;base64," + base64.b64encode(image).decode("ascii"),
+        "version": current_version,
+    }
+
+
 @router.post("/posts")
 async def post(
     payload: PostPayload, db: DbSession, redis: RedisClient, admin: CurrentAdmin
@@ -131,6 +155,7 @@ async def post(
         path = await asyncio.to_thread(_validated_image_path, image)
         if path is None:
             raise HTTPException(400, detail="图片路径无效")
+    await asyncio.to_thread(clear_verification_image, admin.id)
     return await _submit(
         redis,
         operation="post",
