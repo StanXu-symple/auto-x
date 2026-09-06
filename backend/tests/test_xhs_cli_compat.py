@@ -3,8 +3,6 @@ from app.xhs_cli_compat import (
     _click_publish,
     _find_element,
     _find_image_input,
-    _find_shadow_publish_button,
-    _install_shadow_root_capture,
     _is_image_publish_url,
     _publish_page_feedback,
     _wait_for_publish_button,
@@ -31,7 +29,6 @@ class FakeElement:
         self.evaluated: list[str] = []
         self.evaluate_result: object | None = None
         self.click_options: list[dict[str, object]] = []
-        self.shadow_button: FakeElement | None = None
         self.disposed = False
 
     def inner_text(self) -> str:
@@ -62,9 +59,6 @@ class FakeElement:
             self.clicked = True
         return self.tag
 
-    def evaluate_handle(self, _script: str) -> "FakeHandle":
-        return FakeHandle(self.shadow_button)
-
     def dispose(self) -> None:
         self.disposed = True
 
@@ -77,18 +71,6 @@ class FakeRoot:
 
     def query_selector_all(self, selector: str) -> list[FakeElement]:
         return self.elements.get(selector, [])
-
-
-class FakeHandle:
-    def __init__(self, element: FakeElement | None) -> None:
-        self.element = element
-        self.disposed = False
-
-    def as_element(self) -> FakeElement | None:
-        return self.element
-
-    def dispose(self) -> None:
-        self.disposed = True
 
 
 class FakeKeyboard:
@@ -160,60 +142,56 @@ def test_find_image_input_ignores_video_upload() -> None:
     assert _find_image_input(page) is image
 
 
-def test_click_custom_publish_button_uses_dom_button() -> None:
+def test_click_custom_publish_button_dispatches_native_publish_event() -> None:
     page = FakePage()
     button = FakeElement(tag="xhs-publish-btn")
-    button.evaluate_result = {"clicked": True, "target": "发布"}
+    button.evaluate_result = {
+        "dispatched": True,
+        "submitDisabled": "false",
+        "submitLoading": "false",
+    }
 
     _click_publish(page, button)
 
-    assert page.mouse.clicks == []
-    assert any("el.shadowRoot" in script for script in button.evaluated)
-    assert any("立即发布" in script for script in button.evaluated)
-
-
-def test_install_shadow_root_capture_before_navigation() -> None:
-    page = FakePage()
-
-    _install_shadow_root_capture(page)
-
-    assert len(page.scripts) == 1
-    assert "__xsentinelShadowRoots" in page.scripts[0]
-    assert "mode: 'open'" in page.scripts[0]
-
-
-def test_find_captured_shadow_publish_button() -> None:
-    widget = FakeElement(tag="xhs-publish-btn")
-    publish_button = FakeElement(tag="button", label="发布")
-    widget.shadow_button = publish_button
-
-    assert _find_shadow_publish_button(widget) is publish_button
-
-
-def test_click_custom_publish_button_prefers_captured_shadow_button() -> None:
-    page = FakePage()
-    widget = FakeElement(tag="xhs-publish-btn")
-    publish_button = FakeElement(tag="button", label="发布")
-    widget.shadow_button = publish_button
-
-    _click_publish(page, widget)
-
-    assert publish_button.clicked is True
-    assert publish_button.disposed is True
+    event_script = button.evaluated[-1]
+    assert "new CustomEvent('publish'" in event_script
+    assert "bubbles: true" in event_script
+    assert "composed: true" in event_script
     assert page.mouse.moves == []
 
 
-def test_click_closed_custom_publish_button_uses_humanized_pointer_events() -> None:
+def test_click_custom_publish_button_rejects_disabled_component() -> None:
     page = FakePage()
     button = FakeElement(tag="xhs-publish-btn")
-    button.evaluate_result = {"clicked": False, "target": "XHS-PUBLISH-BTN"}
+    button.evaluate_result = {
+        "dispatched": False,
+        "submitDisabled": "true",
+        "submitLoading": "false",
+    }
 
-    _click_publish(page, button)
+    try:
+        _click_publish(page, button)
+    except RuntimeError as exc:
+        assert "submit-disabled='true'" in str(exc)
+    else:
+        raise AssertionError("disabled publish component should be rejected")
 
-    assert button.scrolled is True
-    assert page.mouse.clicks == []
-    assert page.mouse.moves == [(75.0, 40.0, 24)]
-    assert page.mouse.actions == [("down", "left"), ("up", "left")]
+
+def test_click_custom_publish_button_rejects_loading_component() -> None:
+    page = FakePage()
+    button = FakeElement(tag="xhs-publish-btn")
+    button.evaluate_result = {
+        "dispatched": False,
+        "submitDisabled": "false",
+        "submitLoading": "true",
+    }
+
+    try:
+        _click_publish(page, button)
+    except RuntimeError as exc:
+        assert "submit-loading='true'" in str(exc)
+    else:
+        raise AssertionError("loading publish component should be rejected")
 
 
 def test_wait_for_publish_button_prefers_real_red_button() -> None:

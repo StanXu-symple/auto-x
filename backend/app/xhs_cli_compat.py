@@ -43,33 +43,6 @@ PUBLISH_BUTTON_SELECTORS = (
 )
 IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
 PUBLISH_RESULT_TIMEOUT_SECONDS = 60
-SHADOW_ROOT_CAPTURE_SCRIPT = """
-(() => {
-    const roots = window.__xsentinelShadowRoots || new WeakMap();
-    if (!window.__xsentinelShadowRoots) {
-        Object.defineProperty(window, '__xsentinelShadowRoots', {
-            value: roots,
-            configurable: false,
-            enumerable: false,
-        });
-    }
-    if (Element.prototype.attachShadow.__xsentinelWrapped) return;
-    const originalAttachShadow = Element.prototype.attachShadow;
-    const wrappedAttachShadow = function(init) {
-        const options = {...init, mode: 'open'};
-        const root = originalAttachShadow.call(this, options);
-        roots.set(this, root);
-        Object.defineProperty(this, '__xsentinelShadowRoot', {
-            value: root,
-            configurable: false,
-            enumerable: false,
-        });
-        return root;
-    };
-    Object.defineProperty(wrappedAttachShadow, '__xsentinelWrapped', {value: true});
-    Element.prototype.attachShadow = wrappedAttachShadow;
-})();
-"""
 
 
 def _roots(page: Any) -> Iterable[Any]:
@@ -190,117 +163,32 @@ def _wait_for_publish_button(page: Any, timeout_seconds: float) -> Any | None:
                         continue
                     try:
                         submit_disabled = element.get_attribute("submit-disabled")
+                        submit_loading = element.get_attribute("submit-loading")
                         disabled = element.get_attribute("disabled")
                         aria_disabled = element.get_attribute("aria-disabled")
                         tag_name = element.evaluate("el => el.tagName.toLowerCase()")
                         label = " ".join((element.inner_text() or "").split())[:120]
                     except Exception:
-                        submit_disabled = disabled = aria_disabled = None
+                        submit_disabled = submit_loading = disabled = aria_disabled = None
                         tag_name = label = "unknown"
                     if (
                         submit_disabled != "true"
+                        and submit_loading != "true"
                         and disabled is None
                         and aria_disabled != "true"
                     ):
                         logger.warning(
                             "Selected Xiaohongshu publish control: selector=%s "
-                            "tag=%s text=%r submit_disabled=%r",
+                            "tag=%s text=%r submit_disabled=%r submit_loading=%r",
                             selector,
                             tag_name,
                             label,
                             submit_disabled,
+                            submit_loading,
                         )
                         return element
         time.sleep(0.3)
     return None
-
-
-def _install_shadow_root_capture(page: Any) -> None:
-    try:
-        page.add_init_script(script=SHADOW_ROOT_CAPTURE_SCRIPT)
-    except Exception as exc:
-        raise RuntimeError(f"安装小红书 Shadow DOM 兼容脚本失败：{exc}") from exc
-
-
-def _find_shadow_publish_button(element: Any) -> Any | None:
-    try:
-        handle = element.evaluate_handle(
-            """el => {
-                const capturedRoots = window.__xsentinelShadowRoots;
-                const roots = [
-                    el.shadowRoot,
-                    el.__xsentinelShadowRoot,
-                    capturedRoots?.get(el),
-                ].filter(Boolean);
-                const candidates = [];
-                const visited = new Set();
-                while (roots.length) {
-                    const root = roots.shift();
-                    if (visited.has(root)) continue;
-                    visited.add(root);
-                    for (const node of root.querySelectorAll('*')) {
-                        const openRoot = node.shadowRoot;
-                        const exposedRoot = node.__xsentinelShadowRoot;
-                        const capturedRoot = capturedRoots?.get(node);
-                        if (openRoot) roots.push(openRoot);
-                        if (exposedRoot) roots.push(exposedRoot);
-                        if (capturedRoot) roots.push(capturedRoot);
-                        const role = node.getAttribute?.('role');
-                        if (node.tagName === 'BUTTON' || role === 'button') {
-                            candidates.push(node);
-                        }
-                    }
-                }
-                const normalize = node => (node.innerText || node.textContent || '')
-                    .replace(/\\s+/g, ' ').trim();
-                return candidates.find(node => {
-                    const text = normalize(node);
-                    const disabled = node.disabled
-                        || node.getAttribute?.('disabled') !== null
-                        || node.getAttribute?.('aria-disabled') === 'true';
-                    return !disabled && (text === '发布' || text.includes('立即发布'));
-                }) || null;
-            }"""
-        )
-    except Exception as exc:
-        logger.warning("Unable to access captured Xiaohongshu Shadow DOM: %s", exc)
-        return None
-    button = handle.as_element()
-    if button is None:
-        handle.dispose()
-        try:
-            diagnostics = element.evaluate(
-                """el => {
-                    const capturedRoots = window.__xsentinelShadowRoots;
-                    const root = el.shadowRoot
-                        || el.__xsentinelShadowRoot
-                        || capturedRoots?.get(el);
-                    return {
-                        captureInstalled: Boolean(capturedRoots),
-                        attachShadowWrapped: Boolean(
-                            Element.prototype.attachShadow.__xsentinelWrapped
-                        ),
-                        hasOpenRoot: Boolean(el.shadowRoot),
-                        hasExposedRoot: Boolean(el.__xsentinelShadowRoot),
-                        hasCapturedRoot: Boolean(capturedRoots?.get(el)),
-                        rootMode: root?.mode || '',
-                        controls: root ? Array.from(
-                            root.querySelectorAll('button, [role="button"]')
-                        ).slice(0, 10).map(node => ({
-                            tag: node.tagName,
-                            text: (node.innerText || node.textContent || '')
-                                .replace(/\\s+/g, ' ').trim().slice(0, 80),
-                            disabled: Boolean(node.disabled)
-                                || node.getAttribute('aria-disabled') === 'true',
-                        })) : [],
-                    };
-                }"""
-            )
-        except Exception as exc:
-            diagnostics = {"diagnostics_error": str(exc)}
-        logger.warning("Xiaohongshu Shadow DOM publish button not found: %s", diagnostics)
-        return None
-    return button
 
 
 def _click_publish(page: Any, element: Any) -> None:
@@ -309,98 +197,43 @@ def _click_publish(page: Any, element: Any) -> None:
     except Exception:
         tag_name = ""
     if tag_name == "xhs-publish-btn":
-        errors: list[str] = []
-        shadow_button = _find_shadow_publish_button(element)
-        if shadow_button is not None:
-            try:
-                _click_element(shadow_button, "点击 Shadow DOM 内部发布按钮")
-                logger.warning("Clicked the real button inside Xiaohongshu closed Shadow DOM")
-                return
-            except Exception as exc:
-                errors.append(f"captured Shadow DOM button: {exc}")
-            finally:
-                shadow_button.dispose()
         try:
-            clicked = element.evaluate(
+            result = element.evaluate(
                 """el => {
-                    const roots = [el, el.shadowRoot].filter(Boolean);
-                    const candidates = [];
-                    while (roots.length) {
-                        const root = roots.shift();
-                        for (const node of root.querySelectorAll('*')) {
-                            if (node.shadowRoot) roots.push(node.shadowRoot);
-                            const role = node.getAttribute?.('role');
-                            if (node.tagName === 'BUTTON' || role === 'button') {
-                                candidates.push(node);
-                            }
-                        }
+                    const submitDisabled = el.getAttribute('submit-disabled');
+                    const submitLoading = el.getAttribute('submit-loading');
+                    if (submitDisabled === 'true' || submitLoading === 'true') {
+                        return {
+                            dispatched: false,
+                            submitDisabled,
+                            submitLoading,
+                        };
                     }
-                    const normalize = node => (node.innerText || node.textContent || '')
-                        .replace(/\\s+/g, ' ').trim();
-                    const button = candidates.find(node => {
-                        const text = normalize(node);
-                        const disabled = node.disabled
-                            || node.getAttribute?.('disabled') !== null
-                            || node.getAttribute?.('aria-disabled') === 'true';
-                        return !disabled && (text === '发布' || text.includes('立即发布'));
-                    });
-                    if (!button) {
-                        return {clicked: false, target: normalize(el) || el.tagName};
-                    }
-                    button.scrollIntoView({block: 'center', inline: 'center'});
-                    button.click();
-                    return {clicked: true, target: normalize(button) || button.tagName};
+                    el.dispatchEvent(new CustomEvent('publish', {
+                        bubbles: true,
+                        composed: true,
+                    }));
+                    return {
+                        dispatched: true,
+                        submitDisabled,
+                        submitLoading,
+                    };
                 }"""
             )
-            if clicked and clicked.get("clicked"):
-                logger.warning(
-                    "Clicked Xiaohongshu publish control via open Shadow DOM: target=%r",
-                    clicked.get("target", ""),
+            if not isinstance(result, dict) or not result.get("dispatched"):
+                state = result if isinstance(result, dict) else {"result": result}
+                raise RuntimeError(
+                    "小红书发布组件当前不可用："
+                    f"submit-disabled={state.get('submitDisabled')!r}, "
+                    f"submit-loading={state.get('submitLoading')!r}"
                 )
-                return
-        except Exception as exc:
-            errors.append(f"Shadow DOM: {exc}")
-
-        try:
-            element.scroll_into_view_if_needed(timeout=5000)
-        except Exception as exc:
-            errors.append(f"scroll: {exc}")
-            try:
-                element.evaluate(
-                    "el => el.scrollIntoView({block: 'center', inline: 'center'})"
-                )
-            except Exception as dom_exc:
-                errors.append(f"DOM scroll: {dom_exc}")
-
-        time.sleep(0.2)
-        try:
-            box = element.bounding_box()
-            if not box or box["width"] <= 0 or box["height"] <= 0:
-                raise RuntimeError(f"无有效点击区域：{box}")
-            x = box["x"] + box["width"] * 0.65
-            y = box["y"] + box["height"] / 2
-            viewport = page.evaluate(
-                "() => ({width: window.innerWidth, height: window.innerHeight})"
-            )
-            if not (0 <= x <= viewport["width"] and 0 <= y <= viewport["height"]):
-                raise RuntimeError(f"落点 ({x}, {y}) 超出视口 {viewport}")
-            page.mouse.move(x, y, steps=24)
-            time.sleep(0.25)
-            page.mouse.down(button="left")
-            time.sleep(0.08)
-            page.mouse.up(button="left")
             logger.warning(
-                "Clicked Xiaohongshu publish widget with humanized pointer events: "
-                "box=%s point=(%s, %s) viewport=%s",
-                box,
-                x,
-                y,
-                viewport,
+                "Dispatched Xiaohongshu publish component native event protocol: "
+                "event=publish bubbles=true composed=true"
             )
             return
         except Exception as exc:
-            errors.append(f"humanized pointer click: {exc}")
-            raise RuntimeError(f"点击小红书发布按钮失败：{' | '.join(errors)}") from exc
+            raise RuntimeError(f"触发小红书发布事件失败：{exc}") from exc
     _click_element(element, "点击小红书发布按钮")
 
 
@@ -445,7 +278,6 @@ def publish_note_compat(
             raise FileNotFoundError(f"Image not found: {path}")
 
     page = client._page
-    _install_shadow_root_capture(page)
     client._goto(
         PUBLISH_URL,
         timeout=30000,
