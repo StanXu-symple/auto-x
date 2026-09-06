@@ -3,8 +3,8 @@ from app.xhs_cli_compat import (
     _click_publish,
     _find_element,
     _find_image_input,
+    _is_image_publish_url,
     _publish_page_feedback,
-    _select_image_text_tab,
     _wait_for_publish_button,
 )
 
@@ -109,16 +109,13 @@ class FakePage(FakeRoot):
         return self.evaluate_result or {"width": 1280, "height": 720}
 
 
-def test_select_image_text_tab_by_visible_label() -> None:
-    video = FakeElement(label="上传视频")
-    image = FakeElement(label="上传图文")
-    page = FakePage({"div.creator-tab": [video, image]})
-
-    _select_image_text_tab(page)
-
-    assert image.clicked is True
-    assert video.clicked is False
-    assert page.keyboard.keys == ["Escape"]
+def test_image_publish_url_requires_image_target() -> None:
+    assert _is_image_publish_url(
+        "https://creator.xiaohongshu.com/publish/publish?from=tab_switch&target=image"
+    )
+    assert not _is_image_publish_url(
+        "https://creator.xiaohongshu.com/publish/publish?source=official&from=tab_switch"
+    )
 
 
 def test_find_element_skips_hidden_candidate() -> None:

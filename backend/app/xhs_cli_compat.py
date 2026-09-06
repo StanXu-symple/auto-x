@@ -5,10 +5,13 @@ import os
 import time
 from collections.abc import Iterable
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 logger = logging.getLogger(__name__)
 
-PUBLISH_URL = "https://creator.xiaohongshu.com/publish/publish?source=official"
+PUBLISH_URL = (
+    "https://creator.xiaohongshu.com/publish/publish?from=tab_switch&target=image"
+)
 IMAGE_INPUT_SELECTORS = (
     "input.upload-input",
     'input[type="file"][accept*="image"]',
@@ -139,30 +142,11 @@ def _click_element(element: Any, description: str) -> None:
     raise RuntimeError(f"{description}失败：{' | '.join(errors)}")
 
 
-def _select_image_text_tab(page: Any) -> None:
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline:
-        for root in _roots(page):
-            try:
-                tabs = root.query_selector_all("div.creator-tab")
-            except Exception:
-                continue
-            for tab in tabs:
-                try:
-                    label = (tab.inner_text() or "").strip()
-                except Exception:
-                    continue
-                if label not in {"上传图文", "图文发布"} or not _is_visible(tab):
-                    continue
-                try:
-                    page.keyboard.press("Escape")
-                except Exception:
-                    pass
-                _click_element(tab, "点击上传图文页签")
-                logger.info("Selected Xiaohongshu image-text publish tab")
-                return
-        time.sleep(0.3)
-    raise RuntimeError("找不到小红书创作中心的“上传图文”页签，页面结构可能已更新")
+def _is_image_publish_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.path.rstrip("/") == "/publish/publish" and parse_qs(parsed.query).get(
+        "target"
+    ) == ["image"]
 
 
 def _wait_for_publish_button(page: Any, timeout_seconds: float) -> Any | None:
@@ -345,8 +329,12 @@ def publish_note_compat(
     )
     if "/login" in (page.url or "").lower():
         raise RuntimeError("小红书创作中心登录态已失效，请更新登录态")
+    if not _is_image_publish_url(page.url or ""):
+        raise RuntimeError(
+            "未进入小红书图文发布模式：URL 缺少 target=image；"
+            f"当前页面：{page.url or ''}"
+        )
 
-    _select_image_text_tab(page)
     image_input = _wait_for_image_input(page, timeout_seconds=15)
     if image_input is None:
         raise RuntimeError("找不到图文图片上传控件，页面结构可能已更新")
