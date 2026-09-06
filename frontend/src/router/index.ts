@@ -61,7 +61,7 @@ const router = createRouter({
           path: 'ai-writing',
           name: 'ai-writing',
           component: () => import('@/views/AiWritingView.vue'),
-          meta: { title: 'AI 创作', description: '把监听内容转化为可审核、可编辑的创作草稿' },
+          meta: { title: 'AI 创作', description: '把监听内容转化为可编辑、可发布的创作草稿' },
         },
         {
           path: 'articles',

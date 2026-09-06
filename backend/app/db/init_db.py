@@ -109,7 +109,6 @@ async def seed_runtime_defaults(settings: Settings, *, seed_admin: bool = True) 
             prompt_template=None,
             language="zh-CN",
             tone="专业自然",
-            require_review=True,
             reasoning_effort="medium",
             default_skill_ids=[1],
             max_attempts=3,

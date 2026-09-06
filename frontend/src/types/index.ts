@@ -521,7 +521,6 @@ export interface AiSettings {
   prompt_template: string | null
   language: string
   tone: string
-  require_review: boolean
   reasoning_effort: AiReasoningEffort
   default_skill_ids: EntityId[]
   max_attempts: number
@@ -536,7 +535,6 @@ export interface UpdateAiSettingsPayload {
   prompt_template: string
   language: string
   tone: string
-  require_review: boolean
   reasoning_effort: AiReasoningEffort
   default_skill_ids: EntityId[]
   max_attempts: number
@@ -612,7 +610,6 @@ export type AiJobStatus =
   | 'failed'
   | 'cancelled'
 
-export type AiDraftStatus = 'draft' | 'approved' | 'rejected'
 export type ArticleSource = 'ai' | 'user'
 export type ArticlePublishStatus = 'unpublished' | 'queued' | 'published' | 'failed'
 export type ArticlePublishChannel = 'qq' | 'xhs'
@@ -626,7 +623,6 @@ export interface AiDraft {
   title: string
   content: string
   excerpt?: string | null
-  status: AiDraftStatus | string
   metadata?: Record<string, unknown> | null
   revision: number
   created_at: string
@@ -689,7 +685,6 @@ export interface UpdateAiDraftPayload {
   title?: string
   content?: string
   excerpt?: string
-  status?: AiDraftStatus | string
   metadata?: Record<string, unknown> | null
   revision: number
 }
@@ -703,7 +698,6 @@ export interface Article {
   content: string
   excerpt?: string | null
   images: string[]
-  status: AiDraftStatus
   publish_status: ArticlePublishStatus
   publish_channel?: ArticlePublishChannel | null
   publish_error?: string | null
@@ -716,7 +710,6 @@ export interface Article {
 export interface ArticleQuery extends PaginationQuery {
   keyword?: string
   article_source?: ArticleSource
-  status?: AiDraftStatus
   publish_status?: ArticlePublishStatus
 }
 
@@ -725,7 +718,6 @@ export interface ArticlePayload {
   content: string
   excerpt?: string | null
   images: string[]
-  status: AiDraftStatus
 }
 
 export interface ArticlePublishPayload {

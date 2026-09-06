@@ -23,7 +23,6 @@ from app.schemas.article import (
     ArticlePublishHistoryOut,
     ArticlePublishStatus,
     ArticleSource,
-    ArticleStatus,
 )
 from app.schemas.common import MessageResponse, Page
 from app.services.article_media import (
@@ -56,7 +55,6 @@ def _article_out(article: AIDraft) -> ArticleOut:
         content=article.content,
         excerpt=article.excerpt,
         images=article.images or [],
-        status=article.status,
         publish_status=article.publish_status or "unpublished",
         publish_channel=article.publish_channel,
         publish_error=article.publish_error,
@@ -89,7 +87,6 @@ async def list_articles(
     page_size: int = Query(default=20, ge=1, le=100),
     keyword: str | None = Query(default=None, max_length=200),
     article_source: ArticleSource | None = None,
-    article_status: ArticleStatus | None = Query(default=None, alias="status"),
     publish_status: ArticlePublishStatus | None = None,
 ) -> Page[ArticleOut]:
     conditions = []
@@ -104,8 +101,6 @@ async def list_articles(
         )
     if article_source:
         conditions.append(AIDraft.article_source == article_source)
-    if article_status:
-        conditions.append(AIDraft.status == article_status)
     if publish_status:
         conditions.append(AIDraft.publish_status == publish_status)
 
@@ -140,7 +135,6 @@ async def create_article(payload: ArticleCreate, db: DbSession, admin: CurrentAd
         content=payload.content,
         excerpt=payload.excerpt,
         images=payload.images,
-        status=payload.status,
         publish_status="unpublished",
         draft_metadata=None,
         revision=1,

@@ -402,8 +402,6 @@ class AIGenerationWorker:
             if job is None or job.claim_token != claim_token or job.status != "running":
                 return False
             await self._assert_lock(lock_key, claim_token, lost_lock)
-            config = (job.request_snapshot or {}).get("config") or {}
-            require_review = bool(config.get("require_review", True))
             draft = await session.scalar(
                 select(AIDraft).where(AIDraft.job_id == job.id).with_for_update()
             )
@@ -412,7 +410,6 @@ class AIGenerationWorker:
                 {
                     "provider": job.provider,
                     "model": job.model_name,
-                    "require_review": require_review,
                     "skill_ids": job.skill_ids or [],
                 }
             )
@@ -424,7 +421,6 @@ class AIGenerationWorker:
                     title=draft_payload["title"],
                     content=draft_payload["content"],
                     excerpt=draft_payload.get("excerpt"),
-                    status="draft" if require_review else "approved",
                     draft_metadata=metadata,
                     revision=1,
                 )

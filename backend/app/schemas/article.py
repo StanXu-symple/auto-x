@@ -6,7 +6,6 @@ from pydantic import Field, field_validator, model_validator
 from app.schemas.common import APIModel
 
 ArticleSource = Literal["ai", "user"]
-ArticleStatus = Literal["draft", "approved", "rejected"]
 ArticlePublishStatus = Literal["unpublished", "queued", "published", "failed"]
 ArticlePublishChannel = Literal["qq", "xhs"]
 
@@ -16,7 +15,6 @@ class ArticleCreate(APIModel):
     content: str = Field(min_length=1, max_length=50000)
     excerpt: str | None = Field(default=None, max_length=1000)
     images: list[str] = Field(default_factory=list, max_length=18)
-    status: ArticleStatus = "draft"
 
     @field_validator("title", "content")
     @classmethod
@@ -37,7 +35,6 @@ class ArticlePatch(APIModel):
     content: str | None = Field(default=None, min_length=1, max_length=50000)
     excerpt: str | None = Field(default=None, max_length=1000)
     images: list[str] | None = Field(default=None, max_length=18)
-    status: ArticleStatus | None = None
     revision: int = Field(ge=1)
 
     @model_validator(mode="after")
@@ -61,13 +58,6 @@ class ArticlePatch(APIModel):
     def normalize_optional_text(cls, value: str | None) -> str | None:
         return value.strip() or None if value is not None else None
 
-    @field_validator("status", mode="before")
-    @classmethod
-    def reject_null_status(cls, value: object) -> object:
-        if value is None:
-            raise ValueError("field cannot be null")
-        return value
-
     @field_validator("images", mode="before")
     @classmethod
     def reject_null_images(cls, value: object) -> object:
@@ -85,7 +75,6 @@ class ArticleOut(APIModel):
     content: str
     excerpt: str | None
     images: list[str]
-    status: ArticleStatus
     publish_status: ArticlePublishStatus
     publish_channel: ArticlePublishChannel | None
     publish_error: str | None

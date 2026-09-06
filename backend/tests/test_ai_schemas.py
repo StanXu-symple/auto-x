@@ -52,8 +52,8 @@ def test_manual_generation_idempotency_key_is_strict_ascii() -> None:
 def test_draft_update_requires_revision_and_content_change() -> None:
     with pytest.raises(ValidationError):
         AIDraftPatch(revision=1)
-    patch = AIDraftPatch(revision=2, status="approved")
-    assert patch.status == "approved"
+    patch = AIDraftPatch(revision=2, title="更新后的标题")
+    assert patch.title == "更新后的标题"
 
 
 def test_settings_api_rejects_non_allowlisted_provider_host() -> None:
@@ -66,7 +66,6 @@ def test_settings_api_rejects_non_allowlisted_provider_host() -> None:
         base_url="https://attacker.invalid/v1",
         language="zh-CN",
         tone="专业自然",
-        require_review=True,
         reasoning_effort="medium",
         default_skill_ids=[],
         max_attempts=3,

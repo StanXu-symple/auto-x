@@ -124,7 +124,6 @@ class AISetting(Base):
     prompt_template: Mapped[str | None] = mapped_column(Text, nullable=True)
     language: Mapped[str] = mapped_column(String(32), default="zh-CN", server_default="zh-CN")
     tone: Mapped[str] = mapped_column(String(64), default="专业自然", server_default="专业自然")
-    require_review: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     reasoning_effort: Mapped[str] = mapped_column(
         String(16), default="medium", server_default="medium"
     )
@@ -208,7 +207,6 @@ class AIDraft(Base):
     content: Mapped[str] = mapped_column(Text)
     excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
     images: Mapped[list[str]] = mapped_column(JSON, default=list)
-    status: Mapped[str] = mapped_column(String(24), default="draft", server_default="draft")
     publish_status: Mapped[str] = mapped_column(
         String(24), default="unpublished", server_default="unpublished", index=True
     )

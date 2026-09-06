@@ -72,7 +72,7 @@
 
 .articles-query {
   display: grid;
-  grid-template-columns: minmax(230px, 1fr) repeat(3, minmax(128px, .3fr)) auto;
+  grid-template-columns: minmax(230px, 1fr) repeat(2, minmax(128px, .3fr)) auto;
   align-items: end;
   padding: 18px 22px;
   border-bottom: 1px solid var(--article-border);

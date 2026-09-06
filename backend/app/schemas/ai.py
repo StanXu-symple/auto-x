@@ -11,7 +11,6 @@ from app.schemas.common import APIModel
 
 AIProvider = Literal["openai_responses", "codex_bridge"]
 AIJobStatus = Literal["queued", "running", "retry_wait", "succeeded", "failed", "cancelled"]
-AIDraftStatus = Literal["draft", "approved", "rejected"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
@@ -35,7 +34,6 @@ class AISettingsPatch(APIModel):
     prompt_template: str | None = Field(default=None, max_length=20000)
     language: str | None = Field(default=None, min_length=1, max_length=32)
     tone: str | None = Field(default=None, min_length=1, max_length=64)
-    require_review: bool | None = None
     max_attempts: int | None = Field(default=None, ge=1, le=10)
     max_output_tokens: int | None = Field(default=None, ge=128, le=100000)
     request_timeout_seconds: int | None = Field(default=None, ge=5, le=600)
@@ -74,7 +72,6 @@ class AISettingsPatch(APIModel):
         "base_url",
         "language",
         "tone",
-        "require_review",
         "max_attempts",
         "max_output_tokens",
         "request_timeout_seconds",
@@ -110,7 +107,6 @@ class AISettingsOut(APIModel):
     prompt_template: str | None
     language: str
     tone: str
-    require_review: bool
     max_attempts: int
     max_output_tokens: int
     request_timeout_seconds: int
@@ -261,7 +257,6 @@ class AIDraftOut(APIModel):
     title: str
     content: str
     excerpt: str | None
-    status: AIDraftStatus
     metadata: dict[str, Any] | None
     revision: int
     created_at: datetime
@@ -326,7 +321,6 @@ class AIDraftPatch(APIModel):
     title: str | None = Field(default=None, min_length=1, max_length=300)
     content: str | None = Field(default=None, min_length=1, max_length=50000)
     excerpt: str | None = Field(default=None, max_length=1000)
-    status: AIDraftStatus | None = None
     metadata: dict[str, Any] | None = None
     revision: int = Field(ge=1)
 

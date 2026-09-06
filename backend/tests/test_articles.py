@@ -42,7 +42,7 @@ class MutationSession:
 async def test_manual_article_is_created_with_user_source() -> None:
     session = MutationSession()
     result = await create_article(
-        ArticleCreate(title="  手动文章  ", content="  正文内容  ", status="draft"),
+        ArticleCreate(title="  手动文章  ", content="  正文内容  "),
         session,  # type: ignore[arg-type]
         None,  # type: ignore[arg-type]
     )
@@ -65,7 +65,6 @@ async def test_article_update_increments_revision() -> None:
         article_source="ai",
         title="旧标题",
         content="旧正文",
-        status="draft",
         revision=2,
         created_at=now,
         updated_at=now,
@@ -74,14 +73,13 @@ async def test_article_update_increments_revision() -> None:
 
     result = await update_article(
         7,
-        ArticlePatch(title="新标题", status="approved", revision=2),
+        ArticlePatch(title="新标题", revision=2),
         session,  # type: ignore[arg-type]
         None,  # type: ignore[arg-type]
     )
 
     assert result.title == "新标题"
     assert result.article_source == "ai"
-    assert result.status == "approved"
     assert result.revision == 3
 
 

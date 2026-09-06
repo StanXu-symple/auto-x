@@ -6,7 +6,6 @@ import {
   AlertCircle,
   Bot,
   BrainCircuit,
-  Check,
   Clipboard,
   Clock3,
   Copy,
@@ -19,7 +18,6 @@ import {
   RotateCcw,
   Save,
   Settings2,
-  ShieldCheck,
   Sparkles,
   Trash2,
   UserRound,
@@ -30,7 +28,6 @@ import { getErrorMessage } from '@/services/http'
 import { useUiStore } from '@/stores/ui'
 import type {
   AiDraft,
-  AiDraftStatus,
   AiFeature,
   AiJob,
   AiSettings,
@@ -76,7 +73,6 @@ const settingsForm = reactive<UpdateAiSettingsPayload>({
   prompt_template: '',
   language: 'zh-CN',
   tone: '专业自然',
-  require_review: true,
   reasoning_effort: 'medium',
   default_skill_ids: [],
   max_attempts: 3,
@@ -97,7 +93,7 @@ const generateForm = reactive({ source_x_tweet_id: '', feature_code: 'article_ge
 const draftDialogOpen = ref(false)
 const editingJob = ref<AiJob | null>(null)
 const draftFormError = ref('')
-const draftForm = reactive({ id: '' as EntityId, title: '', content: '', excerpt: '', status: 'draft' as AiDraftStatus | string, revision: 1 })
+const draftForm = reactive({ id: '' as EntityId, title: '', content: '', excerpt: '', revision: 1 })
 
 const configured = computed(() => settings.value?.provider_ready === true)
 const highlightedJobId = computed(() => String(route.query.job || ''))
@@ -111,7 +107,6 @@ function applySettings(value: AiSettings) {
   settingsForm.prompt_template = value.prompt_template || ''
   settingsForm.language = value.language || 'zh-CN'
   settingsForm.tone = value.tone || '专业自然'
-  settingsForm.require_review = value.require_review
   settingsForm.reasoning_effort = value.reasoning_effort || 'medium'
   settingsForm.default_skill_ids = [...(value.default_skill_ids || [])]
   settingsForm.max_attempts = value.max_attempts
@@ -408,13 +403,12 @@ function openDraft(job: AiJob) {
   draftForm.title = draft.title
   draftForm.content = draft.content
   draftForm.excerpt = draft.excerpt || ''
-  draftForm.status = draft.status
   draftForm.revision = draft.revision
   draftFormError.value = ''
   draftDialogOpen.value = true
 }
 
-async function saveDraft(status?: AiDraftStatus) {
+async function saveDraft() {
   if (!draftForm.content.trim()) {
     draftFormError.value = '草稿正文不能为空'
     return
@@ -426,12 +420,11 @@ async function saveDraft(status?: AiDraftStatus) {
       title: draftForm.title.trim(),
       content: draftForm.content.trim(),
       excerpt: draftForm.excerpt.trim(),
-      status: status || draftForm.status,
       revision: draftForm.revision,
     })
     draftDialogOpen.value = false
     await loadJobs()
-    ui.toast(status === 'approved' ? '草稿已审核通过' : status === 'rejected' ? '草稿已退回' : '草稿已保存', 'success')
+    ui.toast('草稿已保存', 'success')
   } catch (requestError) {
     draftFormError.value = getErrorMessage(requestError, '保存草稿失败；如果草稿已被他人更新，请刷新后重试')
   } finally {
@@ -515,7 +508,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
     <section class="ai-hero">
       <div class="ai-hero__copy">
         <span class="ai-hero__icon"><WandSparkles :size="24" /></span>
-        <div><span class="eyebrow">AI CONTENT WORKFLOW</span><h2>从监听素材到可发布草稿</h2><p>自动提炼推文价值，组合 Skills 生成内容，并把每一篇草稿交给人工审核。</p></div>
+        <div><span class="eyebrow">AI CONTENT WORKFLOW</span><h2>从监听素材到可发布草稿</h2><p>自动提炼推文价值，组合 Skills 生成可编辑的内容草稿。</p></div>
       </div>
       <div class="ai-hero__actions">
         <div class="provider-readiness" :class="{ 'is-ready': configured && settings?.enabled }"><span /><div><small>Provider readiness</small><strong>{{ !settings?.enabled ? 'AI 未启用' : configured ? '已就绪' : '等待配置' }}</strong></div></div>
@@ -527,7 +520,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
     <section class="ai-summary-grid">
       <article><span class="summary-icon is-purple"><Bot :size="18" /></span><div><small>当前 Provider</small><strong>{{ settings?.provider === 'codex_bridge' ? 'Codex Bridge' : 'OpenAI Responses' }}</strong><p>{{ settings?.model || '尚未设置模型' }}</p></div></article>
       <article><span class="summary-icon is-blue"><ListRestart :size="18" /></span><div><small>当前页运行任务</small><strong>{{ runningJobs }}</strong><p>排队、执行与等待重试</p></div></article>
-      <article><span class="summary-icon is-green"><FileText :size="18" /></span><div><small>当前页草稿</small><strong>{{ draftJobs }}</strong><p>{{ settings?.require_review ? '启用人工审核' : '生成后自动通过' }}</p></div></article>
+      <article><span class="summary-icon is-green"><FileText :size="18" /></span><div><small>当前页草稿</small><strong>{{ draftJobs }}</strong><p>可直接编辑与复用</p></div></article>
       <article><span class="summary-icon is-orange"><WandSparkles :size="18" /></span><div><small>可用 Skills</small><strong>{{ skills.filter((skill) => skill.is_active).length }}</strong><p>已选择 {{ settings?.default_skill_ids?.length || 0 }} 个默认 Skill</p></div></article>
     </section>
 
@@ -594,8 +587,8 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
               </section>
 
               <section class="settings-block automation-block">
-                <header><span><ShieldCheck :size="18" /></span><div><h3>自动化与审核</h3><p>控制新推文何时进入生成队列，以及草稿是否需要人工确认</p></div></header>
-                <div class="switch-list"><div><span><strong>启用 AI 创作</strong><small>关闭后不会创建或执行新的生成任务</small></span><el-switch v-model="settingsForm.enabled" /></div><div><span><strong>采集后自动生成</strong><small>新推文入库后自动按默认 Skills 创建任务</small></span><el-switch v-model="settingsForm.auto_generate" :disabled="!settingsForm.enabled" /></div><div><span><strong>必须人工审核</strong><small>生成结果先进入草稿状态，审核通过后再用于发布</small></span><el-switch v-model="settingsForm.require_review" /></div></div>
+                <header><span><Clock3 :size="18" /></span><div><h3>自动化</h3><p>控制新推文何时进入生成队列</p></div></header>
+                <div class="switch-list"><div><span><strong>启用 AI 创作</strong><small>关闭后不会创建或执行新的生成任务</small></span><el-switch v-model="settingsForm.enabled" /></div><div><span><strong>采集后自动生成</strong><small>新推文入库后自动按默认 Skills 创建任务</small></span><el-switch v-model="settingsForm.auto_generate" :disabled="!settingsForm.enabled" /></div></div>
               </section>
             </div>
             <footer class="settings-footer"><span>最后更新：{{ formatDateTime(settings?.updated_at) }}</span><el-button @click="resetSettings"><RotateCcw :size="15" />重置</el-button><el-button type="primary" :loading="loading.settings" @click="saveSettings"><Save v-if="!loading.settings" :size="15" />保存配置</el-button></footer>
@@ -651,11 +644,11 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
       <template #footer><el-button @click="skillDialogOpen = false">取消</el-button><el-button type="primary" :loading="skillSaving" @click="saveSkill"><Save v-if="!skillSaving" :size="15" />保存 Skill</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="draftDialogOpen" class="ai-writing-dialog" title="编辑与审核草稿" width="min(820px, 96vw)" destroy-on-close>
+    <el-dialog v-model="draftDialogOpen" class="ai-writing-dialog" title="编辑草稿" width="min(820px, 96vw)" destroy-on-close>
       <el-alert v-if="draftFormError" :title="draftFormError" type="error" :closable="false" show-icon />
       <el-form label-position="top" class="dialog-form"><el-form-item label="标题"><el-input v-model="draftForm.title" maxlength="300" show-word-limit /></el-form-item><el-form-item label="摘要"><el-input v-model="draftForm.excerpt" type="textarea" :rows="2" maxlength="1000" /></el-form-item><el-form-item label="正文" required><el-input v-model="draftForm.content" type="textarea" :rows="16" /></el-form-item></el-form>
       <div class="draft-dialog-meta"><span>Revision {{ draftForm.revision }}</span><span v-if="editingJob">任务 #{{ editingJob.id }}</span></div>
-      <template #footer><el-button type="danger" plain :disabled="loading.draft" @click="saveDraft('rejected')">退回</el-button><span class="dialog-footer-spacer" /><el-button :disabled="loading.draft" @click="draftDialogOpen = false">取消</el-button><el-button :loading="loading.draft" @click="saveDraft('draft')"><Save v-if="!loading.draft" :size="15" />保存草稿</el-button><el-button type="primary" :loading="loading.draft" @click="saveDraft('approved')"><Check v-if="!loading.draft" :size="15" />审核通过</el-button></template>
+      <template #footer><el-button :disabled="loading.draft" @click="draftDialogOpen = false">取消</el-button><el-button type="primary" :loading="loading.draft" @click="saveDraft"><Save v-if="!loading.draft" :size="15" />保存草稿</el-button></template>
     </el-dialog>
   </div>
 </template>

@@ -11,7 +11,7 @@ import { articlesApi, qqApi, xhsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import { useUiStore } from '@/stores/ui'
 import type {
-  AiDraftStatus, Article, ArticlePayload, ArticlePublishChannel, ArticlePublishHistory,
+  Article, ArticlePayload, ArticlePublishChannel, ArticlePublishHistory,
   ArticlePublishStatus, ArticleSource, QQBotAccount, QQJoinedGroup,
 } from '@/types'
 import { formatDateTime } from '@/utils/format'
@@ -45,24 +45,21 @@ const verificationVersion = ref('')
 let verificationTimer: ReturnType<typeof setInterval> | undefined
 let articleRefreshTimer: ReturnType<typeof setInterval> | undefined
 
-const filters = reactive({ keyword: '', article_source: 'all', status: 'all', publish_status: 'all' })
-const appliedFilters = reactive({ keyword: '', article_source: 'all', status: 'all', publish_status: 'all' })
+const filters = reactive({ keyword: '', article_source: 'all', publish_status: 'all' })
+const appliedFilters = reactive({ keyword: '', article_source: 'all', publish_status: 'all' })
 const pagination = reactive({ page: 1, page_size: 15 })
-const form = reactive<ArticlePayload>({ title: '', content: '', excerpt: '', images: [], status: 'draft' })
+const form = reactive<ArticlePayload>({ title: '', content: '', excerpt: '', images: [] })
 const publishForm = reactive({ channel: 'qq' as ArticlePublishChannel, bot_id: null as number | null, group_openids: [] as string[] })
 
 const currentAiCount = computed(() => articles.value.filter((article) => article.article_source === 'ai').length)
 const currentUserCount = computed(() => articles.value.filter((article) => article.article_source === 'user').length)
-const hasFilters = computed(() => Boolean(filters.keyword.trim() || filters.article_source !== 'all' || filters.status !== 'all' || filters.publish_status !== 'all'))
+const hasFilters = computed(() => Boolean(filters.keyword.trim() || filters.article_source !== 'all' || filters.publish_status !== 'all'))
 const qqPreview = computed(() => publishingArticle.value ? `标题:${publishingArticle.value.title}\n摘要:${publishingArticle.value.excerpt || ''}\n正文:${publishingArticle.value.content}` : '')
 const qqCharCount = computed(() => Array.from(qqPreview.value).length)
 const qqMessageCount = computed(() => Math.max(1, Math.ceil(qqCharCount.value / 2000)))
 
 const sourceMeta: Record<ArticleSource, { label: string; icon: typeof Bot; type: 'primary' | 'success' }> = {
   ai: { label: 'AI 生成', icon: Bot, type: 'primary' }, user: { label: '用户生成', icon: UserRound, type: 'success' },
-}
-const statusMeta: Record<AiDraftStatus, { label: string; type: 'info' | 'success' | 'danger' }> = {
-  draft: { label: '草稿', type: 'info' }, approved: { label: '已通过', type: 'success' }, rejected: { label: '已拒绝', type: 'danger' },
 }
 const publishStatusMeta: Record<ArticlePublishStatus, { label: string; type: 'info' | 'warning' | 'success' | 'danger'; icon: typeof Clock3 }> = {
   unpublished: { label: '未推送', type: 'info', icon: Clock3 }, queued: { label: '推送中', type: 'warning', icon: Clock3 },
@@ -118,7 +115,6 @@ async function loadArticles() {
     const result = await articlesApi.list({
       page: pagination.page, page_size: pagination.page_size, keyword: appliedFilters.keyword || undefined,
       article_source: appliedFilters.article_source === 'all' ? undefined : appliedFilters.article_source as ArticleSource,
-      status: appliedFilters.status === 'all' ? undefined : appliedFilters.status as AiDraftStatus,
       publish_status: appliedFilters.publish_status === 'all' ? undefined : appliedFilters.publish_status as ArticlePublishStatus,
     })
     articles.value = result.items
@@ -128,17 +124,17 @@ async function loadArticles() {
 }
 
 function runQuery() {
-  Object.assign(appliedFilters, { keyword: filters.keyword.trim(), article_source: filters.article_source, status: filters.status, publish_status: filters.publish_status })
+  Object.assign(appliedFilters, { keyword: filters.keyword.trim(), article_source: filters.article_source, publish_status: filters.publish_status })
   pagination.page = 1
   loadArticles()
 }
-function resetQuery() { Object.assign(filters, { keyword: '', article_source: 'all', status: 'all', publish_status: 'all' }); runQuery() }
+function resetQuery() { Object.assign(filters, { keyword: '', article_source: 'all', publish_status: 'all' }); runQuery() }
 function resetEditorImages() { revokePreviews(formPreviews.value); formPreviews.value = []; form.images = [] }
 
 function openCreate() {
   editingArticle.value = null
   resetEditorImages()
-  Object.assign(form, { title: '', content: '', excerpt: '', images: [], status: 'draft' })
+  Object.assign(form, { title: '', content: '', excerpt: '', images: [] })
   dialogError.value = ''
   dialogOpen.value = true
 }
@@ -146,7 +142,7 @@ function openCreate() {
 async function openEdit(article: Article) {
   editingArticle.value = article
   resetEditorImages()
-  Object.assign(form, { title: article.title, content: article.content, excerpt: article.excerpt || '', images: [...article.images], status: article.status })
+  Object.assign(form, { title: article.title, content: article.content, excerpt: article.excerpt || '', images: [...article.images] })
   dialogError.value = ''
   dialogOpen.value = true
   try { formPreviews.value = await resolvePreviews(article.images) }
@@ -202,7 +198,7 @@ async function saveArticle() {
   if (!form.title.trim() || !form.content.trim()) return void (dialogError.value = '请填写文章标题和正文')
   saving.value = true
   try {
-    const payload: ArticlePayload = { title: form.title.trim(), content: form.content.trim(), excerpt: form.excerpt?.trim() || null, images: [...form.images], status: form.status }
+    const payload: ArticlePayload = { title: form.title.trim(), content: form.content.trim(), excerpt: form.excerpt?.trim() || null, images: [...form.images] }
     const wasEditing = Boolean(editingArticle.value)
     if (editingArticle.value) await articlesApi.update(editingArticle.value.id, { ...payload, revision: editingArticle.value.revision })
     else await articlesApi.create(payload)
@@ -327,15 +323,13 @@ onBeforeUnmount(() => {
       <div class="articles-query">
         <label class="articles-query__keyword"><span>关键词</span><el-input v-model="filters.keyword" clearable placeholder="搜索标题、摘要或正文" @keyup.enter="runQuery"><template #prefix><Search :size="15" /></template></el-input></label>
         <label><span>文章来源</span><el-select v-model="filters.article_source"><el-option label="全部来源" value="all" /><el-option label="AI 生成" value="ai" /><el-option label="用户生成" value="user" /></el-select></label>
-        <label><span>文章状态</span><el-select v-model="filters.status"><el-option label="全部状态" value="all" /><el-option label="草稿" value="draft" /><el-option label="已通过" value="approved" /><el-option label="已拒绝" value="rejected" /></el-select></label>
         <label><span>推送状态</span><el-select v-model="filters.publish_status"><el-option label="全部状态" value="all" /><el-option label="未推送" value="unpublished" /><el-option label="推送中" value="queued" /><el-option label="已推送" value="published" /><el-option label="推送失败" value="failed" /></el-select></label>
-        <div class="articles-query__actions"><el-button :disabled="!hasFilters && !appliedFilters.keyword && appliedFilters.article_source === 'all' && appliedFilters.status === 'all' && appliedFilters.publish_status === 'all'" @click="resetQuery">重置</el-button><el-button type="primary" :loading="loading" @click="runQuery"><Search v-if="!loading" :size="15" />查询</el-button></div>
+        <div class="articles-query__actions"><el-button :disabled="!hasFilters && !appliedFilters.keyword && appliedFilters.article_source === 'all' && appliedFilters.publish_status === 'all'" @click="resetQuery">重置</el-button><el-button type="primary" :loading="loading" @click="runQuery"><Search v-if="!loading" :size="15" />查询</el-button></div>
       </div>
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
       <el-table v-loading="loading" :data="articles" row-key="id" class="article-table">
         <el-table-column label="文章" min-width="320"><template #default="{ row }"><div class="article-title-cell"><span><FileText :size="17" /></span><div><strong>{{ row.title }}</strong><p>{{ articlePreview(row) }}</p><small v-if="row.images.length"><ImagePlus :size="12" />{{ row.images.length }} 张图片</small></div></div></template></el-table-column>
         <el-table-column label="文章来源" width="122"><template #default="{ row }"><el-tag :type="sourceMeta[row.article_source as ArticleSource].type" effect="plain"><component :is="sourceMeta[row.article_source as ArticleSource].icon" :size="13" />{{ sourceMeta[row.article_source as ArticleSource].label }}</el-tag></template></el-table-column>
-        <el-table-column label="文章状态" width="105"><template #default="{ row }"><el-tag :type="statusMeta[row.status as AiDraftStatus].type" effect="plain">{{ statusMeta[row.status as AiDraftStatus].label }}</el-tag></template></el-table-column>
         <el-table-column label="推送状态" width="125"><template #default="{ row }"><el-tooltip :disabled="!row.publish_error" :content="row.publish_error"><el-tag :type="publishStatusMeta[row.publish_status as ArticlePublishStatus].type" effect="plain"><component :is="publishStatusMeta[row.publish_status as ArticlePublishStatus].icon" :size="13" />{{ publishStatusMeta[row.publish_status as ArticlePublishStatus].label }}</el-tag></el-tooltip><small v-if="row.publish_channel" class="publish-channel">{{ row.publish_channel === 'qq' ? 'QQ' : '小红书' }}</small></template></el-table-column>
         <el-table-column label="更新时间" width="165"><template #default="{ row }"><span class="article-date"><strong>{{ formatDateTime(row.updated_at) }}</strong><small>v{{ row.revision }}</small></span></template></el-table-column>
         <el-table-column label="操作" width="320" fixed="right"><template #default="{ row }"><div class="article-actions"><el-button v-if="row.publish_status !== 'queued'" size="small" type="primary" plain @click="openPublish(row)"><RotateCcw v-if="row.publish_status === 'failed' || row.publish_status === 'published'" :size="14" /><Send v-else :size="14" />{{ publishActionLabel(row) }}</el-button><el-button size="small" @click="showPublishHistory(row)"><History :size="14" />历史</el-button><el-button size="small" :disabled="row.publish_status === 'queued'" @click="openEdit(row)"><Edit3 :size="14" />编辑</el-button><el-tooltip :content="row.publish_status === 'queued' ? '推送完成后才能删除' : '删除文章'"><el-button circle size="small" type="danger" plain :disabled="row.publish_status === 'queued'" aria-label="删除文章" @click="removeArticle(row)"><Trash2 :size="14" /></el-button></el-tooltip></div></template></el-table-column>
@@ -352,7 +346,6 @@ onBeforeUnmount(() => {
         <el-form-item label="文章摘要"><el-input v-model="form.excerpt" type="textarea" :rows="2" maxlength="1000" show-word-limit placeholder="可选，用于列表和推送摘要" /></el-form-item>
         <el-form-item label="文章正文" required><el-input v-model="form.content" type="textarea" :rows="10" maxlength="50000" show-word-limit placeholder="输入文章正文" /></el-form-item>
         <el-form-item label="文章图片"><label class="article-upload-zone" tabindex="0"><input type="file" accept="image/jpeg,image/png,image/webp" multiple @change="chooseFiles" /><UploadCloud :size="21" /><strong>{{ uploading ? '正在上传...' : '点击或粘贴图片' }}</strong><span>JPG、PNG、WebP，单张不超过 10 MB，最多 18 张</span></label><div v-if="formPreviews.length" class="article-photo-grid"><div v-for="(photo, index) in formPreviews" :key="photo.path" class="article-photo"><button type="button" aria-label="移除图片" @click="removeImage(index)">×</button><el-image :src="photo.url" :preview-src-list="formPreviews.map((item) => item.url)" :initial-index="index" preview-teleported hide-on-click-modal fit="cover" /></div></div></el-form-item>
-        <el-form-item label="文章状态"><el-select v-model="form.status"><el-option label="草稿" value="draft" /><el-option label="已通过" value="approved" /><el-option label="已拒绝" value="rejected" /></el-select></el-form-item>
       </el-form></div>
       <template #footer><el-button @click="dialogOpen = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="uploading" @click="saveArticle">{{ editingArticle ? '保存修改' : '创建文章' }}</el-button></template>
     </el-dialog>
