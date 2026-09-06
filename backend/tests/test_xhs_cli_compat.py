@@ -3,6 +3,7 @@ from app.xhs_cli_compat import (
     _click_publish,
     _find_element,
     _find_image_input,
+    _publish_page_feedback,
     _select_image_text_tab,
 )
 
@@ -25,6 +26,7 @@ class FakeElement:
         self.clicked = False
         self.scrolled = False
         self.evaluated: list[str] = []
+        self.evaluate_result: object | None = None
 
     def inner_text(self) -> str:
         return self.label
@@ -43,8 +45,12 @@ class FakeElement:
     def get_attribute(self, name: str) -> str | None:
         return self.attributes.get(name)
 
-    def evaluate(self, script: str) -> str:
+    def evaluate(self, script: str) -> object:
         self.evaluated.append(script)
+        if "tagName.toLowerCase" in script:
+            return self.tag
+        if self.evaluate_result is not None:
+            return self.evaluate_result
         if "el.click()" in script:
             self.clicked = True
         return self.tag
@@ -84,6 +90,10 @@ class FakePage(FakeRoot):
         self.frames = [self]
         self.keyboard = FakeKeyboard()
         self.mouse = FakeMouse()
+        self.evaluate_result: object | None = None
+
+    def evaluate(self, _script: str) -> object:
+        return self.evaluate_result
 
 
 def test_select_image_text_tab_by_visible_label() -> None:
@@ -114,13 +124,16 @@ def test_find_image_input_ignores_video_upload() -> None:
     assert _find_image_input(page) is image
 
 
-def test_click_custom_publish_button_uses_clickable_area() -> None:
+def test_click_custom_publish_button_uses_dom_button() -> None:
     page = FakePage()
     button = FakeElement(tag="xhs-publish-btn")
+    button.evaluate_result = {"clicked": True, "target": "发布"}
 
     _click_publish(page, button)
 
-    assert page.mouse.clicks == [(75.0, 40.0)]
+    assert page.mouse.clicks == []
+    assert any("el.shadowRoot" in script for script in button.evaluated)
+    assert any("立即发布" in script for script in button.evaluated)
 
 
 def test_click_element_falls_back_to_dom_when_outside_viewport() -> None:
@@ -131,3 +144,10 @@ def test_click_element_falls_back_to_dom_when_outside_viewport() -> None:
     assert element.scrolled is True
     assert element.clicked is True
     assert any("scrollIntoView" in script for script in element.evaluated)
+
+
+def test_publish_page_feedback_returns_visible_messages() -> None:
+    page = FakePage()
+    page.evaluate_result = ["标题不能为空", "图片上传失败"]
+
+    assert _publish_page_feedback(page) == "标题不能为空；图片上传失败"

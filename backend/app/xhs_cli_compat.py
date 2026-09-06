@@ -37,6 +37,7 @@ PUBLISH_BUTTON_SELECTORS = (
     '[class*="publish-btn"]',
 )
 IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
+PUBLISH_RESULT_TIMEOUT_SECONDS = 60
 
 
 def _roots(page: Any) -> Iterable[Any]:
@@ -185,26 +186,74 @@ def _click_publish(page: Any, element: Any) -> None:
         tag_name = ""
     if tag_name == "xhs-publish-btn":
         try:
-            element.scroll_into_view_if_needed(timeout=5000)
-            box = element.bounding_box()
-            if box:
-                page.mouse.click(
-                    box["x"] + box["width"] * 0.65,
-                    box["y"] + box["height"] / 2,
-                )
-                return
-        except Exception as exc:
-            logger.warning("Publish widget coordinate click failed", extra={"error": str(exc)})
-        try:
-            element.evaluate(
-                "el => { const button = el.shadowRoot?.querySelector('button') "
-                "|| el.querySelector('button'); (button || el).click(); }"
+            clicked = element.evaluate(
+                """el => {
+                    const roots = [el, el.shadowRoot].filter(Boolean);
+                    const candidates = [];
+                    while (roots.length) {
+                        const root = roots.shift();
+                        for (const node of root.querySelectorAll('*')) {
+                            if (node.shadowRoot) roots.push(node.shadowRoot);
+                            const role = node.getAttribute?.('role');
+                            if (node.tagName === 'BUTTON' || role === 'button') {
+                                candidates.push(node);
+                            }
+                        }
+                    }
+                    const normalize = node => (node.innerText || node.textContent || '')
+                        .replace(/\\s+/g, ' ').trim();
+                    const button = candidates.find(node => {
+                        const text = normalize(node);
+                        const disabled = node.disabled
+                            || node.getAttribute?.('disabled') !== null
+                            || node.getAttribute?.('aria-disabled') === 'true';
+                        return !disabled && (text === '发布' || text.includes('立即发布'));
+                    });
+                    const target = button || el;
+                    target.scrollIntoView({block: 'center', inline: 'center'});
+                    target.click();
+                    return {clicked: true, target: normalize(target) || target.tagName};
+                }"""
             )
-            logger.warning("Used DOM click fallback for Xiaohongshu publish widget")
+            if not clicked or not clicked.get("clicked"):
+                raise RuntimeError("未找到可点击的发布控件")
+            logger.info(
+                "Clicked Xiaohongshu publish control via DOM",
+                extra={"target": clicked.get("target", "")},
+            )
             return
         except Exception as exc:
             raise RuntimeError(f"点击小红书发布按钮失败：{exc}") from exc
     _click_element(element, "点击小红书发布按钮")
+
+
+def _publish_page_feedback(page: Any) -> str:
+    try:
+        feedback = page.evaluate(
+            """() => {
+                const selectors = [
+                    '[role="alert"]', '[class*="toast"]', '[class*="message"]',
+                    '[class*="error"]', '[class*="fail"]', '[class*="tip"]'
+                ];
+                const texts = [];
+                for (const node of document.querySelectorAll(selectors.join(','))) {
+                    const style = window.getComputedStyle(node);
+                    const rect = node.getBoundingClientRect();
+                    if (style.display === 'none' || style.visibility === 'hidden'
+                            || rect.width === 0 || rect.height === 0) continue;
+                    const text = (node.innerText || node.textContent || '')
+                        .replace(/\\s+/g, ' ').trim();
+                    if (text && text.length <= 300 && !texts.includes(text)) texts.push(text);
+                }
+                return texts.slice(0, 8);
+            }"""
+        )
+    except Exception as exc:
+        logger.warning("Unable to collect Xiaohongshu page feedback", extra={"error": str(exc)})
+        return ""
+    if not isinstance(feedback, list):
+        return ""
+    return "；".join(str(item) for item in feedback if item)
 
 
 def publish_note_compat(
@@ -261,8 +310,9 @@ def publish_note_compat(
         raise RuntimeError("发布按钮不可点击，请检查标题、正文和图片是否通过页面校验")
     _click_publish(page, publish_button)
 
-    deadline = time.monotonic() + 20
+    deadline = time.monotonic() + PUBLISH_RESULT_TIMEOUT_SECONDS
     note_id = ""
+    last_feedback = ""
     while time.monotonic() < deadline:
         current_url = page.url or ""
         page_text = page.text_content("body") or ""
@@ -273,8 +323,16 @@ def publish_note_compat(
         if client._is_publish_success(page_text, current_url, note_id):
             result = {"success": True, "note_id": note_id, "url": current_url}
             return result if return_detail else True
+        feedback = _publish_page_feedback(page)
+        if feedback:
+            last_feedback = feedback
         time.sleep(0.5)
-    raise RuntimeError("点击发布后未检测到成功状态，请在创作中心检查页面校验提示")
+    current_url = page.url or ""
+    detail = f"；页面提示：{last_feedback}" if last_feedback else ""
+    raise RuntimeError(
+        f"点击发布后 {PUBLISH_RESULT_TIMEOUT_SECONDS} 秒内未检测到成功状态"
+        f"；当前页面：{current_url}{detail}"
+    )
 
 
 def main() -> None:
