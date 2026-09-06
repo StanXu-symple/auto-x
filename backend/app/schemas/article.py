@@ -117,3 +117,15 @@ class ArticlePublishAccepted(APIModel):
     channel: ArticlePublishChannel
     publish_status: ArticlePublishStatus
     delivery_ids: list[int] = Field(default_factory=list)
+
+
+class ArticlePublishHistoryOut(APIModel):
+    attempt_id: str
+    channel: ArticlePublishChannel
+    status: ArticlePublishStatus
+    target_summary: str
+    delivery_count: int
+    error: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime

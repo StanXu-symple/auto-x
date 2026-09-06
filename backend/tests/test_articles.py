@@ -1,11 +1,13 @@
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError
 
-from app.api.routes.articles import create_article, delete_article, update_article
+from app.api.errors import APIError
+from app.api.routes.articles import create_article, delete_article, publish_article, update_article
 from app.models.ai import AIDraft
-from app.schemas.article import ArticleCreate, ArticlePatch
+from app.schemas.article import ArticleCreate, ArticlePatch, ArticlePublishCreate
 
 
 class MutationSession:
@@ -105,10 +107,56 @@ def test_article_payload_rejects_blank_content_and_empty_patch() -> None:
 
 
 def test_article_payload_deduplicates_publish_groups() -> None:
-    from app.schemas.article import ArticlePublishCreate
-
     payload = ArticlePublishCreate(
         channel="qq", bot_id=1, group_openids=[" group-a ", "group-a", "group-b"]
     )
 
     assert payload.group_openids == ["group-a", "group-b"]
+
+
+async def test_published_article_can_be_published_again(monkeypatch) -> None:
+    article = AIDraft(
+        id=11,
+        article_source="user",
+        title="可重复推送",
+        content="正文",
+        publish_status="published",
+        revision=1,
+    )
+    session = MutationSession(article)
+    expected = object()
+    publish_to_qq = AsyncMock(return_value=expected)
+    monkeypatch.setattr("app.api.routes.articles._publish_to_qq", publish_to_qq)
+
+    result = await publish_article(
+        11,
+        ArticlePublishCreate(channel="qq", bot_id=1, group_openids=["group"]),
+        session,  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+    )
+
+    assert result is expected
+    publish_to_qq.assert_awaited_once()
+
+
+async def test_article_cannot_start_parallel_publish() -> None:
+    article = AIDraft(
+        id=12,
+        article_source="user",
+        title="正在推送",
+        content="正文",
+        publish_status="queued",
+        revision=1,
+    )
+
+    with pytest.raises(APIError) as exc_info:
+        await publish_article(
+            12,
+            ArticlePublishCreate(channel="qq", bot_id=1, group_openids=["group"]),
+            MutationSession(article),  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.status_code == 409

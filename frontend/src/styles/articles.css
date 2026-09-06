@@ -104,6 +104,10 @@
 .article-date strong { color: var(--article-text); font-size: 10px; font-weight: 600; }
 .article-date small { color: var(--article-muted); font-size: 9px; }
 .article-actions { gap: 8px; }
+.article-history-time { display: flex; flex-direction: column; gap: 4px; }
+.article-history-time strong { color: var(--article-text); font-size: 11px; font-weight: 600; }
+.article-history-time small { color: var(--article-muted); font-size: 9px; }
+.article-history-dialog .el-table { border: 1px solid var(--article-border); border-radius: 8px; }
 .publish-channel { display: block; margin-top: 4px; color: var(--article-muted); font-size: 9px; }
 .articles-page .pagination { border-top: 1px solid var(--article-border); }
 

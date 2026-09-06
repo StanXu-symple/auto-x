@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import {
-  Bot, CheckCircle2, Clock3, Edit3, FilePlus2, FileText, ImagePlus, Plus,
+  Bot, CheckCircle2, Clock3, Edit3, FilePlus2, FileText, History, ImagePlus, Plus,
   RefreshCw, RotateCcw, Search, Send, Trash2, UploadCloud, UserRound, XCircle,
 } from 'lucide-vue-next'
 import EmptyState from '@/components/EmptyState.vue'
@@ -11,7 +11,7 @@ import { articlesApi, qqApi, xhsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import { useUiStore } from '@/stores/ui'
 import type {
-  AiDraftStatus, Article, ArticlePayload, ArticlePublishChannel,
+  AiDraftStatus, Article, ArticlePayload, ArticlePublishChannel, ArticlePublishHistory,
   ArticlePublishStatus, ArticleSource, QQBotAccount, QQJoinedGroup,
 } from '@/types'
 import { formatDateTime } from '@/utils/format'
@@ -29,6 +29,10 @@ const error = ref('')
 const dialogError = ref('')
 const dialogOpen = ref(false)
 const publishOpen = ref(false)
+const historyOpen = ref(false)
+const historyLoading = ref(false)
+const historyArticle = ref<Article | null>(null)
+const publishHistory = ref<ArticlePublishHistory[]>([])
 const editingArticle = ref<Article | null>(null)
 const publishingArticle = ref<Article | null>(null)
 const formPreviews = ref<ImagePreview[]>([])
@@ -63,6 +67,36 @@ const statusMeta: Record<AiDraftStatus, { label: string; type: 'info' | 'success
 const publishStatusMeta: Record<ArticlePublishStatus, { label: string; type: 'info' | 'warning' | 'success' | 'danger'; icon: typeof Clock3 }> = {
   unpublished: { label: '未推送', type: 'info', icon: Clock3 }, queued: { label: '推送中', type: 'warning', icon: Clock3 },
   published: { label: '已推送', type: 'success', icon: CheckCircle2 }, failed: { label: '推送失败', type: 'danger', icon: XCircle },
+}
+
+function formatGmt8DateTime(value?: string | null) {
+  if (!value) return '暂无'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '暂无'
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    second: '2-digit', hour12: false, timeZone: 'Asia/Shanghai',
+  }).format(date)
+}
+
+function publishActionLabel(article: Article) {
+  if (article.publish_status === 'failed') return '重试'
+  if (article.publish_status === 'published') return '再次推送'
+  return '推送'
+}
+
+async function showPublishHistory(article: Article) {
+  historyArticle.value = article
+  publishHistory.value = []
+  historyOpen.value = true
+  historyLoading.value = true
+  try {
+    publishHistory.value = (await articlesApi.publishHistory(article.id, { page: 1, page_size: 100 })).items
+  } catch (requestError) {
+    ui.toast('推送历史加载失败', 'error', getErrorMessage(requestError))
+  } finally {
+    historyLoading.value = false
+  }
 }
 
 function revokePreviews(previews: ImagePreview[]) { previews.forEach((preview) => URL.revokeObjectURL(preview.url)) }
@@ -304,7 +338,7 @@ onBeforeUnmount(() => {
         <el-table-column label="文章状态" width="105"><template #default="{ row }"><el-tag :type="statusMeta[row.status as AiDraftStatus].type" effect="plain">{{ statusMeta[row.status as AiDraftStatus].label }}</el-tag></template></el-table-column>
         <el-table-column label="推送状态" width="125"><template #default="{ row }"><el-tooltip :disabled="!row.publish_error" :content="row.publish_error"><el-tag :type="publishStatusMeta[row.publish_status as ArticlePublishStatus].type" effect="plain"><component :is="publishStatusMeta[row.publish_status as ArticlePublishStatus].icon" :size="13" />{{ publishStatusMeta[row.publish_status as ArticlePublishStatus].label }}</el-tag></el-tooltip><small v-if="row.publish_channel" class="publish-channel">{{ row.publish_channel === 'qq' ? 'QQ' : '小红书' }}</small></template></el-table-column>
         <el-table-column label="更新时间" width="165"><template #default="{ row }"><span class="article-date"><strong>{{ formatDateTime(row.updated_at) }}</strong><small>v{{ row.revision }}</small></span></template></el-table-column>
-        <el-table-column label="操作" width="230" fixed="right"><template #default="{ row }"><div class="article-actions"><el-button v-if="row.publish_status === 'unpublished' || row.publish_status === 'failed'" size="small" type="primary" plain @click="openPublish(row)"><RotateCcw v-if="row.publish_status === 'failed'" :size="14" /><Send v-else :size="14" />{{ row.publish_status === 'failed' ? '重试' : '推送' }}</el-button><el-button size="small" :disabled="row.publish_status === 'queued'" @click="openEdit(row)"><Edit3 :size="14" />编辑</el-button><el-tooltip :content="row.publish_status === 'queued' ? '推送完成后才能删除' : '删除文章'"><el-button circle size="small" type="danger" plain :disabled="row.publish_status === 'queued'" aria-label="删除文章" @click="removeArticle(row)"><Trash2 :size="14" /></el-button></el-tooltip></div></template></el-table-column>
+        <el-table-column label="操作" width="320" fixed="right"><template #default="{ row }"><div class="article-actions"><el-button v-if="row.publish_status !== 'queued'" size="small" type="primary" plain @click="openPublish(row)"><RotateCcw v-if="row.publish_status === 'failed' || row.publish_status === 'published'" :size="14" /><Send v-else :size="14" />{{ publishActionLabel(row) }}</el-button><el-button size="small" @click="showPublishHistory(row)"><History :size="14" />历史</el-button><el-button size="small" :disabled="row.publish_status === 'queued'" @click="openEdit(row)"><Edit3 :size="14" />编辑</el-button><el-tooltip :content="row.publish_status === 'queued' ? '推送完成后才能删除' : '删除文章'"><el-button circle size="small" type="danger" plain :disabled="row.publish_status === 'queued'" aria-label="删除文章" @click="removeArticle(row)"><Trash2 :size="14" /></el-button></el-tooltip></div></template></el-table-column>
         <template #empty><EmptyState compact title="暂无文章" description="调整查询条件，或创建第一篇文章"><template #icon><FilePlus2 :size="25" /></template><el-button type="primary" @click="openCreate">新增文章</el-button></EmptyState></template>
       </el-table>
       <PaginationBar v-if="total > pagination.page_size" :page="pagination.page" :page-size="pagination.page_size" :total="total" @change="(page) => { pagination.page = page; loadArticles() }" />
@@ -339,6 +373,21 @@ onBeforeUnmount(() => {
         <el-form-item label="文章图片"><div v-if="publishPreviews.length" class="article-photo-grid is-readonly"><div v-for="(photo, index) in publishPreviews" :key="photo.path" class="article-photo"><el-image :src="photo.url" :preview-src-list="publishPreviews.map((item) => item.url)" :initial-index="index" preview-teleported hide-on-click-modal fit="cover" /></div></div><span v-else class="publish-no-images">未添加图片</span><small v-if="publishForm.channel === 'qq' && publishPreviews.length" class="publish-count">图片将按当前顺序逐张调用 QQ 推送接口</small></el-form-item>
       </el-form>
       <template #footer><el-button :disabled="publishing" @click="publishOpen = false">取消</el-button><el-button type="primary" :loading="publishing" @click="publishArticle"><Send :size="15" />确认推送</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="historyOpen" class="article-dialog article-history-dialog" :title="`推送历史${historyArticle ? ` · ${historyArticle.title}` : ''}`" width="min(1020px, 94vw)">
+      <div v-loading="historyLoading">
+        <el-table v-if="publishHistory.length" :data="publishHistory" max-height="460" table-layout="fixed">
+          <el-table-column label="时间（GMT+8）" width="190"><template #default="{ row }"><div class="article-history-time"><strong>{{ formatGmt8DateTime(row.created_at) }}</strong><small v-if="row.completed_at">完成 {{ formatGmt8DateTime(row.completed_at) }}</small></div></template></el-table-column>
+          <el-table-column label="方式" width="95"><template #default="{ row }"><el-tag effect="plain">{{ row.channel === 'qq' ? 'QQ' : '小红书' }}</el-tag></template></el-table-column>
+          <el-table-column label="目标" min-width="180" prop="target_summary" show-overflow-tooltip />
+          <el-table-column label="消息数" width="80" align="center" prop="delivery_count" />
+          <el-table-column label="状态" width="105"><template #default="{ row }"><el-tooltip :disabled="!row.error" :content="row.error"><el-tag :type="publishStatusMeta[row.status as ArticlePublishStatus].type">{{ publishStatusMeta[row.status as ArticlePublishStatus].label }}</el-tag></el-tooltip></template></el-table-column>
+          <el-table-column label="失败原因" min-width="220" prop="error" show-overflow-tooltip><template #default="{ row }">{{ row.error || '-' }}</template></el-table-column>
+        </el-table>
+        <el-empty v-else-if="!historyLoading" description="暂无推送历史" />
+      </div>
+      <template #footer><el-button @click="historyOpen = false">关闭</el-button></template>
     </el-dialog>
     <el-dialog v-model="verificationVisible" title="完成小红书安全验证" width="min(94vw, 760px)" :close-on-click-modal="false" append-to-body class="xhs-verification-dialog">
       <div class="xhs-verification"><p>请使用已登录当前账号的小红书 App 扫描二维码。验证完成后会自动继续推送。</p><div class="xhs-verification__image"><el-image v-if="verificationImage" :src="verificationImage" :preview-src-list="[verificationImage]" preview-teleported hide-on-click-modal fit="contain" alt="小红书安全验证二维码" /><span v-else>正在获取验证二维码...</span></div></div>

@@ -741,6 +741,18 @@ export interface ArticlePublishResult {
   delivery_ids: EntityId[]
 }
 
+export interface ArticlePublishHistory {
+  attempt_id: string
+  channel: ArticlePublishChannel
+  status: ArticlePublishStatus
+  target_summary: string
+  delivery_count: number
+  error?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+  created_at: string
+}
+
 export interface UpdateArticlePayload extends Partial<ArticlePayload> {
   revision: number
 }

@@ -16,6 +16,7 @@ import type {
   AiUserProfile,
   AiUserSkillBinding,
   Article,
+  ArticlePublishHistory,
   ArticlePublishPayload,
   ArticlePublishResult,
   ArticlePayload,
@@ -418,5 +419,12 @@ export const articlesApi = {
     return dataOf(await http.post<Wrapped<ArticlePublishResult>>(`/articles/${id}/publish`, payload, {
       timeout: payload.channel === 'xhs' ? 320_000 : undefined,
     }))
+  },
+  async publishHistory(id: EntityId, params: { page?: number; page_size?: number } = {}) {
+    return pageOf(
+      await http.get<Wrapped<PaginatedResponse<ArticlePublishHistory>>>(
+        `/articles/${id}/publish-history`, { params },
+      ),
+    )
   },
 }

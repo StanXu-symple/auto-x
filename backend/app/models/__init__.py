@@ -7,6 +7,7 @@ from app.models.ai import (
     AISkill,
     AIUserProfile,
     AIUserSkillBinding,
+    ArticlePublishAttempt,
 )
 from app.models.ai_data_source import AIDataSource
 from app.models.monitored_user import MonitoredUser
@@ -36,6 +37,7 @@ __all__ = [
     "AISkill",
     "AIUserProfile",
     "AIUserSkillBinding",
+    "ArticlePublishAttempt",
     "AppSetting",
     "MonitoredUser",
     "PollingLog",

@@ -12,7 +12,7 @@ from sqlalchemy import func, or_, select
 from app.api.deps import CurrentAdmin, DbSession, RedisClient
 from app.api.errors import APIError
 from app.core.config import get_settings
-from app.models.ai import AIDraft
+from app.models.ai import AIDraft, ArticlePublishAttempt
 from app.models.qq import QQBotAccount, QQDelivery, QQJoinedGroup
 from app.schemas.article import (
     ArticleCreate,
@@ -20,6 +20,7 @@ from app.schemas.article import (
     ArticlePatch,
     ArticlePublishAccepted,
     ArticlePublishCreate,
+    ArticlePublishHistoryOut,
     ArticlePublishStatus,
     ArticleSource,
     ArticleStatus,
@@ -64,6 +65,10 @@ def _article_out(article: AIDraft) -> ArticleOut:
         created_at=article.created_at,
         updated_at=article.updated_at,
     )
+
+
+def _publish_history_out(attempt: ArticlePublishAttempt) -> ArticlePublishHistoryOut:
+    return ArticlePublishHistoryOut.model_validate(attempt)
 
 
 async def _clear_unreferenced_images(db: DbSession, candidates: list[str]) -> None:
@@ -237,6 +242,41 @@ async def get_article_image(owner_id: int, filename: str, admin: CurrentAdmin) -
     return FileResponse(path)
 
 
+@router.get("/{article_id}/publish-history", response_model=Page[ArticlePublishHistoryOut])
+async def article_publish_history(
+    article_id: int,
+    db: DbSession,
+    _: CurrentAdmin,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> Page[ArticlePublishHistoryOut]:
+    if await db.get(AIDraft, article_id) is None:
+        raise APIError(404, "article_not_found", "文章不存在")
+    condition = ArticlePublishAttempt.article_id == article_id
+    total = int(
+        await db.scalar(select(func.count(ArticlePublishAttempt.attempt_id)).where(condition))
+        or 0
+    )
+    attempts = list(
+        await db.scalars(
+            select(ArticlePublishAttempt)
+            .where(condition)
+            .order_by(
+                ArticlePublishAttempt.created_at.desc(),
+                ArticlePublishAttempt.attempt_id.desc(),
+            )
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+    return Page(
+        items=[_publish_history_out(attempt) for attempt in attempts],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
 def _article_qq_text(article: AIDraft) -> str:
     return "\n".join(
         (f"标题:{article.title}", f"摘要:{article.excerpt or ''}", f"正文:{article.content}")
@@ -331,6 +371,17 @@ async def _publish_to_qq(
     article.publish_attempt_id = attempt_id
     article.publish_error = None
     article.published_at = None
+    db.add(
+        ArticlePublishAttempt(
+            attempt_id=attempt_id,
+            article_id=article.id,
+            channel="qq",
+            status="queued",
+            target_summary=f"{bot.name} · {len(joined)} 个群",
+            delivery_count=len(deliveries),
+            started_at=now,
+        )
+    )
     db.add_all(deliveries)
     await db.commit()
     ids = [row.id for row in deliveries]
@@ -354,8 +405,8 @@ async def publish_article(
     article = await db.scalar(select(AIDraft).where(AIDraft.id == article_id).with_for_update())
     if article is None:
         raise APIError(404, "article_not_found", "文章不存在")
-    if article.publish_status in {"queued", "published"}:
-        raise APIError(409, "article_already_published", "文章已进入推送流程或已经推送")
+    if article.publish_status == "queued":
+        raise APIError(409, "article_publish_in_progress", "文章正在推送，请等待本次推送完成")
     if payload.channel == "qq":
         return await _publish_to_qq(article, payload, db, redis)
 
@@ -374,11 +425,22 @@ async def publish_article(
             raise APIError(400, "article_image_invalid", "文章包含不存在的图片")
         paths.append(str(path))
     attempt_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
     article.publish_status = "queued"
     article.publish_channel = "xhs"
     article.publish_attempt_id = attempt_id
     article.publish_error = None
     article.published_at = None
+    attempt = ArticlePublishAttempt(
+        attempt_id=attempt_id,
+        article_id=article.id,
+        channel="xhs",
+        status="queued",
+        target_summary="当前小红书账号",
+        delivery_count=1,
+        started_at=now,
+    )
+    db.add(attempt)
     await db.commit()
     try:
         await asyncio.to_thread(clear_verification_image, admin.id)
@@ -396,6 +458,9 @@ async def publish_article(
         )
         article.publish_status = "failed"
         article.publish_error = str(exc)[:2000]
+        attempt.status = "failed"
+        attempt.error = str(exc)[:2000]
+        attempt.completed_at = datetime.now(UTC)
         await db.commit()
         if isinstance(exc, XHSWorkerUnavailableError):
             status_code = 503
@@ -406,6 +471,9 @@ async def publish_article(
         raise APIError(status_code, "article_xhs_publish_failed", str(exc)) from None
     article.publish_status = "published"
     article.published_at = datetime.now(UTC)
+    attempt.status = "published"
+    attempt.error = None
+    attempt.completed_at = article.published_at
     await db.commit()
     return ArticlePublishAccepted(
         message="文章已成功推送到小红书",

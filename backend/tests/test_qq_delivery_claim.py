@@ -102,8 +102,9 @@ async def test_article_delivery_success_flushes_before_marking_article_published
         published_at=None,
         publish_error="old error",
     )
+    attempt = SimpleNamespace(status="queued", error="old error", completed_at=None)
     session = MagicMock()
-    session.get = AsyncMock(side_effect=[delivery, article])
+    session.get = AsyncMock(side_effect=[delivery, attempt, article])
     session.scalar = AsyncMock(return_value=0)
     session.flush = AsyncMock()
     session.begin.return_value = AsyncMock()
@@ -128,5 +129,8 @@ async def test_article_delivery_success_flushes_before_marking_article_published
     assert await worker._commit_success(claim, "message-id") is True
     session.flush.assert_awaited_once()
     assert delivery.status == "sent"
+    assert attempt.status == "published"
+    assert attempt.error is None
+    assert attempt.completed_at is not None
     assert article.publish_status == "published"
     assert article.publish_error is None

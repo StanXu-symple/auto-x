@@ -224,3 +224,23 @@ class AIDraft(Base):
     )
 
     job: Mapped[AIGenerationJob | None] = relationship(back_populates="draft")
+
+
+class ArticlePublishAttempt(Base):
+    __tablename__ = "article_publish_attempts"
+
+    attempt_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    article_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_drafts.id", ondelete="CASCADE"), index=True
+    )
+    channel: Mapped[str] = mapped_column(String(16), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="queued", server_default="queued")
+    target_summary: Mapped[str] = mapped_column(String(1000))
+    delivery_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )

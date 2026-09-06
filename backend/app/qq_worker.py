@@ -37,7 +37,7 @@ from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
 from app.core.time import as_utc
 from app.db.session import AsyncSessionFactory, engine
-from app.models.ai import AIDraft
+from app.models.ai import AIDraft, ArticlePublishAttempt
 from app.models.qq import (
     QQBotAccount,
     QQDelivery,
@@ -600,6 +600,13 @@ class QQDeliveryWorker:
                 delivery.claimed_by = None
                 delivery.lease_expires_at = None
                 if delivery.kind == "article" and delivery.article_id:
+                    attempt = await session.get(
+                        ArticlePublishAttempt, delivery.article_publish_attempt_id
+                    )
+                    if attempt is not None:
+                        attempt.status = "failed"
+                        attempt.error = cancel_reason
+                        attempt.completed_at = now
                     article = await session.get(AIDraft, delivery.article_id, with_for_update=True)
                     if (
                         article is not None
@@ -619,6 +626,13 @@ class QQDeliveryWorker:
                 delivery.claimed_by = None
                 delivery.lease_expires_at = None
                 if delivery.kind == "article" and delivery.article_id:
+                    attempt = await session.get(
+                        ArticlePublishAttempt, delivery.article_publish_attempt_id
+                    )
+                    if attempt is not None:
+                        attempt.status = "failed"
+                        attempt.error = str(exc)[:2000]
+                        attempt.completed_at = now
                     article = await session.get(AIDraft, delivery.article_id, with_for_update=True)
                     if (
                         article is not None
@@ -677,15 +691,23 @@ class QQDeliveryWorker:
                     )
                     or 0
                 )
-                article = await session.get(AIDraft, delivery.article_id, with_for_update=True)
-                if (
-                    remaining == 0
-                    and article is not None
-                    and article.publish_attempt_id == delivery.article_publish_attempt_id
-                ):
-                    article.publish_status = "published"
-                    article.published_at = datetime.now(UTC)
-                    article.publish_error = None
+                if remaining == 0:
+                    completed_at = datetime.now(UTC)
+                    attempt = await session.get(
+                        ArticlePublishAttempt, delivery.article_publish_attempt_id
+                    )
+                    if attempt is not None:
+                        attempt.status = "published"
+                        attempt.error = None
+                        attempt.completed_at = completed_at
+                    article = await session.get(AIDraft, delivery.article_id, with_for_update=True)
+                    if (
+                        article is not None
+                        and article.publish_attempt_id == delivery.article_publish_attempt_id
+                    ):
+                        article.publish_status = "published"
+                        article.published_at = completed_at
+                        article.publish_error = None
             return True
 
     async def _commit_failure(
@@ -711,6 +733,13 @@ class QQDeliveryWorker:
             delivery.claimed_by = None
             delivery.lease_expires_at = None
             if outcome == "failed" and delivery.kind == "article" and delivery.article_id:
+                attempt = await session.get(
+                    ArticlePublishAttempt, delivery.article_publish_attempt_id
+                )
+                if attempt is not None:
+                    attempt.status = "failed"
+                    attempt.error = message[:2000]
+                    attempt.completed_at = now
                 article = await session.get(AIDraft, delivery.article_id, with_for_update=True)
                 if (
                     article is not None
