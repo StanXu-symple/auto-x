@@ -49,6 +49,8 @@ PUBLISH_BUTTON_SELECTORS = (
     "xhs-publish-btn:not([is-publish])",
 )
 IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
+IMAGE_UPLOAD_TIMEOUT_SECONDS = 120
+IMAGE_UPLOAD_SETTLE_SECONDS = 3
 PUBLISH_RESULT_TIMEOUT_SECONDS = 60
 SECURITY_VERIFICATION_TIMEOUT_SECONDS = 90
 SECURITY_VERIFICATION_SETTLE_SECONDS = 5
@@ -137,6 +139,95 @@ def _wait_for_image_input(page: Any, timeout_seconds: float) -> Any | None:
             return element
         time.sleep(0.3)
     return None
+
+
+def _is_image_upload_request(request: Any) -> bool:
+    try:
+        hostname = (urlparse(str(request.url)).hostname or "").lower()
+        return str(request.method).upper() == "PUT" and hostname.endswith("xhscdn.com")
+    except Exception:
+        return False
+
+
+def _arm_image_upload_tracker(page: Any) -> dict[str, Any]:
+    state: dict[str, Any] = {
+        "successfulUrls": set(),
+        "failures": [],
+    }
+
+    def record_response(response: Any) -> None:
+        try:
+            request = response.request
+            if not _is_image_upload_request(request):
+                return
+            status = int(response.status)
+            url = _diagnostic_url(str(response.url))
+            if 200 <= status < 300:
+                state["successfulUrls"].add(url)
+            else:
+                state["failures"].append(f"HTTP {status}: {url}")
+        except Exception:
+            return
+
+    def record_request_failure(request: Any) -> None:
+        if _is_image_upload_request(request):
+            state["failures"].append(
+                f"request failed: {_diagnostic_url(str(request.url))}"
+            )
+
+    page.on("response", record_response)
+    page.on("requestfailed", record_request_failure)
+    state["responseHandler"] = record_response
+    state["requestFailedHandler"] = record_request_failure
+    return state
+
+
+def _disarm_image_upload_tracker(page: Any, tracker: dict[str, Any]) -> None:
+    for event, key in (
+        ("response", "responseHandler"),
+        ("requestfailed", "requestFailedHandler"),
+    ):
+        try:
+            page.remove_listener(event, tracker[key])
+        except Exception:
+            pass
+
+
+def _wait_for_image_uploads(
+    page: Any,
+    tracker: dict[str, Any],
+    *,
+    expected_count: int,
+    timeout_seconds: float,
+    settle_seconds: float = IMAGE_UPLOAD_SETTLE_SECONDS,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    ready_since: float | None = None
+    try:
+        while time.monotonic() < deadline:
+            page.text_content("body")
+            failures = tracker.get("failures") or []
+            if failures:
+                raise RuntimeError(f"图片上传失败：{failures[-1]}")
+            completed = len(tracker.get("successfulUrls") or ())
+            if completed >= expected_count:
+                ready_since = ready_since or time.monotonic()
+                if time.monotonic() - ready_since >= settle_seconds:
+                    logger.info(
+                        "Xiaohongshu image uploads completed",
+                        extra={"expected": expected_count, "completed": completed},
+                    )
+                    return
+            else:
+                ready_since = None
+            time.sleep(0.25)
+    finally:
+        _disarm_image_upload_tracker(page, tracker)
+    completed = len(tracker.get("successfulUrls") or ())
+    raise RuntimeError(
+        f"等待图片上传完成超过 {int(timeout_seconds)} 秒"
+        f"（已完成 {completed}/{expected_count}）"
+    )
 
 
 def _click_element(element: Any, description: str) -> None:
@@ -649,7 +740,18 @@ def publish_note_compat(
     image_input = _wait_for_image_input(page, timeout_seconds=15)
     if image_input is None:
         raise RuntimeError("找不到图文图片上传控件，页面结构可能已更新")
-    image_input.set_input_files(image_paths)
+    upload_tracker = _arm_image_upload_tracker(page)
+    try:
+        image_input.set_input_files(image_paths)
+        _wait_for_image_uploads(
+            page,
+            upload_tracker,
+            expected_count=len(image_paths),
+            timeout_seconds=IMAGE_UPLOAD_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        _disarm_image_upload_tracker(page, upload_tracker)
+        raise
 
     title_input = _wait_for_element(
         page,

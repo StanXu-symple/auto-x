@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from app.services.xhs_verification import verification_image_path
 from app.xhs_cli_compat import (
+    _arm_image_upload_tracker,
     _arm_publish_diagnostics,
     _click_element,
     _click_publish,
@@ -15,6 +16,7 @@ from app.xhs_cli_compat import (
     _publish_page_feedback,
     _save_verification_screenshot,
     _security_verification_visible,
+    _wait_for_image_uploads,
     _wait_for_publish_button,
 )
 
@@ -153,6 +155,9 @@ class FakePage(FakeRoot):
     def remove_listener(self, event: str, callback: object) -> None:
         self.listeners[event].remove(callback)
 
+    def text_content(self, _selector: str) -> str:
+        return ""
+
 
 def test_image_publish_url_requires_image_target() -> None:
     assert _is_image_publish_url(
@@ -177,6 +182,69 @@ def test_find_image_input_ignores_video_upload() -> None:
     page = FakePage({'input[type="file"]': [video, image]})
 
     assert _find_image_input(page) is image
+
+
+def test_wait_for_image_uploads_requires_successful_cdn_puts() -> None:
+    page = FakePage()
+    tracker = _arm_image_upload_tracker(page)
+    first = SimpleNamespace(
+        request=SimpleNamespace(
+            method="PUT",
+            url="https://ros-upload-d4.xhscdn.com/spectrum/first",
+        ),
+        status=200,
+        url="https://ros-upload-d4.xhscdn.com/spectrum/first",
+    )
+    second = SimpleNamespace(
+        request=SimpleNamespace(
+            method="PUT",
+            url="https://ros-upload-d4.xhscdn.com/spectrum/second",
+        ),
+        status=200,
+        url="https://ros-upload-d4.xhscdn.com/spectrum/second",
+    )
+    tracker["responseHandler"](first)
+    tracker["responseHandler"](second)
+
+    _wait_for_image_uploads(
+        page,
+        tracker,
+        expected_count=2,
+        timeout_seconds=0.1,
+        settle_seconds=0,
+    )
+
+    assert len(tracker["successfulUrls"]) == 2
+    assert page.listeners["response"] == []
+    assert page.listeners["requestfailed"] == []
+
+
+def test_wait_for_image_uploads_rejects_failed_cdn_put() -> None:
+    page = FakePage()
+    tracker = _arm_image_upload_tracker(page)
+    failed = SimpleNamespace(
+        request=SimpleNamespace(
+            method="PUT",
+            url="https://ros-upload-d4.xhscdn.com/spectrum/failed",
+        ),
+        status=500,
+        url="https://ros-upload-d4.xhscdn.com/spectrum/failed",
+    )
+    tracker["responseHandler"](failed)
+
+    try:
+        _wait_for_image_uploads(
+            page,
+            tracker,
+            expected_count=1,
+            timeout_seconds=0.1,
+            settle_seconds=0,
+        )
+    except RuntimeError as exc:
+        assert "图片上传失败" in str(exc)
+        assert "HTTP 500" in str(exc)
+    else:
+        raise AssertionError("failed image upload should stop publishing")
 
 
 def test_click_custom_publish_button_dispatches_native_publish_event() -> None:
