@@ -43,6 +43,23 @@ PUBLISH_BUTTON_SELECTORS = (
 )
 IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
 PUBLISH_RESULT_TIMEOUT_SECONDS = 60
+SHADOW_ROOT_CAPTURE_SCRIPT = """
+(() => {
+    if (window.__xsentinelShadowRoots) return;
+    const roots = new WeakMap();
+    Object.defineProperty(window, '__xsentinelShadowRoots', {
+        value: roots,
+        configurable: false,
+        enumerable: false,
+    });
+    const originalAttachShadow = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function(init) {
+        const root = originalAttachShadow.call(this, init);
+        roots.set(this, root);
+        return root;
+    };
+})();
+"""
 
 
 def _roots(page: Any) -> Iterable[Any]:
@@ -188,6 +205,60 @@ def _wait_for_publish_button(page: Any, timeout_seconds: float) -> Any | None:
     return None
 
 
+def _install_shadow_root_capture(page: Any) -> None:
+    try:
+        page.context.add_init_script(script=SHADOW_ROOT_CAPTURE_SCRIPT)
+    except Exception as exc:
+        raise RuntimeError(f"安装小红书 Shadow DOM 兼容脚本失败：{exc}") from exc
+
+
+def _find_shadow_publish_button(element: Any) -> Any | None:
+    try:
+        handle = element.evaluate_handle(
+            """el => {
+                const capturedRoots = window.__xsentinelShadowRoots;
+                const roots = [
+                    el.shadowRoot,
+                    capturedRoots?.get(el),
+                ].filter(Boolean);
+                const candidates = [];
+                const visited = new Set();
+                while (roots.length) {
+                    const root = roots.shift();
+                    if (visited.has(root)) continue;
+                    visited.add(root);
+                    for (const node of root.querySelectorAll('*')) {
+                        const openRoot = node.shadowRoot;
+                        const capturedRoot = capturedRoots?.get(node);
+                        if (openRoot) roots.push(openRoot);
+                        if (capturedRoot) roots.push(capturedRoot);
+                        const role = node.getAttribute?.('role');
+                        if (node.tagName === 'BUTTON' || role === 'button') {
+                            candidates.push(node);
+                        }
+                    }
+                }
+                const normalize = node => (node.innerText || node.textContent || '')
+                    .replace(/\\s+/g, ' ').trim();
+                return candidates.find(node => {
+                    const text = normalize(node);
+                    const disabled = node.disabled
+                        || node.getAttribute?.('disabled') !== null
+                        || node.getAttribute?.('aria-disabled') === 'true';
+                    return !disabled && (text === '发布' || text.includes('立即发布'));
+                }) || null;
+            }"""
+        )
+    except Exception as exc:
+        logger.warning("Unable to access captured Xiaohongshu Shadow DOM: %s", exc)
+        return None
+    button = handle.as_element()
+    if button is None:
+        handle.dispose()
+        return None
+    return button
+
+
 def _click_publish(page: Any, element: Any) -> None:
     try:
         tag_name = str(element.evaluate("el => el.tagName.toLowerCase()"))
@@ -195,6 +266,16 @@ def _click_publish(page: Any, element: Any) -> None:
         tag_name = ""
     if tag_name == "xhs-publish-btn":
         errors: list[str] = []
+        shadow_button = _find_shadow_publish_button(element)
+        if shadow_button is not None:
+            try:
+                _click_element(shadow_button, "点击 Shadow DOM 内部发布按钮")
+                logger.warning("Clicked the real button inside Xiaohongshu closed Shadow DOM")
+                return
+            except Exception as exc:
+                errors.append(f"captured Shadow DOM button: {exc}")
+            finally:
+                shadow_button.dispose()
         try:
             clicked = element.evaluate(
                 """el => {
@@ -320,6 +401,7 @@ def publish_note_compat(
             raise FileNotFoundError(f"Image not found: {path}")
 
     page = client._page
+    _install_shadow_root_capture(page)
     client._goto(
         PUBLISH_URL,
         timeout=30000,

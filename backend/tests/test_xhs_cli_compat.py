@@ -3,6 +3,8 @@ from app.xhs_cli_compat import (
     _click_publish,
     _find_element,
     _find_image_input,
+    _find_shadow_publish_button,
+    _install_shadow_root_capture,
     _is_image_publish_url,
     _publish_page_feedback,
     _wait_for_publish_button,
@@ -29,6 +31,8 @@ class FakeElement:
         self.evaluated: list[str] = []
         self.evaluate_result: object | None = None
         self.click_options: list[dict[str, object]] = []
+        self.shadow_button: FakeElement | None = None
+        self.disposed = False
 
     def inner_text(self) -> str:
         return self.label
@@ -58,6 +62,12 @@ class FakeElement:
             self.clicked = True
         return self.tag
 
+    def evaluate_handle(self, _script: str) -> "FakeHandle":
+        return FakeHandle(self.shadow_button)
+
+    def dispose(self) -> None:
+        self.disposed = True
+
     def bounding_box(self) -> dict[str, float]:
         return {"x": 10, "y": 20, "width": 100, "height": 40}
 
@@ -67,6 +77,18 @@ class FakeRoot:
 
     def query_selector_all(self, selector: str) -> list[FakeElement]:
         return self.elements.get(selector, [])
+
+
+class FakeHandle:
+    def __init__(self, element: FakeElement | None) -> None:
+        self.element = element
+        self.disposed = False
+
+    def as_element(self) -> FakeElement | None:
+        return self.element
+
+    def dispose(self) -> None:
+        self.disposed = True
 
 
 class FakeKeyboard:
@@ -104,9 +126,18 @@ class FakePage(FakeRoot):
         self.keyboard = FakeKeyboard()
         self.mouse = FakeMouse()
         self.evaluate_result: object | None = None
+        self.context = FakeContext()
 
     def evaluate(self, _script: str) -> object:
         return self.evaluate_result or {"width": 1280, "height": 720}
+
+
+class FakeContext:
+    def __init__(self) -> None:
+        self.scripts: list[str] = []
+
+    def add_init_script(self, *, script: str) -> None:
+        self.scripts.append(script)
 
 
 def test_image_publish_url_requires_image_target() -> None:
@@ -144,6 +175,36 @@ def test_click_custom_publish_button_uses_dom_button() -> None:
     assert page.mouse.clicks == []
     assert any("el.shadowRoot" in script for script in button.evaluated)
     assert any("立即发布" in script for script in button.evaluated)
+
+
+def test_install_shadow_root_capture_before_navigation() -> None:
+    page = FakePage()
+
+    _install_shadow_root_capture(page)
+
+    assert len(page.context.scripts) == 1
+    assert "__xsentinelShadowRoots" in page.context.scripts[0]
+
+
+def test_find_captured_shadow_publish_button() -> None:
+    widget = FakeElement(tag="xhs-publish-btn")
+    publish_button = FakeElement(tag="button", label="发布")
+    widget.shadow_button = publish_button
+
+    assert _find_shadow_publish_button(widget) is publish_button
+
+
+def test_click_custom_publish_button_prefers_captured_shadow_button() -> None:
+    page = FakePage()
+    widget = FakeElement(tag="xhs-publish-btn")
+    publish_button = FakeElement(tag="button", label="发布")
+    widget.shadow_button = publish_button
+
+    _click_publish(page, widget)
+
+    assert publish_button.clicked is True
+    assert publish_button.disposed is True
+    assert page.mouse.moves == []
 
 
 def test_click_closed_custom_publish_button_uses_humanized_pointer_events() -> None:
