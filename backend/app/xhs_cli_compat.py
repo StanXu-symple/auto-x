@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from collections.abc import Iterable
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,11 @@ PUBLISH_BUTTON_SELECTORS = (
 )
 IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
 PUBLISH_RESULT_TIMEOUT_SECONDS = 60
+PUBLISH_DIAGNOSTIC_LIMIT = 12
+SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
+    r"(?i)(a1|web_session|cookie|authorization|token)(\s*[\"']?\s*[:=]\s*[\"']?)"
+    r"([^\s,;\"']+)"
+)
 
 
 def _roots(page: Any) -> Iterable[Any]:
@@ -191,6 +197,213 @@ def _wait_for_publish_button(page: Any, timeout_seconds: float) -> Any | None:
     return None
 
 
+def _diagnostic_url(url: str) -> str:
+    parsed = urlparse(url)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))[:300]
+
+
+def _diagnostic_text(value: Any) -> str:
+    return SENSITIVE_DIAGNOSTIC_PATTERN.sub(r"\1\2***", str(value))[:500]
+
+
+def _arm_publish_diagnostics(page: Any, element: Any) -> dict[str, Any]:
+    network: list[dict[str, str | int]] = []
+    console: list[dict[str, str]] = []
+
+    def record_response(response: Any) -> None:
+        try:
+            request = response.request
+            method = str(request.method).upper()
+            if method == "GET":
+                return
+            hostname = (urlparse(response.url).hostname or "").lower()
+            if not hostname.endswith(("xiaohongshu.com", "xhscdn.com")):
+                return
+            if len(network) < PUBLISH_DIAGNOSTIC_LIMIT:
+                network.append(
+                    {
+                        "method": method,
+                        "status": int(response.status),
+                        "url": _diagnostic_url(str(response.url)),
+                    }
+                )
+        except Exception:
+            return
+
+    def record_request_failure(request: Any) -> None:
+        try:
+            method = str(request.method).upper()
+            hostname = (urlparse(request.url).hostname or "").lower()
+            if method == "GET" or not hostname.endswith(
+                ("xiaohongshu.com", "xhscdn.com")
+            ):
+                return
+            if len(network) < PUBLISH_DIAGNOSTIC_LIMIT:
+                network.append(
+                    {
+                        "method": method,
+                        "status": "failed",
+                        "url": _diagnostic_url(str(request.url)),
+                    }
+                )
+        except Exception:
+            return
+
+    def record_console(message: Any) -> None:
+        try:
+            message_type = str(message.type).lower()
+            if message_type not in {"warning", "error"}:
+                return
+            if len(console) < PUBLISH_DIAGNOSTIC_LIMIT:
+                console.append(
+                    {
+                        "type": message_type,
+                        "text": _diagnostic_text(message.text),
+                    }
+                )
+        except Exception:
+            return
+
+    def record_page_error(error: Any) -> None:
+        if len(console) < PUBLISH_DIAGNOSTIC_LIMIT:
+            console.append({"type": "pageerror", "text": _diagnostic_text(error)})
+
+    try:
+        page.on("response", record_response)
+        page.on("requestfailed", record_request_failure)
+        page.on("console", record_console)
+        page.on("pageerror", record_page_error)
+    except Exception as exc:
+        logger.warning("Unable to monitor Xiaohongshu publish page: %s", exc)
+
+    try:
+        browser_state = element.evaluate(
+            """el => {
+                const key = '__xsentinelPublishDiagnostics';
+                const existing = window[key];
+                if (existing?.observer) existing.observer.disconnect();
+                const state = {
+                    startedAt: Date.now(),
+                    eventCount: 0,
+                    eventTrusted: null,
+                    attributes: [],
+                    messages: [],
+                    errors: [],
+                    observer: null,
+                };
+                window[key] = state;
+                document.addEventListener('publish', event => {
+                    state.eventCount += 1;
+                    state.eventTrusted = event.isTrusted;
+                }, {capture: true, once: true});
+                const addMessage = value => {
+                    const text = String(value || '').replace(/\\s+/g, ' ').trim();
+                    if (text && text.length <= 300 && !state.messages.includes(text)) {
+                        state.messages.push(text);
+                        if (state.messages.length > 12) state.messages.shift();
+                    }
+                };
+                state.observer = new MutationObserver(records => {
+                    for (const record of records) {
+                        if (record.type === 'attributes' && record.target === el) {
+                            state.attributes.push({
+                                name: record.attributeName,
+                                value: el.getAttribute(record.attributeName),
+                            });
+                        }
+                        for (const node of record.addedNodes || []) {
+                            if (node.nodeType === Node.TEXT_NODE) addMessage(node.textContent);
+                            else if (node.nodeType === Node.ELEMENT_NODE) {
+                                addMessage(node.innerText || node.textContent);
+                            }
+                        }
+                    }
+                    if (state.attributes.length > 12) {
+                        state.attributes = state.attributes.slice(-12);
+                    }
+                });
+                state.observer.observe(document.body, {
+                    attributes: true,
+                    attributeFilter: ['submit-disabled', 'submit-loading'],
+                    childList: true,
+                    subtree: true,
+                });
+                window.addEventListener('error', event => {
+                    addMessage(event.message);
+                    state.errors.push(String(event.message || 'page error').slice(0, 300));
+                }, {once: true});
+                window.addEventListener('unhandledrejection', event => {
+                    const reason = event.reason?.message || event.reason || 'unhandled rejection';
+                    addMessage(reason);
+                    state.errors.push(String(reason).slice(0, 300));
+                }, {once: true});
+                let userInfo = {};
+                try {
+                    userInfo = JSON.parse(localStorage.getItem('USER_INFO') || '{}');
+                } catch (_) {}
+                userInfo = userInfo?.user?.value || userInfo?.userInfo || userInfo;
+                return {
+                    hasComponentPublishMethod: typeof el._onPublish === 'function',
+                    submitDisabled: el.getAttribute('submit-disabled'),
+                    submitLoading: el.getAttribute('submit-loading'),
+                    userIdPresent: Boolean(userInfo.id || userInfo.userId),
+                    bindPhone: typeof userInfo.bindPhone === 'boolean'
+                        ? userInfo.bindPhone : null,
+                };
+            }"""
+        )
+    except Exception as exc:
+        browser_state = {"setupError": str(exc)[:300]}
+    return {
+        "network": network,
+        "console": console,
+        "browserState": browser_state,
+        "responseHandler": record_response,
+        "requestFailedHandler": record_request_failure,
+        "consoleHandler": record_console,
+        "pageErrorHandler": record_page_error,
+    }
+
+
+def _publish_diagnostics_snapshot(
+    page: Any, element: Any, diagnostics: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        browser_state = element.evaluate(
+            """el => {
+                const state = window.__xsentinelPublishDiagnostics || {};
+                state.observer?.disconnect();
+                return {
+                    eventCount: state.eventCount || 0,
+                    eventTrusted: state.eventTrusted ?? null,
+                    attributes: state.attributes || [],
+                    messages: state.messages || [],
+                    errors: state.errors || [],
+                    finalSubmitDisabled: el.getAttribute('submit-disabled'),
+                    finalSubmitLoading: el.getAttribute('submit-loading'),
+                };
+            }"""
+        )
+    except Exception as exc:
+        browser_state = {"snapshotError": str(exc)[:300]}
+    for event, key in (
+        ("response", "responseHandler"),
+        ("requestfailed", "requestFailedHandler"),
+        ("console", "consoleHandler"),
+        ("pageerror", "pageErrorHandler"),
+    ):
+        try:
+            page.remove_listener(event, diagnostics[key])
+        except Exception:
+            pass
+    return {
+        "initial": diagnostics.get("browserState", {}),
+        "browser": browser_state,
+        "network": diagnostics.get("network", []),
+        "console": diagnostics.get("console", []),
+    }
+
+
 def _click_publish(page: Any, element: Any) -> None:
     try:
         tag_name = str(element.evaluate("el => el.tagName.toLowerCase()"))
@@ -209,12 +422,19 @@ def _click_publish(page: Any, element: Any) -> None:
                             submitLoading,
                         };
                     }
-                    el.dispatchEvent(new CustomEvent('publish', {
-                        bubbles: true,
-                        composed: true,
-                    }));
+                    let method = 'component-method';
+                    if (typeof el._onPublish === 'function') {
+                        el._onPublish();
+                    } else {
+                        method = 'event-fallback';
+                        el.dispatchEvent(new CustomEvent('publish', {
+                            bubbles: true,
+                            composed: true,
+                        }));
+                    }
                     return {
                         dispatched: true,
+                        method,
                         submitDisabled,
                         submitLoading,
                     };
@@ -228,8 +448,9 @@ def _click_publish(page: Any, element: Any) -> None:
                     f"submit-loading={state.get('submitLoading')!r}"
                 )
             logger.warning(
-                "Dispatched Xiaohongshu publish component native event protocol: "
-                "event=publish bubbles=true composed=true"
+                "Triggered Xiaohongshu publish component: method=%s "
+                "event=publish bubbles=true composed=true",
+                result.get("method"),
             )
             return
         except Exception as exc:
@@ -325,7 +546,15 @@ def publish_note_compat(
     publish_button = _wait_for_publish_button(page, timeout_seconds=15)
     if publish_button is None:
         raise RuntimeError("发布按钮不可点击，请检查标题、正文和图片是否通过页面校验")
-    _click_publish(page, publish_button)
+    diagnostics = _arm_publish_diagnostics(page, publish_button)
+    try:
+        _click_publish(page, publish_button)
+    except Exception:
+        diagnostic_snapshot = _publish_diagnostics_snapshot(
+            page, publish_button, diagnostics
+        )
+        logger.warning("Xiaohongshu publish diagnostics: %s", diagnostic_snapshot)
+        raise
 
     deadline = time.monotonic() + PUBLISH_RESULT_TIMEOUT_SECONDS
     note_id = ""
@@ -338,6 +567,7 @@ def publish_note_compat(
             or client._extract_note_id_from_page()
         )
         if client._is_publish_success(page_text, current_url, note_id):
+            _publish_diagnostics_snapshot(page, publish_button, diagnostics)
             result = {"success": True, "note_id": note_id, "url": current_url}
             return result if return_detail else True
         feedback = _publish_page_feedback(page)
@@ -345,6 +575,10 @@ def publish_note_compat(
             last_feedback = feedback
         time.sleep(0.5)
     current_url = page.url or ""
+    diagnostic_snapshot = _publish_diagnostics_snapshot(
+        page, publish_button, diagnostics
+    )
+    logger.warning("Xiaohongshu publish diagnostics: %s", diagnostic_snapshot)
     detail = f"；页面提示：{last_feedback}" if last_feedback else ""
     raise RuntimeError(
         f"点击发布后 {PUBLISH_RESULT_TIMEOUT_SECONDS} 秒内未检测到成功状态"

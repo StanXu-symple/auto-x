@@ -1,9 +1,13 @@
 from app.xhs_cli_compat import (
+    _arm_publish_diagnostics,
     _click_element,
     _click_publish,
+    _diagnostic_text,
+    _diagnostic_url,
     _find_element,
     _find_image_input,
     _is_image_publish_url,
+    _publish_diagnostics_snapshot,
     _publish_page_feedback,
     _wait_for_publish_button,
 )
@@ -109,12 +113,19 @@ class FakePage(FakeRoot):
         self.mouse = FakeMouse()
         self.evaluate_result: object | None = None
         self.scripts: list[str] = []
+        self.listeners: dict[str, list[object]] = {}
 
     def evaluate(self, _script: str) -> object:
         return self.evaluate_result or {"width": 1280, "height": 720}
 
     def add_init_script(self, *, script: str) -> None:
         self.scripts.append(script)
+
+    def on(self, event: str, callback: object) -> None:
+        self.listeners.setdefault(event, []).append(callback)
+
+    def remove_listener(self, event: str, callback: object) -> None:
+        self.listeners[event].remove(callback)
 
 
 def test_image_publish_url_requires_image_target() -> None:
@@ -147,6 +158,7 @@ def test_click_custom_publish_button_dispatches_native_publish_event() -> None:
     button = FakeElement(tag="xhs-publish-btn")
     button.evaluate_result = {
         "dispatched": True,
+        "method": "component-method",
         "submitDisabled": "false",
         "submitLoading": "false",
     }
@@ -154,6 +166,7 @@ def test_click_custom_publish_button_dispatches_native_publish_event() -> None:
     _click_publish(page, button)
 
     event_script = button.evaluated[-1]
+    assert "el._onPublish()" in event_script
     assert "new CustomEvent('publish'" in event_script
     assert "bubbles: true" in event_script
     assert "composed: true" in event_script
@@ -205,6 +218,31 @@ def test_wait_for_publish_button_prefers_real_red_button() -> None:
     )
 
     assert _wait_for_publish_button(page, timeout_seconds=0.1) is real_button
+
+
+def test_publish_diagnostics_redacts_url_query_and_collects_snapshot() -> None:
+    page = FakePage()
+    button = FakeElement(tag="xhs-publish-btn")
+    button.evaluate_result = {
+        "hasComponentPublishMethod": True,
+        "userIdPresent": True,
+        "bindPhone": True,
+    }
+
+    diagnostics = _arm_publish_diagnostics(page, button)
+    snapshot = _publish_diagnostics_snapshot(page, button, diagnostics)
+
+    assert snapshot["initial"]["hasComponentPublishMethod"] is True
+    assert page.listeners["response"] == []
+    assert page.listeners["requestfailed"] == []
+    assert page.listeners["console"] == []
+    assert page.listeners["pageerror"] == []
+    assert _diagnostic_url(
+        "https://creator.xiaohongshu.com/api/publish?token=secret#fragment"
+    ) == "https://creator.xiaohongshu.com/api/publish"
+    assert _diagnostic_text("cookie=session-secret token:abc") == (
+        "cookie=*** token:***"
+    )
 
 
 def test_click_element_falls_back_to_dom_when_outside_viewport() -> None:
