@@ -369,6 +369,9 @@ export const aiApi = {
   async retryJob(id: EntityId) {
     return dataOf(await http.post<Wrapped<AiJob>>(`/ai/jobs/${id}/retry`))
   },
+  async removeJob(id: EntityId) {
+    await http.delete(`/ai/jobs/${id}`)
+  },
   async generateFromTweet(tweetId: EntityId, payload: GenerateTweetPayload = {}) {
     return dataOf(await http.post<Wrapped<AiJobActionResponse>>(`/tweets/${tweetId}/generate`, payload))
   },

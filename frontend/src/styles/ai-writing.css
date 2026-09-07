@@ -469,6 +469,10 @@
   gap: 5px;
 }
 
+.ai-writing-page .job-actions .el-button.is-disabled {
+  opacity: .55;
+}
+
 .ai-writing-page .job-actions .el-button {
   border-radius: 8px;
 }

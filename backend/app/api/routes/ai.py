@@ -547,6 +547,24 @@ async def retry_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> AIJobOut:
     )  # type: ignore[return-value]
 
 
+@router.delete("/jobs/{job_id}", response_model=MessageResponse)
+async def delete_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> MessageResponse:
+    job = await db.scalar(
+        select(AIGenerationJob).where(AIGenerationJob.id == job_id).with_for_update()
+    )
+    if job is None:
+        raise APIError(404, "ai_job_not_found", "AI generation job was not found")
+    if job.status == "running":
+        raise APIError(
+            409,
+            "ai_job_running",
+            "正在生成的任务不能删除，请等待任务完成或失败后再删除",
+        )
+    await db.delete(job)
+    await db.commit()
+    return MessageResponse(message="AI 生成任务已删除")
+
+
 @tweets_router.post(
     "/{tweet_id}/generate",
     response_model=AIJobOut,

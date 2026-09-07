@@ -94,6 +94,7 @@ const draftDialogOpen = ref(false)
 const editingJob = ref<AiJob | null>(null)
 const draftFormError = ref('')
 const draftForm = reactive({ id: '' as EntityId, title: '', content: '', excerpt: '', revision: 1 })
+const deletingJobId = ref<EntityId | null>(null)
 
 const configured = computed(() => settings.value?.provider_ready === true)
 const highlightedJobId = computed(() => String(route.query.job || ''))
@@ -462,6 +463,36 @@ async function retryJob(job: AiJob) {
   }
 }
 
+async function removeJob(job: AiJob) {
+  if (job.status === 'running') return
+  try {
+    await ElMessageBox.confirm(
+      `删除任务 #${job.id}？${jobDraft(job) ? '关联草稿也会一并删除。' : ''}`,
+      '删除任务',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+  deletingJobId.value = job.id
+  try {
+    await aiApi.removeJob(job.id)
+    if (String(route.query.job) === String(job.id)) {
+      await router.replace({ query: { ...route.query, job: undefined } })
+    }
+    await loadJobs()
+    ui.toast('任务已删除', 'success')
+  } catch (requestError) {
+    ui.toast('删除任务失败', 'error', getErrorMessage(requestError))
+  } finally {
+    deletingJobId.value = null
+  }
+}
+
 function changeJobsPage(page: number) {
   jobFilters.page = page
   loadJobs()
@@ -541,11 +572,11 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
           </div>
         </el-tab-pane>
 
-        <el-tab-pane name="jobs"><template #label><span class="ai-tab-label"><Clipboard :size="15" />任务与草稿</span></template>
+        <el-tab-pane name="jobs"><template #label><span class="ai-tab-label"><Clipboard :size="15" />任务历史</span></template>
           <div class="ai-pane">
             <header class="ai-pane__toolbar">
-              <div><h3>生成任务</h3><p>查看队列、失败重试和已生成草稿</p></div>
-              <div class="ai-pane__actions"><el-select v-model="jobFilters.status" class="status-filter"><el-option label="全部状态" value="all" /><el-option label="排队中" value="queued" /><el-option label="生成中" value="running" /><el-option label="等待重试" value="retry_wait" /><el-option label="已生成" value="succeeded" /><el-option label="失败" value="failed" /><el-option label="已取消" value="cancelled" /></el-select><el-button :loading="loading.jobs" @click="loadJobs()"><RefreshCw v-if="!loading.jobs" :size="15" />手动刷新</el-button></div>
+              <div><h3>任务历史</h3><p>所有生成任务集中在这里，可继续添加、编辑草稿、重试或删除已结束任务</p></div>
+              <div class="ai-pane__actions"><el-button type="primary" @click="openGenerateDialog()"><Plus :size="15" />新建任务</el-button><el-select v-model="jobFilters.status" class="status-filter"><el-option label="全部状态" value="all" /><el-option label="排队中" value="queued" /><el-option label="生成中" value="running" /><el-option label="等待重试" value="retry_wait" /><el-option label="已生成" value="succeeded" /><el-option label="失败" value="failed" /><el-option label="已取消" value="cancelled" /></el-select><el-button :loading="loading.jobs" @click="loadJobs()"><RefreshCw v-if="!loading.jobs" :size="15" />刷新</el-button></div>
             </header>
             <el-alert v-if="errors.jobs" :title="errors.jobs" type="error" :closable="false" show-icon />
             <el-table v-if="jobs.length || loading.jobs" v-loading="loading.jobs" :data="jobs" row-key="id" class="sentinel-table ai-job-table" :row-class-name="jobRowClass">
@@ -554,9 +585,9 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
               <el-table-column label="状态" width="105"><template #default="{ row: job }"><el-tag :type="jobStatusMeta(job.status).type" effect="dark" round>{{ jobStatusMeta(job.status).label }}</el-tag></template></el-table-column>
               <el-table-column label="尝试" width="85"><template #default="{ row: job }"><span class="attempt-copy">{{ job.attempts || 0 }} / {{ job.max_attempts || '未设置' }}</span></template></el-table-column>
               <el-table-column label="创建时间" min-width="145"><template #default="{ row: job }"><span class="date-cell"><strong>{{ formatRelative(job.created_at) }}</strong><small>{{ formatDateTime(job.created_at) }}</small></span></template></el-table-column>
-              <el-table-column label="草稿 / 操作" min-width="235" fixed="right"><template #default="{ row: job }"><div class="job-actions"><template v-if="jobDraft(job)"><el-button size="small" @click="openDraft(job)"><Edit3 :size="14" />编辑</el-button><el-button size="small" @click="copyDraft(job)"><Copy :size="14" />复制</el-button></template><el-button v-if="['failed', 'retry_wait', 'cancelled'].includes(job.status)" size="small" type="warning" plain @click="retryJob(job)"><RotateCcw :size="14" />重试</el-button><el-tooltip v-if="job.last_error || job.error_message" :content="job.last_error || job.error_message" placement="top"><AlertCircle class="job-error-icon" :size="16" /></el-tooltip><span v-if="!jobDraft(job) && !['failed', 'retry_wait', 'cancelled'].includes(job.status)" class="waiting-copy"><Clock3 :size="14" />等待草稿</span></div></template></el-table-column>
+              <el-table-column label="操作" min-width="300" fixed="right"><template #default="{ row: job }"><div class="job-actions"><el-button size="small" :disabled="!jobDraft(job)" @click="openDraft(job)"><Edit3 :size="14" />编辑草稿</el-button><el-button size="small" :disabled="!jobDraft(job)" @click="copyDraft(job)"><Copy :size="14" />复制</el-button><el-button v-if="['failed', 'retry_wait', 'cancelled'].includes(job.status)" size="small" type="warning" plain @click="retryJob(job)"><RotateCcw :size="14" />重试</el-button><el-tooltip v-if="job.last_error || job.error_message" :content="job.last_error || job.error_message" placement="top"><AlertCircle class="job-error-icon" :size="16" /></el-tooltip><el-tooltip :content="job.status === 'running' ? '生成中的任务暂不能删除' : '删除任务及其关联草稿'"><el-button size="small" type="danger" plain :loading="deletingJobId === job.id" :disabled="job.status === 'running'" @click="removeJob(job)"><Trash2 v-if="deletingJobId !== job.id" :size="14" />删除</el-button></el-tooltip><span v-if="!jobDraft(job) && !['failed', 'retry_wait', 'cancelled'].includes(job.status)" class="waiting-copy"><Clock3 :size="14" />草稿生成后可编辑</span></div></template></el-table-column>
             </el-table>
-            <EmptyState v-else-if="!loading.jobs" compact title="还没有 AI 生成任务" description="从内容流选择推文，或在这里输入源推文 ID 创建第一条任务"><template #icon><Sparkles :size="26" /></template><el-button type="primary" @click="openGenerateDialog()">新建生成任务</el-button></EmptyState>
+            <EmptyState v-else-if="!loading.jobs" compact title="还没有任务历史" description="从内容流选择推文，或点击新建任务连续添加多个 AI 创作任务"><template #icon><Sparkles :size="26" /></template><el-button type="primary" @click="openGenerateDialog()"><Plus :size="15" />新建任务</el-button></EmptyState>
             <PaginationBar v-if="jobsTotal > jobFilters.page_size" :page="jobFilters.page" :page-size="jobFilters.page_size" :total="jobsTotal" @change="changeJobsPage" />
           </div>
         </el-tab-pane>
