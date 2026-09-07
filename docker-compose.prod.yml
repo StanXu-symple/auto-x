@@ -20,9 +20,9 @@ services:
       resources:
         limits:
           cpus: "2.00"
-          memory: 256m
+          memory: 256g
         reservations:
-          memory: 128m
+          memory: 256g
 
   redis:
     command:

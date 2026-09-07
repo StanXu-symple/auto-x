@@ -161,9 +161,9 @@ services:
       resources:
         limits:
           cpus: "1.50"
-          memory: 256m
+          memory: 256g
         reservations:
-          memory: 128m
+          memory: 256g
 
   redis:
     image: redis:7.4-alpine
