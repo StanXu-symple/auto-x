@@ -27,6 +27,14 @@ docker exec x-sentinel-xhs-worker-1 cat /sys/fs/cgroup/memory.events
 
 Prometheus scrapes the worker on port `8005` inside the Compose network.
 
+The Xiaohongshu worker keeps browser profiles alive between jobs. Configure
+`XHS_BROWSER_POOL_SIZE` to cap the number of persistent Camoufox/Firefox
+instances (default `1`), and `XHS_BROWSER_MAX_CONCURRENCY` to cap concurrent
+publishing operations (default `1`). The limits are independent: increasing
+the pool allows more warm sessions, while the concurrency limit controls
+simultaneous business work. Profiles are stored below the worker's
+`XHS_CLI_HOME` directory and should be included in the persistent volume.
+
 Copy `.env.example` to `.env` and set the database, Redis, JWT, administrator, and X bearer-token
 values. `AUTO_CREATE_TABLES=true` offers an idempotent first-run path; production deployments can
 run Alembic and set it to `false`.

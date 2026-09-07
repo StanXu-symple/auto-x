@@ -25,6 +25,8 @@ def test_component_database_and_redis_settings_build_urls() -> None:
     assert settings.redis_url == "redis://:redis%20secret@cache.internal:6380/2"
     assert settings.mysql_pool_size == 3
     assert settings.mysql_max_overflow == 2
+    assert settings.xhs_browser_pool_size == 1
+    assert settings.xhs_browser_max_concurrency == 1
 
 
 def test_explicit_urls_take_precedence() -> None:

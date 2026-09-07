@@ -99,6 +99,8 @@ class Settings(BaseSettings):
 
     xhs_job_timeout_seconds: float = Field(default=300.0, ge=30, le=600)
     xhs_job_result_ttl_seconds: int = Field(default=300, ge=60, le=3600)
+    xhs_browser_pool_size: int = Field(default=1, ge=1, le=32)
+    xhs_browser_max_concurrency: int = Field(default=1, ge=1, le=32)
     xhs_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
     xhs_worker_metrics_port: int = Field(default=8005, ge=0, le=65535)
 

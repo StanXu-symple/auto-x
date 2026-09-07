@@ -907,8 +907,9 @@ def publish_note_compat(
     image_paths: list[str],
     content: str = "",
     return_detail: bool = False,
+    admin_id: int | None = None,
 ) -> bool | dict[str, str | bool]:
-    admin_id = cli_admin_id()
+    admin_id = admin_id if admin_id is not None else cli_admin_id()
     if admin_id is not None:
         clear_verification_image(admin_id)
     for path in image_paths:

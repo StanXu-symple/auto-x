@@ -31,6 +31,7 @@ from app.services.metrics import (
     XHS_WORKER_HEARTBEAT_METRIC,
 )
 from app.services.x_credentials import decrypt_token
+from app.services.xhs_browser_pool import XiaohongshuBrowserPool
 from app.services.xhs_credentials import get_xhs_credentials
 from app.services.xhs_jobs import (
     XHS_JOB_QUEUE,
@@ -169,6 +170,11 @@ class XiaohongshuWorker:
         self.stop_event = asyncio.Event()
         self.active_tasks = 0
         self.process_stats = ProcessStatsSampler(include_children=True)
+        self.browser_pool = XiaohongshuBrowserPool(
+            root=CLI_HOME_ROOT,
+            max_browsers=settings.xhs_browser_pool_size,
+            max_concurrency=settings.xhs_browser_max_concurrency,
+        )
 
     def request_stop(self) -> None:
         self.stop_event.set()
@@ -178,18 +184,42 @@ class XiaohongshuWorker:
             return
         logger.info("X Sentinel Xiaohongshu worker started", extra={"worker_id": self.worker_id})
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        job_tasks: set[asyncio.Task[None]] = set()
         try:
             while not self.stop_event.is_set():
                 try:
+                    finished = {task for task in job_tasks if task.done()}
+                    if finished:
+                        await asyncio.gather(*finished, return_exceptions=True)
+                        job_tasks.difference_update(finished)
+                    if len(job_tasks) >= self.settings.xhs_browser_max_concurrency:
+                        done, _ = await asyncio.wait(
+                            job_tasks,
+                            timeout=1,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if done:
+                            await asyncio.gather(*done, return_exceptions=True)
+                            job_tasks.difference_update(done)
+                        await self._heartbeat()
+                        continue
                     item = await self.redis.blpop(XHS_JOB_QUEUE, timeout=1)
                     if item:
-                        await self._handle_job(item[1])
+                        job_tasks.add(asyncio.create_task(self._handle_job(item[1])))
                     await self._heartbeat()
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     logger.exception("Xiaohongshu worker loop failed")
         finally:
+            for task in job_tasks:
+                task.cancel()
+            if job_tasks:
+                await asyncio.gather(*job_tasks, return_exceptions=True)
+            try:
+                await asyncio.wait_for(self.browser_pool.close(), timeout=10)
+            except TimeoutError:
+                logger.warning("Timed out closing Xiaohongshu browser pool")
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
@@ -246,7 +276,7 @@ class XiaohongshuWorker:
         operation = "unknown"
         job_id = ""
         status = "failed"
-        self.active_tasks = 1
+        self.active_tasks += 1
         try:
             job = json.loads(raw)
             job_id = str(job["job_id"])
@@ -271,7 +301,7 @@ class XiaohongshuWorker:
         finally:
             duration = time.perf_counter() - started
             XHS_JOB_DURATION.labels(operation=operation, status=status).observe(duration)
-            self.active_tasks = 0
+            self.active_tasks = max(0, self.active_tasks - 1)
         if job_id:
             await self.redis.set(
                 xhs_response_key(job_id),
@@ -291,6 +321,7 @@ class XiaohongshuWorker:
             )
             if code:
                 raise RuntimeError(err.strip() or out.strip() or "小红书登录失败")
+            await self.browser_pool.invalidate(admin_id)
             return {"message": "小红书登录态验证成功"}
         if operation == "post":
             return await self._post(admin_id, payload)
@@ -301,28 +332,26 @@ class XiaohongshuWorker:
             credentials = await get_xhs_credentials(session, self.settings, admin_id=admin_id)
         if credentials is None:
             raise RuntimeError("请先保存小红书登录态")
-        code, out, err = await self._run_cli(
-            admin_id,
-            "login",
-            "--cookie",
-            f"a1={credentials.a1}; web_session={credentials.web_session}",
-        )
-        if code:
-            raise RuntimeError(err.strip() or out.strip() or "恢复小红书登录态失败")
-
-        args = ["post", str(payload["title"]), "--content", str(payload["content"])]
+        image_paths: list[str] = []
         for image in payload.get("images") or []:
             path = await asyncio.to_thread(_validated_image_path, image)
             if path is None:
                 raise RuntimeError("图片路径无效")
-            args.extend(["--image", str(path)])
-        code, out, err = await self._run_cli(admin_id, *args, "--json")
-        if code:
-            raise RuntimeError(publish_error(out, err))
+            image_paths.append(str(path))
         try:
-            cli_result = json.loads(out)
-        except json.JSONDecodeError:
-            cli_result = {"raw": out.strip()}
+            cli_result = await self.browser_pool.publish(
+                admin_id=admin_id,
+                cookie_version=credentials.version,
+                cookie_dict={
+                    "a1": credentials.a1,
+                    "web_session": credentials.web_session,
+                },
+                title=str(payload["title"]),
+                content=str(payload["content"]),
+                image_paths=image_paths,
+            )
+        except Exception as exc:
+            raise RuntimeError(publish_error("", str(exc))) from exc
         return {"message": "笔记发布成功", "result": cli_result}
 
     async def _run_cli(self, admin_id: int, *args: str) -> tuple[int, str, str]:
@@ -413,6 +442,10 @@ class XiaohongshuWorker:
             "last_heartbeat": now.isoformat().replace("+00:00", "Z"),
             "active_tasks": self.active_tasks,
             "queue_depth": queue_depth,
+            "browser_pool_size": self.browser_pool.size,
+            "browser_pool_busy": self.browser_pool.busy_count,
+            "browser_pool_limit": self.settings.xhs_browser_pool_size,
+            "browser_max_concurrency": self.settings.xhs_browser_max_concurrency,
             "installed": shutil.which("xhs") is not None,
             **self.process_stats.snapshot(),
         }
