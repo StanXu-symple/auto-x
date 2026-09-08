@@ -1,0 +1,5 @@
+services:
+  monitor-center:
+    extends:
+      file: docker-compose.microservices.yml
+      service: monitor-center

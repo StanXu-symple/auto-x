@@ -1,0 +1,5 @@
+services:
+  xhs-worker:
+    extends:
+      file: docker-compose.microservices.yml
+      service: xhs-worker

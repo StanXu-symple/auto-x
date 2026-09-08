@@ -1,0 +1,9 @@
+services:
+  backend:
+    extends:
+      file: docker-compose.microservices.yml
+      service: backend
+  frontend:
+    extends:
+      file: docker-compose.yml
+      service: frontend

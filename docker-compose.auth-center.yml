@@ -1,0 +1,5 @@
+services:
+  auth-center:
+    extends:
+      file: docker-compose.microservices.yml
+      service: auth-center

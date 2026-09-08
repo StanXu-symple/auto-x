@@ -1,0 +1,5 @@
+services:
+  monitor-agent:
+    extends:
+      file: docker-compose.microservices.yml
+      service: monitor-agent
