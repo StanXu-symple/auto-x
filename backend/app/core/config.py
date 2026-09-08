@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     nacos_username: str = ""
     nacos_password: str = ""
     nacos_service_name: str = "xsentinel-api"
-    nacos_advertise_ip: str = "127.0.0.1"
+    nacos_advertise_ip: str = ""
     nacos_service_port: int = Field(default=8000, ge=1, le=65535)
 
     jwt_secret_key: str = "development-only-change-me"

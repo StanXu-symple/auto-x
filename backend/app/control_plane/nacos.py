@@ -7,6 +7,7 @@ second SDK or a fixed URL for any peer service.
 import asyncio
 import json
 import os
+import socket
 import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -121,7 +122,17 @@ async def heartbeat_loop(
 
 
 def advertise_identity() -> tuple[str, int]:
-    ip = os.environ.get("NACOS_ADVERTISE_IP", "127.0.0.1")
+    ip = os.environ.get("NACOS_ADVERTISE_IP", "").strip()
+    if not ip:
+        try:
+            addresses = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+            ip = next(
+                (item[4][0] for item in addresses if not item[4][0].startswith("127.")),
+                "",
+            )
+        except OSError:
+            ip = ""
+    ip = ip or "127.0.0.1"
     port = int(os.environ.get("NACOS_SERVICE_PORT", "0"))
     if not urlsplit(f"http://{ip}").hostname or not 0 < port < 65536:
         raise ValueError("NACOS_ADVERTISE_IP and NACOS_SERVICE_PORT must be configured")
