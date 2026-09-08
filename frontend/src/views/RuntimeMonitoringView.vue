@@ -32,7 +32,7 @@ const services = computed<ServiceHealth[]>(() => {
 const serviceResources = computed(() => {
   const current = metrics.value
   if (!current) return []
-  return [
+  const defaults = [
     { name: 'API 服务', description: '主进程 RSS 内存', icon: FileCode2, metric: current.api },
     { name: 'PostgreSQL 数据库', description: 'CPU / 内存（需容器监控）', icon: Database, metric: current.database },
     { name: 'Redis 缓存', description: '运行内存 / maxmemory', icon: Zap, metric: current.redis },
@@ -41,6 +41,17 @@ const serviceResources = computed(() => {
     ...(current.qq_worker ? [{ name: 'QQ Worker', description: '进程 RSS 内存', icon: Bot, metric: current.qq_worker }] : []),
     ...(current.xhs_worker ? [{ name: '小红书 Worker', description: `浏览器任务进程 · 队列 ${Number(current.xhs_worker.queue_depth || 0)}`, icon: BookOpen, metric: current.xhs_worker }] : []),
   ]
+  const instances = current.monitoring?.instances
+  if (!instances?.length) return defaults
+  return instances.map((instance) => {
+    const icon = instance.component === 'database' ? Database : instance.component === 'redis' ? Zap : instance.component === 'worker' ? Workflow : instance.component === 'ai_worker' ? Sparkles : instance.component === 'qq_worker' ? Bot : instance.component === 'xhs_worker' ? BookOpen : FileCode2
+    return {
+      name: `${instance.name || instance.service_id || instance.component}${instance.container_name ? ` · ${instance.container_name}` : ''}`,
+      description: `节点 ${instance.node || 'unknown'} · Docker CPU / 内存`,
+      icon,
+      metric: instance,
+    }
+  })
 })
 
 const resourceCards = computed<Array<{ label: string; metric: ResourceMetric; color: 'purple' | 'cyan' | 'green'; detail: string }>>(() => {

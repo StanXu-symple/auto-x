@@ -242,6 +242,7 @@ export interface ServiceRuntimeMetric extends RuntimeResourceMetric {
   latency_ms?: number
   error?: string
   resource_error?: string
+  resource_note?: string | null
   [key: string]: unknown
 }
 
@@ -287,6 +288,11 @@ export interface SystemMetrics {
   ai_worker?: WorkerRuntimeMetric
   qq_worker?: WorkerRuntimeMetric
   xhs_worker?: WorkerRuntimeMetric
+  monitoring?: {
+    mode?: string
+    error?: string
+    instances?: Array<ServiceRuntimeMetric & { service_id?: string; instance_id?: string; node?: string; name?: string; component?: string; container_name?: string; endpoint_reachable?: boolean }>
+  }
 }
 
 export type QQVerificationStatus = 'unverified' | 'valid' | 'invalid' | 'error'

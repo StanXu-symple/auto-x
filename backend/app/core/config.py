@@ -40,6 +40,21 @@ class Settings(BaseSettings):
     redis_password: str = ""
     redis_socket_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
 
+    # Distributed control plane. Empty values retain the single-host collector.
+    service_auth_url: str = ""
+    service_client_secret_file: str = "/etc/xsentinel/secrets/backend.secret"
+    monitor_center_url: str = ""
+    monitor_request_timeout_seconds: float = Field(default=4.0, gt=0, le=30)
+    monitor_stale_seconds: float = Field(default=45.0, ge=10, le=300)
+    nacos_server_addr: str = ""
+    nacos_namespace: str = "public"
+    nacos_group: str = "X_SENTINEL"
+    nacos_username: str = ""
+    nacos_password: str = ""
+    nacos_service_name: str = "xsentinel-api"
+    nacos_advertise_ip: str = "127.0.0.1"
+    nacos_service_port: int = Field(default=8000, ge=1, le=65535)
+
     jwt_secret_key: str = "development-only-change-me"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = Field(default=480, ge=5, le=10080)
@@ -83,7 +98,6 @@ class Settings(BaseSettings):
     ai_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
     ai_worker_metrics_port: int = Field(default=8002, ge=0, le=65535)
 
-
     qq_auth_url: str = "https://bots.qq.com/app/getAppAccessToken"
     qq_api_base_url: str = "https://api.sgroup.qq.com/"
     qq_request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
@@ -103,11 +117,19 @@ class Settings(BaseSettings):
     xhs_browser_max_concurrency: int = Field(default=1, ge=1, le=32)
     xhs_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
     xhs_worker_metrics_port: int = Field(default=8005, ge=0, le=65535)
+    xhs_transport: Literal["redis", "http"] = "redis"
+    xhs_service_name: str = "xsentinel-xhs-worker"
+    xhs_service_port: int = Field(default=8006, ge=1, le=65535)
+    xhs_service_advertise_ip: str = ""
+    xhs_service_advertise_port: int = Field(default=8006, ge=1, le=65535)
+    service_auth_public_key_file: str = "/run/xsentinel/public.pem"
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
+        if bool(self.service_auth_url) != bool(self.monitor_center_url):
+            raise ValueError("SERVICE_AUTH_URL and MONITOR_CENTER_URL must be configured together")
         if not self.postgres_dsn:
             user = quote(self.postgres_user, safe="")
             password = quote(self.postgres_password, safe="")
@@ -140,9 +162,7 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "PostgreSQL password must be non-empty and non-placeholder in production"
                 )
-            if len(self.x_token_encryption_key) < 32 or placeholder(
-                self.x_token_encryption_key
-            ):
+            if len(self.x_token_encryption_key) < 32 or placeholder(self.x_token_encryption_key):
                 raise ValueError(
                     "X_TOKEN_ENCRYPTION_KEY must contain at least 32 characters in production"
                 )

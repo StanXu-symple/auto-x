@@ -1,0 +1,5 @@
+{
+  "auth-center": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "agent:local": "resources:read", "monitor": "monitor:read" } },
+  "monitor": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "agent:local": "resources:read" } },
+  "backend": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "monitor": "monitor:read", "xhs-worker": "xhs:execute" } }
+}

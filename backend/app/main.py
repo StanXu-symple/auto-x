@@ -25,6 +25,7 @@ from app.db.init_db import initialize_database
 from app.db.session import AsyncSessionFactory, engine
 from app.models.ai import AIGenerationJob
 from app.models.monitored_user import MonitoredUser
+from app.services import system_health, xhs_jobs
 from app.services.metrics import (
     AI_QUEUE_DUE,
     AI_WORKER_HEARTBEAT,
@@ -33,6 +34,7 @@ from app.services.metrics import (
     POLL_QUEUE_DUE,
     WORKER_HEARTBEAT,
 )
+from app.services.xhs_client import XHSServiceClient
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -41,6 +43,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    if settings.nacos_server_addr or (settings.monitor_center_url and settings.service_auth_url):
+        system_health.MONITORING_CLIENT = system_health.MonitoringClient(settings)
+    if settings.xhs_transport == "http":
+        xhs_jobs.HTTP_XHS_CLIENT = XHSServiceClient(settings)
     app.state.redis = Redis.from_url(
         settings.redis_url,
         decode_responses=True,
@@ -67,6 +73,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if system_health.MONITORING_CLIENT is not None:
+            await system_health.MONITORING_CLIENT.aclose()
+            system_health.MONITORING_CLIENT = None
+        if xhs_jobs.HTTP_XHS_CLIENT is not None:
+            await xhs_jobs.HTTP_XHS_CLIENT.aclose()
+            xhs_jobs.HTTP_XHS_CLIENT = None
         await app.state.redis.aclose()
         await engine.dispose()
         logger.info("X Sentinel API stopped")

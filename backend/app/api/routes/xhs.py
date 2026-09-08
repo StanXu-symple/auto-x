@@ -5,12 +5,13 @@ import base64
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import CurrentAdmin, DbSession, RedisClient
 from app.api.errors import APIError
 from app.core.config import get_settings
+from app.services import xhs_jobs
 from app.services.x_credentials import XCredentialUnavailableError, encrypt_token
 from app.services.xhs_credentials import has_xhs_credentials, save_xhs_credentials
 from app.services.xhs_jobs import (
@@ -134,7 +135,11 @@ async def upload(_: CurrentAdmin, files: list[UploadFile] = File(...)) -> dict:
 
 
 @router.get("/verification")
-async def verification(admin: CurrentAdmin, version: str | None = None) -> dict:
+async def verification(request: Request, admin: CurrentAdmin, version: str | None = None) -> dict:
+    if xhs_jobs.HTTP_XHS_CLIENT is not None:
+        return await xhs_jobs.HTTP_XHS_CLIENT.verification(
+            request.app.state.redis, admin.id, version
+        )
     result = await asyncio.to_thread(read_verification_image, admin.id)
     if result is None:
         return {"required": False}

@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 XHS_JOB_QUEUE = "xsentinel:xhs:jobs"
 XHS_WORKER_HEARTBEAT = "xsentinel:xhs-worker:heartbeat"
 XHS_RESPONSE_PREFIX = "xsentinel:xhs:responses:"
+HTTP_XHS_CLIENT = None
 BROWSER_CLOSED_ERROR = "Target page, context or browser has been closed"
 BROWSER_PAGE_CRASHED_ERROR = "Page crashed"
 CGROUP_OOM_MARKER = "XHS_WORKER_CGROUP_OOM"
@@ -56,6 +57,8 @@ def publish_error(out: str, err: str) -> str:
 
 
 async def get_xhs_worker_status(redis: Redis) -> dict[str, Any]:
+    if HTTP_XHS_CLIENT is not None:
+        return await HTTP_XHS_CLIENT.status()
     raw = await redis.get(XHS_WORKER_HEARTBEAT)
     if not raw:
         return {"status": "offline", "installed": False}
@@ -76,6 +79,11 @@ async def submit_xhs_job(
     payload: dict[str, Any],
     timeout_seconds: float,
 ) -> dict[str, Any]:
+    if HTTP_XHS_CLIENT is not None:
+        return await HTTP_XHS_CLIENT.submit(
+            operation=operation, admin_id=admin_id, payload=payload,
+            timeout_seconds=timeout_seconds,
+        )
     worker = await get_xhs_worker_status(redis)
     if worker["status"] != "online" or not worker.get("installed"):
         raise XHSWorkerUnavailableError(

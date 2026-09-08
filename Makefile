@@ -2,6 +2,7 @@ SHELL := /bin/sh
 PYTHON ?= python3
 ENV_FILE ?= $(if $(wildcard .env),.env,.env.example)
 COMPOSE := docker compose --env-file $(ENV_FILE) -f docker-compose.yml
+COMPOSE_MICROSERVICES := $(COMPOSE) -f docker-compose.microservices.yml
 COMPOSE_PROD := $(COMPOSE) -f docker-compose.prod.yml
 COMPOSE_EXTERNAL := $(COMPOSE) -f docker-compose.external.yml
 
@@ -9,7 +10,7 @@ COMPOSE_EXTERNAL := $(COMPOSE) -f docker-compose.external.yml
 
 .PHONY: help init config prod-config external-config validate-prod-env validate-external-env build up prod-up external-up down prod-down external-down \
 	restart logs ps monitor-up prod-monitor-up monitor-down migrate prod-migrate external-migrate backup prod-backup restore prod-restore test test-backend \
-	test-frontend shell-backend postgres redis-cli
+	test-frontend shell-backend postgres redis-cli network-groups microservices-init microservices-up microservices-down
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*## "; printf "X Sentinel commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -70,6 +71,19 @@ ps: ## Show container and health status
 
 monitor-up: ## Start core services plus Prometheus, Grafana and exporters
 	$(COMPOSE) --profile monitoring up -d --build
+
+microservices-init: ## Generate service topology and service-auth keys
+	./infra/scripts/microservices-init.sh
+
+network-groups: ## Create named Docker network groups from NETWORK_GROUPS
+	./infra/scripts/network-groups.sh
+
+microservices-up: microservices-init ## Start the auth center, monitoring center and node agent
+	$(COMPOSE_MICROSERVICES) up -d backend auth-center monitor-center monitor-agent
+
+microservices-down: ## Stop the optional microservice control plane
+	$(COMPOSE_MICROSERVICES) stop auth-center monitor-center monitor-agent
+	$(COMPOSE_MICROSERVICES) rm -f auth-center monitor-center monitor-agent
 
 prod-monitor-up: validate-prod-env ## Start production services plus monitoring without changing deployment mode
 	$(COMPOSE_PROD) --profile monitoring up -d --build

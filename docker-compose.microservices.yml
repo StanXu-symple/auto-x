@@ -1,0 +1,118 @@
+services:
+  backend:
+    environment:
+      XHS_TRANSPORT: http
+      XHS_SERVICE_NAME: xsentinel-xhs-worker
+      NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}
+      NACOS_NAMESPACE: ${NACOS_NAMESPACE:-public}
+      NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
+      NACOS_USERNAME: ${NACOS_USERNAME:-}
+      NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/backend.secret
+    volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
+    networks: [control, app, data, monitoring]
+
+  xhs-worker:
+    command: ["python", "-m", "app.xhs_service"]
+    environment:
+      XHS_TRANSPORT: http
+      XHS_SERVICE_NAME: xsentinel-xhs-worker
+      XHS_SERVICE_PORT: 8006
+      XHS_SERVICE_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-127.0.0.1}
+      XHS_WORKER_METRICS_PORT: 8006
+      NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}
+      NACOS_NAMESPACE: ${NACOS_NAMESPACE:-public}
+      NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
+      NACOS_USERNAME: ${NACOS_USERNAME:-}
+      NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      NACOS_SERVICE_NAME: xsentinel-xhs-worker
+      NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-127.0.0.1}
+      NACOS_SERVICE_PORT: 8006
+      SERVICE_AUTH_PUBLIC_KEY_FILE: /run/xsentinel/public.pem
+      SERVICE_AUTH_CLIENT_SECRET_FILE: /run/xsentinel/backend.secret
+    volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
+    expose: ["8006"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8006/health/live', timeout=3)"]
+    networks: [control, app, data, monitoring]
+
+  auth-center:
+    image: ${BACKEND_IMAGE:-x-sentinel-backend}:${IMAGE_TAG:-latest}
+    command: ["uvicorn", "app.control_plane.auth:app", "--host", "0.0.0.0", "--port", "9100"]
+    environment:
+      NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}
+      NACOS_NAMESPACE: ${NACOS_NAMESPACE:-public}
+      NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
+      NACOS_USERNAME: ${NACOS_USERNAME:-}
+      NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      NACOS_SERVICE_NAME: xsentinel-auth-center
+      NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-127.0.0.1}
+      NACOS_SERVICE_PORT: 9100
+      SERVICE_AUTH_PRIVATE_KEY_FILE: /run/xsentinel/private.pem
+      SERVICE_AUTH_CLIENTS_FILE: /run/xsentinel/clients.json
+    volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
+    networks: [control]
+    restart: unless-stopped
+
+  monitor-center:
+    image: ${BACKEND_IMAGE:-x-sentinel-backend}:${IMAGE_TAG:-latest}
+    command: ["uvicorn", "app.control_plane.monitor:app", "--host", "0.0.0.0", "--port", "9102"]
+    environment:
+      NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}
+      NACOS_NAMESPACE: ${NACOS_NAMESPACE:-public}
+      NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
+      NACOS_USERNAME: ${NACOS_USERNAME:-}
+      NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      NACOS_SERVICE_NAME: xsentinel-monitor-center
+      NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-127.0.0.1}
+      NACOS_SERVICE_PORT: 9102
+      SERVICE_AUTH_PUBLIC_KEY_FILE: /run/xsentinel/public.pem
+      SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/monitor.secret
+      SERVICE_TOPOLOGY_FILE: /run/xsentinel/services.json
+    volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
+    depends_on: [auth-center]
+    ports: ["${MONITOR_CENTER_BIND:-127.0.0.1}:${MONITOR_CENTER_PORT:-9102}:9102"]
+    networks: [control]
+    restart: unless-stopped
+
+  monitor-agent:
+    image: ${BACKEND_IMAGE:-x-sentinel-backend}:${IMAGE_TAG:-latest}
+    command: ["uvicorn", "app.control_plane.agent:app", "--host", "0.0.0.0", "--port", "9101"]
+    environment:
+      NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}
+      NACOS_NAMESPACE: ${NACOS_NAMESPACE:-public}
+      NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
+      NACOS_USERNAME: ${NACOS_USERNAME:-}
+      NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      NACOS_SERVICE_NAME: xsentinel-monitor-agent-${MONITOR_NODE_ID:-local}
+      NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-127.0.0.1}
+      NACOS_SERVICE_PORT: 9101
+      MONITOR_NODE_ID: ${MONITOR_NODE_ID:-local}
+      SERVICE_AUTH_PUBLIC_KEY_FILE: /run/xsentinel/public.pem
+      SERVICE_TOPOLOGY_FILE: /run/xsentinel/services.json
+      DOCKER_SOCKET: /var/run/docker.sock
+    volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    group_add: ["${DOCKER_SOCKET_GID:-0}"]
+    depends_on: [auth-center]
+    networks: [control, app, data, monitoring]
+    restart: unless-stopped
+
+networks:
+  control:
+    name: ${CONTROL_NETWORK_NAME:-x-sentinel-control}
+    external: ${CONTROL_NETWORK_EXTERNAL:-false}
+  app:
+    name: ${APP_NETWORK_NAME:-x-sentinel_app}
+    external: true
+  data:
+    name: ${DATA_NETWORK_NAME:-x-sentinel_data}
+    external: true
+  monitoring:
+    name: ${MONITORING_NETWORK_NAME:-x-sentinel_monitoring}
+    external: true

@@ -27,3 +27,4 @@ class SystemMetricsResponse(APIModel):
     ai_worker: dict[str, Any]
     qq_worker: dict[str, Any]
     xhs_worker: dict[str, Any]
+    monitoring: dict[str, Any] | None = None

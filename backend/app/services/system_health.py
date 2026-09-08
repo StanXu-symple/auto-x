@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.control_plane.client import MonitoringClient, apply_snapshot
 from app.core.process_stats import ProcessStatsSampler
 
 PROCESS_STARTED_MONOTONIC = time.monotonic()
@@ -38,6 +39,7 @@ class CumulativeCPUSampler:
 
 
 CPU_SAMPLER = CumulativeCPUSampler()
+MONITORING_CLIENT: MonitoringClient | None = None
 
 
 async def _database_resources(session: AsyncSession) -> dict[str, Any]:
@@ -99,18 +101,14 @@ async def collect_system_metrics(session: AsyncSession, redis: Redis) -> dict[st
         info = await redis.info()
         used_memory = int(info.get("used_memory", 0))
         max_memory = int(info.get("maxmemory", 0))
-        cpu_seconds = float(info.get("used_cpu_sys", 0)) + float(
-            info.get("used_cpu_user", 0)
-        )
+        cpu_seconds = float(info.get("used_cpu_sys", 0)) + float(info.get("used_cpu_user", 0))
         redis_status = {
             "status": "healthy",
             "latency_ms": round((time.perf_counter() - redis_started) * 1000, 2),
             "used_memory": used_memory,
             "memory_used_bytes": used_memory,
             "memory_total_bytes": max_memory or None,
-            "memory_percent": (
-                round((used_memory / max_memory) * 100, 2) if max_memory else None
-            ),
+            "memory_percent": (round((used_memory / max_memory) * 100, 2) if max_memory else None),
             "cpu_percent": CPU_SAMPLER.sample("redis", cpu_seconds),
         }
     except Exception as exc:
@@ -127,7 +125,6 @@ async def collect_system_metrics(session: AsyncSession, redis: Redis) -> dict[st
         ai_worker_status = await _worker_status(redis, "xsentinel:ai-worker:heartbeat")
     except Exception as exc:
         ai_worker_status = {"status": "unknown", "error": str(exc)[:300]}
-
 
     qq_worker_status: dict[str, Any] = {"status": "offline"}
     try:
@@ -148,7 +145,7 @@ async def collect_system_metrics(session: AsyncSession, redis: Redis) -> dict[st
             "open_files": len(process.open_files()),
         }
 
-    return {
+    metrics = {
         "generated_at": datetime.now(UTC),
         "uptime_seconds": round(time.monotonic() - PROCESS_STARTED_MONOTONIC, 2),
         "cpu_percent": psutil.cpu_percent(interval=None),
@@ -178,3 +175,10 @@ async def collect_system_metrics(session: AsyncSession, redis: Redis) -> dict[st
         "qq_worker": qq_worker_status,
         "xhs_worker": xhs_worker_status,
     }
+    if MONITORING_CLIENT is not None:
+        try:
+            metrics = apply_snapshot(metrics, await MONITORING_CLIENT.snapshot())
+        except Exception:
+            # The local health page remains available while the control plane is down.
+            pass
+    return metrics

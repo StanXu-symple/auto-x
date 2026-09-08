@@ -32,7 +32,10 @@ Vue 3 / Nginx -> FastAPI -----------> PostgreSQL
                     +---- QQ Worker -------> NoneBot2 -> 腾讯 QQ 开放平台
 
 Prometheus -> Nginx + API + Workers + exporters -> Grafana
+
 ```
+
+For deployments where services run on multiple Docker hosts, the optional control plane provides a static service topology, a short-lived service authentication center, a monitoring center, and one Docker resource agent per host. It uses Docker cgroup CPU and working-set memory for every container, so PostgreSQL, Redis, API, and workers share the same resource fields. Configure `infra/microservices/services.json`, run `make microservices-init`, then set `SERVICE_AUTH_URL` and `MONITOR_CENTER_URL` in `.env` before `make microservices-up`. Join hosts to named network groups with `NETWORK_GROUPS` and `make network-groups`; service addresses in the topology are the addresses reachable from that node's agent. There is deliberately no service registry: topology changes are reviewed configuration changes.
 
 详细设计见 [架构说明](docs/ARCHITECTURE.md)，X 官方接口见 [X API 接入说明](docs/X_API.md)。
 
