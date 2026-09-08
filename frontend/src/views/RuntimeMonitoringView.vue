@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Activity, AlertCircle, Bot, BookOpen, Cpu, Database, FileCode2, MemoryStick, RefreshCw, Server, ShieldCheck, Sparkles, Workflow, Zap } from 'lucide-vue-next'
+import { AlertCircle, Bot, BookOpen, Cpu, Database, FileCode2, MemoryStick, RefreshCw, Server, ShieldCheck, Sparkles, Workflow, Zap } from 'lucide-vue-next'
 import ResourceGauge from '@/components/ResourceGauge.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { systemApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import { useUiStore } from '@/stores/ui'
 import type { ResourceMetric, RuntimeResourceMetric, ServiceHealth, SystemMetrics } from '@/types'
-import { formatBytes, formatDateTime, formatUptime } from '@/utils/format'
+import { formatBytes, formatDateTime } from '@/utils/format'
 
 const ui = useUiStore()
 const metrics = ref<SystemMetrics | null>(null)
@@ -34,8 +34,8 @@ const serviceResources = computed(() => {
   if (!current) return []
   return [
     { name: 'API 服务', description: '主进程 RSS 内存', icon: FileCode2, metric: current.api },
-    { name: 'PostgreSQL 数据库', description: '数据库内存上下文', icon: Database, metric: current.database },
-    { name: 'Redis 缓存', description: 'Redis 已分配内存', icon: Zap, metric: current.redis },
+    { name: 'PostgreSQL 数据库', description: 'CPU / 内存（需容器监控）', icon: Database, metric: current.database },
+    { name: 'Redis 缓存', description: '运行内存 / maxmemory', icon: Zap, metric: current.redis },
     { name: '轮询 Worker', description: '进程 RSS 内存', icon: Workflow, metric: current.worker },
     ...(current.ai_worker ? [{ name: 'AI Worker', description: '进程 RSS 内存', icon: Sparkles, metric: current.ai_worker }] : []),
     ...(current.qq_worker ? [{ name: 'QQ Worker', description: '进程 RSS 内存', icon: Bot, metric: current.qq_worker }] : []),
@@ -48,14 +48,13 @@ const resourceCards = computed<Array<{ label: string; metric: ResourceMetric; co
   return [
     { label: 'CPU', metric: { percent: current?.cpu_percent || 0 }, color: 'purple', detail: current?.load_average?.length ? `负载 ${current.load_average.map((value) => value.toFixed(2)).join(' / ')}` : '系统使用率' },
     { label: '内存', metric: { percent: current?.memory.percent || 0, used: current?.memory.used_bytes, total: current?.memory.total_bytes }, color: 'cyan', detail: current ? `${formatBytes(current.memory.used_bytes)} / ${formatBytes(current.memory.total_bytes)}` : '等待数据' },
-    { label: '磁盘', metric: { percent: current?.disk.percent || 0, used: current?.disk.used_bytes, total: current?.disk.total_bytes }, color: 'green', detail: current ? `${formatBytes(current.disk.used_bytes)} / ${formatBytes(current.disk.total_bytes)}` : '等待数据' },
   ]
 })
 
 const healthyServiceCount = computed(() => services.value.filter((service) => ['healthy', 'ok', 'online', 'active'].includes(service.status)).length)
 
 function cpuText(metric: RuntimeResourceMetric) {
-  return typeof metric.cpu_percent === 'number' ? `${metric.cpu_percent.toFixed(1)}%` : '等待采样'
+  return typeof metric.cpu_percent === 'number' ? `${metric.cpu_percent.toFixed(1)}%` : '暂无数据'
 }
 
 function memoryText(metric: RuntimeResourceMetric) {
@@ -112,13 +111,12 @@ onBeforeUnmount(() => window.clearInterval(timer))
 
     <section class="server-hero monitoring-resource-panel" aria-label="服务器资源概览">
       <header class="monitoring-section-header">
-        <div><span class="monitoring-section-kicker">RESOURCE OVERVIEW</span><h2>资源概览</h2><p>系统级容量与 API 进程运行时间</p></div>
+        <div><span class="monitoring-section-kicker">RESOURCE OVERVIEW</span><h2>资源概览</h2><p>系统 CPU 与内存使用率</p></div>
         <span class="monitoring-status-key"><i class="is-healthy" />健康阈值 <b>&lt; 70%</b></span>
       </header>
-      <div v-if="loading && !metrics" class="resource-grid"><div v-for="index in 4" :key="index" class="resource-card skeleton-card"><span /><span /><span /></div></div>
+      <div v-if="loading && !metrics" class="resource-grid"><div v-for="index in 2" :key="index" class="resource-card skeleton-card"><span /><span /><span /></div></div>
       <div v-else class="resource-grid">
         <article v-for="card in resourceCards" :key="card.label" class="resource-card"><ResourceGauge :label="card.label" :value="card.metric.percent" :detail="card.detail" :color="card.color" /></article>
-        <article class="resource-card uptime-card"><span class="resource-card__icon"><Activity :size="21" /></span><div><span>API 进程运行时间</span><strong>{{ formatUptime(metrics?.uptime_seconds) }}</strong><small>采集于 {{ formatDateTime(metrics?.generated_at) }}</small></div></article>
       </div>
     </section>
 
@@ -131,7 +129,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
             <div class="resource-metric-row"><div class="resource-metric-row__label"><Cpu :size="14" />CPU</div><strong>{{ cpuText(resource.metric) }}</strong><i><b :style="{ width: resourcePercent(resource.metric.cpu_percent) }" /></i></div>
             <div class="resource-metric-row"><div class="resource-metric-row__label"><MemoryStick :size="14" />内存</div><strong>{{ memoryText(resource.metric) }}</strong><i><b :style="{ width: resourcePercent(resource.metric.memory_percent) }" /></i></div>
           </div>
-          <p v-if="resource.metric.resource_error" :title="String(resource.metric.resource_error)">资源指标不可用，连接健康检查仍正常</p>
+          <p v-if="resource.metric.resource_error || resource.metric.resource_note" :title="String(resource.metric.resource_error || resource.metric.resource_note)">{{ resource.metric.resource_error || resource.metric.resource_note }}</p>
         </article>
       </div>
       <div v-else class="inline-empty">等待服务资源数据</div>

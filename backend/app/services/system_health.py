@@ -41,21 +41,15 @@ CPU_SAMPLER = CumulativeCPUSampler()
 
 
 async def _database_resources(session: AsyncSession) -> dict[str, Any]:
-    result = await session.execute(
-        text(
-            "SELECT pg_database_size(current_database()), "
-            "COALESCE((SELECT SUM(pg_total_relation_size(oid)) FROM pg_class "
-            "WHERE relkind IN ('r', 'm', 't')), 0)"
-        )
-    )
-    total_raw, used_raw = result.one()
-    total_bytes = int(total_raw or 0)
-    used_bytes = int(used_raw or 0)
+    # PostgreSQL does not expose whole-server CPU/RAM usage through the SQL
+    # connection.  Database-size functions report disk usage, not memory, so
+    # leave these resource fields unavailable instead of presenting storage as RAM.
     return {
         "cpu_percent": None,
-        "memory_used_bytes": used_bytes,
-        "memory_total_bytes": total_bytes,
-        "memory_percent": round((used_bytes / total_bytes) * 100, 2) if total_bytes else None,
+        "memory_used_bytes": None,
+        "memory_total_bytes": None,
+        "memory_percent": None,
+        "resource_note": "PostgreSQL CPU/内存需要额外的容器监控采集，当前连接未提供该指标",
     }
 
 
