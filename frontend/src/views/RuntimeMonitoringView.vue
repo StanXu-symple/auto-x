@@ -19,7 +19,7 @@ const services = computed<ServiceHealth[]>(() => {
   if (!metrics.value) return []
   const values: ServiceHealth[] = [
     { name: 'API 服务', status: metrics.value.api.status, message: metrics.value.api.error },
-    { name: 'MySQL 数据库', status: metrics.value.database.status, latency_ms: metrics.value.database.latency_ms, message: metrics.value.database.error },
+    { name: 'PostgreSQL 数据库', status: metrics.value.database.status, latency_ms: metrics.value.database.latency_ms, message: metrics.value.database.error },
     { name: 'Redis 缓存', status: metrics.value.redis.status, latency_ms: metrics.value.redis.latency_ms, message: metrics.value.redis.error },
     { name: '轮询 Worker', status: metrics.value.worker.status, message: metrics.value.worker.error },
   ]
@@ -34,7 +34,7 @@ const serviceResources = computed(() => {
   if (!current) return []
   return [
     { name: 'API 服务', description: '主进程 RSS 内存', icon: FileCode2, metric: current.api },
-    { name: 'MySQL 数据库', description: 'InnoDB 缓冲池', icon: Database, metric: current.database },
+    { name: 'PostgreSQL 数据库', description: '数据库内存上下文', icon: Database, metric: current.database },
     { name: 'Redis 缓存', description: 'Redis 已分配内存', icon: Zap, metric: current.redis },
     { name: '轮询 Worker', description: '进程 RSS 内存', icon: Workflow, metric: current.worker },
     ...(current.ai_worker ? [{ name: 'AI Worker', description: '进程 RSS 内存', icon: Sparkles, metric: current.ai_worker }] : []),

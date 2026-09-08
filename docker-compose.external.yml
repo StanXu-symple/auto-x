@@ -1,4 +1,4 @@
-# Use this override when MySQL and Redis are managed outside Docker Compose.
+# Use this override when PostgreSQL and Redis are managed outside Docker Compose.
 # Compose v2.24+ is required for the !reset tag.
 services:
   migrate:
@@ -6,8 +6,8 @@ services:
     environment:
       ENVIRONMENT: development
       AUTO_CREATE_TABLES: "false"
-      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
-      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT must be set}
       REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
       REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD-}
@@ -22,8 +22,8 @@ services:
       DEBUG: "false"
       STARTUP_STRICT: "true"
       AUTO_CREATE_TABLES: "false"
-      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
-      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT must be set}
       REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
       REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD-}
@@ -42,8 +42,8 @@ services:
       DEBUG: "false"
       STARTUP_STRICT: "true"
       AUTO_CREATE_TABLES: "false"
-      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
-      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT must be set}
       REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
       REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD-}
@@ -62,8 +62,8 @@ services:
       DEBUG: "false"
       STARTUP_STRICT: "true"
       AUTO_CREATE_TABLES: "false"
-      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
-      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT must be set}
       REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
       REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD-}
@@ -85,8 +85,8 @@ services:
       DEBUG: "false"
       STARTUP_STRICT: "true"
       AUTO_CREATE_TABLES: "false"
-      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
-      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT must be set}
       REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
       REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD-}
@@ -111,8 +111,8 @@ services:
       DEBUG: "false"
       STARTUP_STRICT: "true"
       AUTO_CREATE_TABLES: "false"
-      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST must be set}
-      MYSQL_PORT: ${MYSQL_PORT:?MYSQL_PORT must be set}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT must be set}
       REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
       REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD-}

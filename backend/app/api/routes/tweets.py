@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 
 from app.api.deps import CurrentAdmin, DbSession
 from app.api.errors import APIError
-from app.core.time import to_mysql_utc_naive
+from app.core.time import to_database_utc
 from app.models.monitored_user import MonitoredUser
 from app.models.tweet import Tweet
 from app.schemas.common import Page
@@ -60,9 +60,9 @@ async def list_tweets(
     if search:
         conditions.append(Tweet.text.contains(search.strip()))
     if posted_after:
-        conditions.append(Tweet.posted_at >= to_mysql_utc_naive(posted_after))
+        conditions.append(Tweet.posted_at >= to_database_utc(posted_after))
     if posted_before:
-        conditions.append(Tweet.posted_at <= to_mysql_utc_naive(posted_before))
+        conditions.append(Tweet.posted_at <= to_database_utc(posted_before))
 
     joined = Tweet.__table__.join(
         MonitoredUser.__table__, Tweet.monitored_user_id == MonitoredUser.id

@@ -22,12 +22,13 @@ class BrokenRedis:
 class HealthySession:
     async def execute(self, statement):
         sql = str(statement)
-        if "SHOW GLOBAL STATUS" in sql:
-            return [
-                ("Cpu_time", "1500"),
-                ("Innodb_buffer_pool_bytes_data", "400"),
-            ]
-        return []
+        if "pg_database_size" in sql:
+            class Result:
+                def one(self):
+                    return (1000, 400)
+
+            return Result()
+        return None
 
     async def scalar(self, _statement):
         return 1000

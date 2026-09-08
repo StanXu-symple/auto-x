@@ -35,7 +35,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.mysql_dsn.replace("%", "%%"))
+config.set_main_option("sqlalchemy.url", settings.postgres_dsn.replace("%", "%%"))
 target_metadata = Base.metadata
 
 
@@ -70,5 +70,7 @@ async def run_async_migrations() -> None:
 
 if context.is_offline_mode():
     run_migrations_offline()
+elif config.attributes.get("connection") is not None:
+    do_run_migrations(config.attributes["connection"])
 else:
     asyncio.run(run_async_migrations())

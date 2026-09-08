@@ -21,7 +21,7 @@ from app.services.x_client import TweetBatch, XAPIError, XRateLimitError, XUser
 class TwscrapeClient:
     """Adapt twscrape's cookie-backed GraphQL client to the polling client contract.
 
-    The encrypted MySQL credential remains the source of truth. twscrape requires SQLite,
+    The encrypted PostgreSQL credential remains the source of truth. twscrape requires SQLite,
     so each worker hydrates a mode-0600 temporary runtime database and removes it on close.
     """
 

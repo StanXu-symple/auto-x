@@ -11,7 +11,7 @@ confirmation="${2:-}"
 
 if [[ -z "${backup_dir}" || "${confirmation}" != "--yes" ]]; then
   echo >&2 "Usage: COMPOSE_ENV_FILE=.env $0 /absolute/path/to/backup --yes"
-  echo >&2 "This replaces the current MySQL database and Redis dataset."
+  echo >&2 "This replaces the current PostgreSQL database and Redis dataset."
   exit 2
 fi
 if [[ ! -r "${env_file}" ]]; then
@@ -22,7 +22,7 @@ if [[ ! -d "${backup_dir}" ]]; then
   echo >&2 "Backup directory does not exist: ${backup_dir}"
   exit 1
 fi
-for file in mysql.sql.gz redis.rdb metadata.json SHA256SUMS; do
+for file in postgres.sql.gz redis.rdb metadata.json SHA256SUMS; do
   if [[ ! -f "${backup_dir}/${file}" ]]; then
     echo >&2 "Backup is incomplete; missing ${file}."
     exit 1
@@ -56,28 +56,21 @@ if [[ "${SKIP_PRE_RESTORE_BACKUP:-0}" != "1" ]]; then
 fi
 
 echo "Stopping application writers..."
-"${compose[@]}" stop worker ai-worker backend
+"${compose[@]}" stop worker ai-worker qq-worker xhs-worker backend
 
-echo "Replacing and restoring MySQL database..."
-mysql_character_set="$(awk -F'"' '/"mysql_character_set"/ {print $4; exit}' "${backup_dir}/metadata.json")"
-mysql_collation="$(awk -F'"' '/"mysql_collation"/ {print $4; exit}' "${backup_dir}/metadata.json")"
-if [[ ! "${mysql_character_set}" =~ ^[A-Za-z0-9_]+$ || ! "${mysql_collation}" =~ ^[A-Za-z0-9_]+$ ]]; then
-  echo >&2 "Backup metadata has no safe MySQL charset/collation; application services remain stopped."
+echo "Replacing and restoring PostgreSQL database..."
+postgres_database="$(awk -F'"' '/"postgres_database"/ {print $4; exit}' "${backup_dir}/metadata.json")"
+if [[ ! "${postgres_database}" =~ ^[A-Za-z0-9_]+$ ]]; then
+  echo >&2 "Backup metadata has no safe PostgreSQL database name; application services remain stopped."
   exit 1
 fi
-"${compose[@]}" exec -T mysql sh -ec '
-  case "$MYSQL_DATABASE" in
-    ""|*[!A-Za-z0-9_]*) echo >&2 "Unsafe MYSQL_DATABASE identifier"; exit 1 ;;
-  esac
-  case "$1:$2" in
-    *[!A-Za-z0-9_:]*) echo >&2 "Unsafe MySQL charset or collation"; exit 1 ;;
-  esac
-  MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --user=root --host=127.0.0.1 -e \
-    "DROP DATABASE IF EXISTS \`$MYSQL_DATABASE\`; CREATE DATABASE \`$MYSQL_DATABASE\` CHARACTER SET $1 COLLATE $2"
-' sh "${mysql_character_set}" "${mysql_collation}"
-gzip -dc -- "${backup_dir}/mysql.sql.gz" \
-  | "${compose[@]}" exec -T mysql sh -ec \
-      'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root --host=127.0.0.1 "$MYSQL_DATABASE"'
+"${compose[@]}" exec -T postgres sh -ec '
+  PGPASSWORD="$POSTGRES_PASSWORD" dropdb --username="$POSTGRES_USER" --host=127.0.0.1 --if-exists --force "$POSTGRES_DB"
+  PGPASSWORD="$POSTGRES_PASSWORD" createdb --username="$POSTGRES_USER" --host=127.0.0.1 --owner="$POSTGRES_USER" "$POSTGRES_DB"
+'
+gzip -dc -- "${backup_dir}/postgres.sql.gz" \
+  | "${compose[@]}" exec -T postgres sh -ec \
+      'PGPASSWORD="$POSTGRES_PASSWORD" exec psql --set=ON_ERROR_STOP=1 --username="$POSTGRES_USER" --host=127.0.0.1 --dbname="$POSTGRES_DB"'
 
 echo "Restoring Redis RDB and replacing the current append-only log..."
 "${compose[@]}" stop redis
@@ -123,5 +116,5 @@ echo "Applying current database migrations..."
 "${compose[@]}" run --rm migrate
 
 echo "Starting application services..."
-"${compose[@]}" up -d backend worker ai-worker frontend
+"${compose[@]}" up -d backend worker ai-worker qq-worker xhs-worker frontend
 echo "Restore completed from ${backup_dir}"

@@ -14,8 +14,8 @@ def upgrade():
     op.execute(
         sa.text(
             "UPDATE qq_scheduled_tasks "
-            "SET run_time = CONCAT(run_time, :seconds) "
-            "WHERE run_time REGEXP '^[0-9]{2}:[0-9]{2}$'"
+            "SET run_time = run_time || :seconds "
+            "WHERE run_time ~ '^[0-9]{2}:[0-9]{2}$'"
         ).bindparams(seconds=":00")
     )
 

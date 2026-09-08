@@ -14,7 +14,7 @@ class BrokenSession:
         return None
 
     async def execute(self, _statement):
-        raise RuntimeError("mysql://secret-user:secret-password@private-host/database")
+        raise RuntimeError("postgresql://secret-user:secret-password@private-host/database")
 
 
 class BrokenRedis:

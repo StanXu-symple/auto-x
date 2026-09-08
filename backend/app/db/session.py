@@ -7,11 +7,11 @@ from app.core.config import get_settings
 settings = get_settings()
 
 engine = create_async_engine(
-    settings.mysql_dsn,
+    settings.postgres_dsn,
     pool_pre_ping=True,
-    pool_recycle=settings.mysql_pool_recycle_seconds,
-    pool_size=settings.mysql_pool_size,
-    max_overflow=settings.mysql_max_overflow,
+    pool_recycle=settings.postgres_pool_recycle_seconds,
+    pool_size=settings.postgres_pool_size,
+    max_overflow=settings.postgres_max_overflow,
     echo=settings.debug,
 )
 AsyncSessionFactory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)

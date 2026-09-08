@@ -15,18 +15,24 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # MySQL applies DDL non-transactionally. These guards let an interrupted
-    # migration safely resume without dropping any table created before failure.
+    # These guards let an interrupted migration safely resume without dropping
+    # any table created before failure.
     existing_tables = set(sa.inspect(op.get_bind()).get_table_names())
     if "ai_features" not in existing_tables:
         op.create_table(
             "ai_features",
-            sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+            sa.Column(
+                "id",
+                sa.Integer(),
+                sa.Identity(start=1000),
+                autoincrement=True,
+                nullable=False,
+            ),
             sa.Column("code", sa.String(64), nullable=False),
             sa.Column("name", sa.String(100), nullable=False),
             sa.Column("description", sa.Text(), nullable=True),
             sa.Column("base_prompt", sa.Text(), nullable=False),
-            sa.Column("is_active", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+            sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
             sa.PrimaryKeyConstraint("id", name="pk_ai_features"),
@@ -68,7 +74,7 @@ def upgrade() -> None:
             sa.Column("ai_feature_id", sa.Integer(), nullable=False),
             sa.Column("skill_id", sa.Integer(), nullable=False),
             sa.Column("priority", sa.Integer(), server_default="100", nullable=False),
-            sa.Column("is_active", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+            sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
             sa.ForeignKeyConstraint(

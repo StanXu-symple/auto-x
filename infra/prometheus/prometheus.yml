@@ -67,10 +67,10 @@ scrape_configs:
         labels:
           component: frontend
 
-  - job_name: mysql
+  - job_name: postgres
     static_configs:
       - targets:
-          - mysql-exporter:9104
+          - postgres-exporter:9187
         labels:
           component: database
 

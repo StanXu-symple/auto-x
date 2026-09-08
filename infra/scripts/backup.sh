@@ -82,32 +82,23 @@ if [[ -e "${target_dir}" ]]; then
   exit 1
 fi
 
-for service in mysql redis; do
+for service in postgres redis; do
   if [[ "$("${compose[@]}" ps --status running --services "${service}")" != "${service}" ]]; then
     echo >&2 "Service '${service}' is not running."
     exit 1
   fi
 done
 
-echo "Creating transaction-consistent MySQL dump..."
-"${compose[@]}" exec -T mysql sh -ec \
-  'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump --user=root --host=127.0.0.1 --single-transaction --quick --routines --events --triggers --hex-blob --set-gtid-purged=OFF "$MYSQL_DATABASE"' \
-  | gzip -9 > "${work_dir}/mysql.sql.gz"
-alembic_revision="$("${compose[@]}" exec -T mysql sh -ec \
-  'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --batch --skip-column-names --user=root --host=127.0.0.1 "$MYSQL_DATABASE" -e "SELECT version_num FROM alembic_version LIMIT 1" 2>/dev/null || printf unknown' \
+echo "Creating transaction-consistent PostgreSQL dump..."
+"${compose[@]}" exec -T postgres sh -ec \
+  'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump --username="$POSTGRES_USER" --host=127.0.0.1 --port=5432 --format=plain --no-owner --no-privileges "$POSTGRES_DB"' \
+  | gzip -9 > "${work_dir}/postgres.sql.gz"
+alembic_revision="$("${compose[@]}" exec -T postgres sh -ec \
+  'PGPASSWORD="$POSTGRES_PASSWORD" psql --tuples-only --no-align --username="$POSTGRES_USER" --host=127.0.0.1 --port=5432 --dbname="$POSTGRES_DB" --command="SELECT version_num FROM alembic_version LIMIT 1" 2>/dev/null || printf unknown' \
   | tr -d '\r\n')"
-database_defaults="$("${compose[@]}" exec -T mysql sh -ec \
-  'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --batch --skip-column-names --user=root --host=127.0.0.1 "$MYSQL_DATABASE" -e "SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = DATABASE()"' \
-  | tr -d '\r')"
-mysql_character_set="$(printf '%s\n' "${database_defaults}" | awk '{print $1; exit}')"
-mysql_collation="$(printf '%s\n' "${database_defaults}" | awk '{print $2; exit}')"
-if [[ ! "${mysql_character_set}" =~ ^[A-Za-z0-9_]+$ || ! "${mysql_collation}" =~ ^[A-Za-z0-9_]+$ ]]; then
-  echo >&2 "Could not determine safe MySQL database charset/collation."
-  exit 1
-fi
-mysql_database="$("${compose[@]}" exec -T mysql sh -ec 'printf %s "$MYSQL_DATABASE"')"
-if [[ ! "${mysql_database}" =~ ^[A-Za-z0-9_]+$ ]]; then
-  echo >&2 "MYSQL_DATABASE contains unsafe characters."
+postgres_database="$("${compose[@]}" exec -T postgres sh -ec 'printf %s "$POSTGRES_DB"')"
+if [[ ! "${postgres_database}" =~ ^[A-Za-z0-9_]+$ ]]; then
+  echo >&2 "POSTGRES_DB contains unsafe characters."
   exit 1
 fi
 if [[ ! "${alembic_revision}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
@@ -183,23 +174,21 @@ cat > "${work_dir}/metadata.json" <<EOF
 {
   "application": "X Sentinel",
   "created_at_utc": "${timestamp}",
-  "mysql_database": "${mysql_database}",
-  "mysql_character_set": "${mysql_character_set}",
-  "mysql_collation": "${mysql_collation}",
+  "postgres_database": "${postgres_database}",
   "alembic_revision": "${alembic_revision:-unknown}",
   "image_tag": "${image_tag}",
   "redis_verification_key": "${redis_verification_key}",
   "redis_verification_value": "${redis_verification_value}",
-  "contents": ["mysql.sql.gz", "redis.rdb"]
+  "contents": ["postgres.sql.gz", "redis.rdb"]
 }
 EOF
 
 (
   cd "${work_dir}"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum mysql.sql.gz redis.rdb metadata.json > SHA256SUMS
+    sha256sum postgres.sql.gz redis.rdb metadata.json > SHA256SUMS
   else
-    shasum -a 256 mysql.sql.gz redis.rdb metadata.json > SHA256SUMS
+    shasum -a 256 postgres.sql.gz redis.rdb metadata.json > SHA256SUMS
   fi
 )
 

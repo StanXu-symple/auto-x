@@ -1,8 +1,8 @@
 # X Sentinel backend
 
-FastAPI API and independent asyncio workers for monitoring X accounts and creating AI drafts. MySQL is the source of
+FastAPI API and independent asyncio workers for monitoring X accounts and creating AI drafts. PostgreSQL is the source of
 truth; Redis provides distributed polling locks, global X API gates, login throttling, and worker
-heartbeat data. Manual-trigger tokens and pagination checkpoints are persisted in MySQL.
+heartbeat data. Manual-trigger tokens and pagination checkpoints are persisted in PostgreSQL.
 Poll commits are fenced by both a database generation and a renewable Redis lease.
 
 ## Commands
@@ -39,12 +39,22 @@ Copy `.env.example` to `.env` and set the database, Redis, JWT, administrator, a
 values. `AUTO_CREATE_TABLES=true` offers an idempotent first-run path; production deployments can
 run Alembic and set it to `false`.
 
-Revision `0002_polling_fencing` adds resumable pagination and fencing fields with MySQL 5.7
-compatible `ALTER TABLE ... ADD COLUMN` operations. Run migrations as a one-shot before starting
+Revision `0002_polling_fencing` adds resumable pagination and fencing fields with
+`ALTER TABLE ... ADD COLUMN` operations. Run migrations as a one-shot before starting
 production replicas; the worker never creates schema or seeds the administrator.
 Revision `0003_ai_creation` adds AI settings, editable Skills, fenced generation jobs, and drafts
-using MySQL 5.7-compatible JSON/DDL. It also seeds the editable `观点提炼`, `中文短帖`, and
+using PostgreSQL JSON/DDL. It also seeds the editable `观点提炼`, `中文短帖`, and
 `线程拆分` Skills.
+
+To run the real-database migration and write-path checks against a disposable database or schema:
+
+```bash
+TEST_POSTGRES_DSN=postgresql+asyncpg://postgres@127.0.0.1:5432/postgres \
+  pytest tests/test_postgres_integration.py
+```
+
+The integration test creates an isolated schema and removes it after the run. Use a dedicated test
+database whose role may create and drop schemas.
 
 ## HTTP surface
 

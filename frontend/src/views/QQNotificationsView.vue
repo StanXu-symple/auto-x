@@ -446,7 +446,7 @@ onBeforeUnmount(() => window.clearInterval(statusTimer))
       <footer class="pagination"><span>共 {{ deliveryTotal }} 条</span><div><el-button circle :disabled="deliveryPage <= 1" @click="movePage(-1)"><ChevronLeft :size="15" /></el-button><strong>{{ deliveryPage }} / {{ deliveryPages }}</strong><el-button circle :disabled="deliveryPage >= deliveryPages" @click="movePage(1)"><ChevronRight :size="15" /></el-button></div></footer>
     </section>
 
-    <BaseModal class="qq-notification-dialog" :open="botModalOpen" :title="editingBotId ? '编辑 QQ 机器人' : '添加 QQ 机器人'" description="凭据会使用服务端加密密钥持久化到 MySQL。" @close="botModalOpen = false">
+    <BaseModal class="qq-notification-dialog" :open="botModalOpen" :title="editingBotId ? '编辑 QQ 机器人' : '添加 QQ 机器人'" description="凭据会使用服务端加密密钥持久化到 PostgreSQL。" @close="botModalOpen = false">
       <el-form class="qq-form" label-position="top" @submit.prevent="saveBot">
         <el-form-item label="机器人名称"><el-input v-model="botForm.name" maxlength="100" placeholder="例如：运营通知机器人" /></el-form-item>
         <el-form-item label="AppID"><el-input v-model="botForm.app_id" maxlength="64" placeholder="QQ 开放平台 AppID" /></el-form-item>

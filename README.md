@@ -1,6 +1,6 @@
 # X Sentinel
 
-一个可自托管的 X（Twitter）账号定时监听与 AI 草稿平台。前端使用 Vue 3 + Element Plus，后端使用 FastAPI，MySQL 保存监听配置、历史内容和生成审计，Redis 提供分布式锁、限流闸门和 Worker 心跳。支持运行中动态增加账号、分别调整轮询周期，并内置统一 OpenAI 兼容数据源、AI 草稿生成、服务器监控、Prometheus 指标和 Grafana 面板。
+一个可自托管的 X（Twitter）账号定时监听与 AI 草稿平台。前端使用 Vue 3 + Element Plus，后端使用 FastAPI，PostgreSQL 保存监听配置、历史内容和生成审计，Redis 提供分布式锁、限流闸门和 Worker 心跳。支持运行中动态增加账号、分别调整轮询周期，并内置统一 OpenAI 兼容数据源、AI 草稿生成、服务器监控、Prometheus 指标和 Grafana 面板。
 
 ## 已包含的功能
 
@@ -15,7 +15,7 @@
 - 腾讯 QQ 官方机器人适配，支持多机器人、多群目标和按监听账号分流
 - 每次轮询的状态、耗时、读取数、新增数和错误审计
 - CPU、内存、磁盘、负载、进程运行时间监控
-- MySQL、Redis、API、Worker 心跳状态监控
+- PostgreSQL、Redis、API、Worker 心跳状态监控
 - 管理员密码登录、JWT 鉴权和环境变量密钥管理
 - Prometheus 指标与预置 Grafana Dashboard
 - Docker Compose 一键启动、健康检查、持久卷和备份脚本
@@ -23,7 +23,7 @@
 ## 架构
 
 ```text
-Vue 3 / Nginx -> FastAPI -----------> MySQL
+Vue 3 / Nginx -> FastAPI -----------> PostgreSQL
                     |                  ^  ^
                     v                  |  |
                   Redis <-> Polling Worker -> 官方 X API / twscrape
@@ -49,9 +49,8 @@ install -m 600 .env.example .env
 至少修改这些值：
 
 ```dotenv
-MYSQL_PASSWORD=replace-with-a-strong-password
-MYSQL_ROOT_PASSWORD=replace-with-another-strong-password
-MYSQL_EXPORTER_PASSWORD=replace-with-an-exporter-password
+POSTGRES_PASSWORD=replace-with-a-strong-password
+POSTGRES_EXPORTER_PASSWORD=replace-with-an-exporter-password
 REDIS_PASSWORD=replace-with-a-strong-password
 JWT_SECRET_KEY=replace-with-at-least-32-random-characters
 ADMIN_PASSWORD=replace-with-a-strong-admin-password
@@ -80,7 +79,7 @@ docker compose ps
 ```
 
 打开 [http://localhost:8080](http://localhost:8080)，使用 `.env` 中的 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录。
-首次登录后可从右上角头像菜单进入“修改密码”；新密码将使用 Argon2 哈希后持久化到 MySQL，后续启动不会被 `.env` 中的初始密码覆盖。
+首次登录后可从右上角头像菜单进入“修改密码”；新密码将使用 Argon2 哈希后持久化到 PostgreSQL，后续启动不会被 `.env` 中的初始密码覆盖。
 
 ### 3. 启动监控套件（可选）
 
@@ -98,26 +97,26 @@ Grafana 使用 `.env` 中的 `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`，�
 
 AI 功能默认关闭；不配置 AI 数据源也可以正常使用账号监听。启用前进入管理台“AI 数据源”，填写配置名称、OpenAI 兼容 Base URL、模型和 API Key，保存并执行连通测试；再到“AI 创作”选择默认 Skill、重试次数和输出限制并启用自动生成。独立 `ai-worker` 领取任务、动态读取当前唯一数据源，并把结果保存为可继续编辑的草稿。系统不会自动发布到 X。
 
-AI API Key 使用服务端凭据加密密钥持久化到 MySQL，Redis 只缓存密文，API 不返回明文，任务快照和日志也不会包含 Key。Worker 每次执行前重新读取数据源，并把数据源名称与版本写入审计快照。携带凭据的远程地址必须使用 HTTPS，本机兼容网关可使用 HTTP。
+AI API Key 使用服务端凭据加密密钥持久化到 PostgreSQL，Redis 只缓存密文，API 不返回明文，任务快照和日志也不会包含 Key。Worker 每次执行前重新读取数据源，并把数据源名称与版本写入审计快照。携带凭据的远程地址必须使用 HTTPS，本机兼容网关可使用 HTTP。
 
 “AI 创作 → 用户策略与画像”支持按“监听用户 × AI 功能点”绑定一个或多个 Skill。每次新建 AI 会话按“手动覆盖 → 用户功能绑定 → 全局默认”解析 Skill，并把解析结果和版本写入任务快照。上下文同时包含该作者已有画像及最近 20 条动态；成功生成后会更新“他是谁、近期关注、动态关联、长期主题、证据和置信度”，供下一次创作继续使用。原帖与近期动态始终作为不可信引用数据处理，不能覆盖系统、功能点或 Skill 指令。
 
 
 ## QQ 群推送
 
-进入“QQ 推送”添加腾讯 QQ 开放平台 AppID/AppSecret，再创建一个或多个群目标。AppSecret 使用 `X_TOKEN_ENCRYPTION_KEY` 加密写入 MySQL；新推文与 QQ 投递 Outbox 在同一事务提交，独立 `qq-worker` 通过 Redis 唤醒并使用 NoneBot2 `nonebot-adapter-qq` 发送，Redis 故障时会扫描 MySQL 恢复。投递状态、平台错误和重试过程可在管理台追踪。
+进入“QQ 推送”添加腾讯 QQ 开放平台 AppID/AppSecret，再创建一个或多个群目标。AppSecret 使用 `X_TOKEN_ENCRYPTION_KEY` 加密写入 PostgreSQL；新推文与 QQ 投递 Outbox 在同一事务提交，独立 `qq-worker` 通过 Redis 唤醒并使用 NoneBot2 `nonebot-adapter-qq` 发送，Redis 故障时会扫描 PostgreSQL 恢复。投递状态、平台错误和重试过程可在管理台追踪。
 
 腾讯 QQ 开放平台自 2025-04-21 起不再提供通用主动消息能力。只有实际获得对应群主动消息权限的机器人才能完成自动投递；AppID/AppSecret 验证通过不代表该权限已开通。
 
 机器人入群由群主或管理员在 QQ 客户端发起并完成平台审批。平台推送 `GROUP_ADD_ROBOT` 事件后，`qq-worker` 会记录该机器人对应的群 OpenID，并尝试回复入群提示；提示消息发送失败不影响群记录保存。
 
-添加群目标时，先选择发送机器人，再从“选择已加入的群”下拉框选择群；OpenID 自动填入，群名称可作为本地备注修改。列表按 AppID 隔离，来自 MySQL 保存的入群和群消息事件，收到退群事件后移除，重复或乱序事件不会恢复旧状态。它是已观察到的群列表，不是 QQ 全量历史群列表；此前已加入的群可在群里 @ 一次机器人后刷新，也可切换“手动填写”。入群事件不包含群名，未命名的群显示 OpenID。
+添加群目标时，先选择发送机器人，再从“选择已加入的群”下拉框选择群；OpenID 自动填入，群名称可作为本地备注修改。列表按 AppID 隔离，来自 PostgreSQL 保存的入群和群消息事件，收到退群事件后移除，重复或乱序事件不会恢复旧状态。它是已观察到的群列表，不是 QQ 全量历史群列表；此前已加入的群可在群里 @ 一次机器人后刷新，也可切换“手动填写”。入群事件不包含群名，未命名的群显示 OpenID。
 
 事件接入：每个机器人的 QQ 开放平台后台需配置公网 HTTPS 回调地址 `https://你的域名/qq/webhook`，完成平台验证，并订阅机器人入群、退群和群 @ 消息事件。前端 Nginx 已将该路径转发到 `qq-worker:8003`，NoneBot QQ 适配器按 AppID 和 AppSecret 验签。`qq-worker` 使用 QQ Gateway WebSocket 保持已启用机器人在线，并同时提供 Webhook；新增、停用或修改机器人的接入配置约 15 秒内同步。若 QQ 后台仍显示离线，先确认 `qq-worker` 正常运行、开放平台已开启对应 Gateway 事件权限，以及容器可以访问 `api.sgroup.qq.com`。部署更新时执行 `alembic upgrade head`（新增 `0010_qq_joined_groups`），再更新后端、QQ Worker 和前端；本地开发的同一路径代理到 `localhost:8003`。
 
-## 使用外部 MySQL 与 Redis
+## 使用外部 PostgreSQL 与 Redis
 
-项目包含专用覆盖配置，示例已填写 `10.211.55.30:3306` 和 `10.211.55.30:6537`，Redis 密码留空：
+项目包含专用覆盖配置，示例已填写 `10.211.55.30:5432` 和 `10.211.55.30:6537`，Redis 密码留空：
 
 ```bash
 install -m 600 .env.external.example .env.external
@@ -126,7 +125,7 @@ make external-config ENV_FILE=.env.external
 make external-up ENV_FILE=.env.external
 ```
 
-外部模式不会启动本地 MySQL/Redis，仍会先自动执行 Alembic 迁移。不要让应用长期使用 MySQL `root`；先由数据库管理员创建仅对 `xsentinel` 数据库有权限的专用账号，再填写 `MYSQL_USER` / `MYSQL_PASSWORD`。外部数据服务的备份、恢复和主机级监控应由它们所在服务器负责。
+外部模式不会启动本地 PostgreSQL/Redis，仍会先自动执行 Alembic 迁移。先由数据库管理员创建拥有 `xsentinel` 数据库的专用账号，再填写 `POSTGRES_USER` / `POSTGRES_PASSWORD`；应用无需超级用户权限。外部数据服务的备份、恢复和主机级监控应由它们所在服务器负责。
 
 ## 第一次使用
 
@@ -138,7 +137,7 @@ make external-up ENV_FILE=.env.external
 6. 在“内容流”查看新增 Post，在“轮询记录”查看执行与错误，在“系统监控”确认服务状态。
 7. 如需 AI 草稿，先配置 provider 凭据，再到 AI 设置启用功能、选择 Skill；可手动生成，或在小规模验证后开启自动生成。
 
-Worker 会在每次用户名解析和时间线读取前从 MySQL 获取当前数据源，因此切换后不需要重启；系统会清除旧认证闸门并立即重新排队活跃账号。官方 X API 当前采用按量计费，轮询周期越短、账号越多，请求成本越高。twscrape 不消耗官方 API Credits，但属于非官方网页接口，可能随 X 页面更新失效，并存在验证码、Cookie 失效及账号受限风险。
+Worker 会在每次用户名解析和时间线读取前从 PostgreSQL 获取当前数据源，因此切换后不需要重启；系统会清除旧认证闸门并立即重新排队活跃账号。官方 X API 当前采用按量计费，轮询周期越短、账号越多，请求成本越高。twscrape 不消耗官方 API Credits，但属于非官方网页接口，可能随 X 页面更新失效，并存在验证码、Cookie 失效及账号受限风险。
 
 ## 配置项
 
@@ -150,14 +149,14 @@ Worker 会在每次用户名解析和时间线读取前从 MySQL 获取当前数
 | `ADMIN_USERNAME` | 管理员用户名 | `admin` |
 | `ADMIN_PASSWORD` | 管理员密码 | 无安全默认值，必须修改 |
 | `JWT_SECRET_KEY` | JWT 签名密钥 | 必须修改 |
-| `X_TOKEN_ENCRYPTION_KEY` | 加密 MySQL 中 X Token 的服务端密钥，至少 32 位 | 空 |
+| `X_TOKEN_ENCRYPTION_KEY` | 加密 PostgreSQL 中 X Token 的服务端密钥，至少 32 位 | 空 |
 | `X_TOKEN_CACHE_TTL_SECONDS` | Redis 密文缓存有效期 | `300` |
 | `DEFAULT_POLL_INTERVAL_SECONDS` | 新账号默认轮询周期 | `300` |
 | `WORKER_SCAN_INTERVAL_SECONDS` | Worker 检查到期任务的间隔 | `2` |
 | `WORKER_MAX_CONCURRENCY` | 单 Worker 最大并发账号数 | `5` |
 | `AI_WORKER_MAX_CONCURRENCY` | 单 AI Worker 最大并发任务数 | `3` |
 | `AI_WORKER_BATCH_SIZE` | 每轮领取 AI 任务上限 | `50` |
-| `MYSQL_*` | MySQL 数据库与凭据 | 见示例文件 |
+| `POSTGRES_*` | PostgreSQL 数据库与凭据 | 见示例文件 |
 | `REDIS_PASSWORD` | Redis 密码；外部实例无密码时可留空 | 本地模式必须修改 |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 | `TZ` | 容器显示时区 | `Asia/Shanghai` |
@@ -192,7 +191,7 @@ docker compose up -d --build
 
 ### 后端
 
-先准备可从宿主机访问的 MySQL 与 Redis。Compose 默认数据容器只在内部网络 `expose`，不会映射宿主机端口；如果在宿主机直接运行 Python，请使用单独安装的数据服务或自行添加仅绑定 `127.0.0.1` 的开发端口映射。然后：
+先准备可从宿主机访问的 PostgreSQL 与 Redis。Compose 默认数据容器只在内部网络 `expose`，不会映射宿主机端口；如果在宿主机直接运行 Python，请使用单独安装的数据服务或自行添加仅绑定 `127.0.0.1` 的开发端口映射。然后：
 
 ```bash
 cd backend
@@ -200,7 +199,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 install -m 600 .env.example .env
-# 把 .env 中的 MYSQL_HOST/PORT、REDIS_HOST/PORT 改为宿主机可达地址，并填写密码
+# 把 .env 中的 POSTGRES_HOST/PORT、REDIS_HOST/PORT 改为宿主机可达地址，并填写密码
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
@@ -262,7 +261,7 @@ infra/
 docs/                     架构、API 接入和运维文档
 docker-compose.yml        核心服务与可选 monitoring profile
 docker-compose.prod.yml   生产环境覆盖配置
-docker-compose.external.yml 外部 MySQL/Redis 覆盖配置
+docker-compose.external.yml 外部 PostgreSQL/Redis 覆盖配置
 ```
 
 ## API
@@ -290,10 +289,10 @@ docker-compose.external.yml 外部 MySQL/Redis 覆盖配置
 ## 生产部署建议
 
 - 用长随机值替换示例中的全部密码和密钥。
-- 只把 frontend/Nginx 暴露到公网，MySQL、Redis 和 Prometheus 保持内网访问。
+- 只把 frontend/Nginx 暴露到公网，PostgreSQL、Redis 和 Prometheus 保持内网访问。
 - 不要把 AI Worker 指标端口暴露到公网；限制 AI Worker 只能访问批准的 provider 地址。
 - 在 Nginx 前配置 HTTPS，或在 `docker-compose.prod.yml` 的反向代理层终止 TLS。
-- 为 MySQL 数据卷配置定期备份和异地保留；定期做恢复演练。
+- 为 PostgreSQL 数据卷配置定期备份和异地保留；定期做恢复演练。
 - 对磁盘占用设置告警，并根据合规要求配置 Post 和轮询日志保留期。
 - 先评估 X API 当前价格、限流和数据使用条款，再扩大账号数量或缩短轮询周期。
 

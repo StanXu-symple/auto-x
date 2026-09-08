@@ -2,7 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy.dialects import mysql
+from sqlalchemy.dialects import postgresql
 
 from app.core.config import Settings
 from app.core.time import as_utc
@@ -148,8 +148,8 @@ async def test_tweet_upsert_is_chunked_and_never_uses_insert_ignore() -> None:
     assert inserted == 301
     assert new_ids == [str(index) for index in range(301)]
     assert len(session.statements) == 3
-    sql = str(session.statements[0].compile(dialect=mysql.dialect())).upper()
-    assert "ON DUPLICATE KEY UPDATE" in sql
+    sql = str(session.statements[0].compile(dialect=postgresql.dialect())).upper()
+    assert "ON CONFLICT (TWEET_ID) DO NOTHING" in sql
     assert "INSERT IGNORE" not in sql
 
 

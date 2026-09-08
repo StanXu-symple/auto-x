@@ -23,15 +23,15 @@ class Settings(BaseSettings):
     auto_create_tables: bool = True
     app_timezone: str = "Asia/Shanghai"
 
-    mysql_dsn: str = ""
-    mysql_host: str = "mysql"
-    mysql_port: int = Field(default=3306, ge=1, le=65535)
-    mysql_database: str = "xsentinel"
-    mysql_user: str = "xsentinel"
-    mysql_password: str = "xsentinel"
-    mysql_pool_size: int = Field(default=3, ge=1, le=100)
-    mysql_max_overflow: int = Field(default=2, ge=0, le=200)
-    mysql_pool_recycle_seconds: int = Field(default=1800, ge=60)
+    postgres_dsn: str = ""
+    postgres_host: str = "postgres"
+    postgres_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_database: str = "xsentinel"
+    postgres_user: str = "xsentinel"
+    postgres_password: str = "xsentinel"
+    postgres_pool_size: int = Field(default=3, ge=1, le=100)
+    postgres_max_overflow: int = Field(default=2, ge=0, le=200)
+    postgres_pool_recycle_seconds: int = Field(default=1800, ge=60)
 
     redis_url: str = ""
     redis_host: str = "redis"
@@ -108,13 +108,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
-        if not self.mysql_dsn:
-            user = quote(self.mysql_user, safe="")
-            password = quote(self.mysql_password, safe="")
-            database = quote(self.mysql_database, safe="")
-            self.mysql_dsn = (
-                f"mysql+aiomysql://{user}:{password}@{self.mysql_host}:"
-                f"{self.mysql_port}/{database}?charset=utf8mb4"
+        if not self.postgres_dsn:
+            user = quote(self.postgres_user, safe="")
+            password = quote(self.postgres_password, safe="")
+            database = quote(self.postgres_database, safe="")
+            self.postgres_dsn = (
+                f"postgresql+asyncpg://{user}:{password}@{self.postgres_host}:"
+                f"{self.postgres_port}/{database}"
             )
         if not self.redis_url:
             credentials = f":{quote(self.redis_password, safe='')}@" if self.redis_password else ""
@@ -131,14 +131,14 @@ class Settings(BaseSettings):
                 raise ValueError("JWT_SECRET_KEY must contain at least 32 characters in production")
             if len(self.admin_password) < 12 or placeholder(self.admin_password):
                 raise ValueError("ADMIN_PASSWORD must contain at least 12 characters in production")
-            parsed_mysql_password = unquote(urlsplit(self.mysql_dsn).password or "")
+            parsed_postgres_password = unquote(urlsplit(self.postgres_dsn).password or "")
             if (
-                not parsed_mysql_password
-                or parsed_mysql_password == "xsentinel"
-                or placeholder(parsed_mysql_password)
+                not parsed_postgres_password
+                or parsed_postgres_password == "xsentinel"
+                or placeholder(parsed_postgres_password)
             ):
                 raise ValueError(
-                    "MySQL password must be non-empty and non-placeholder in production"
+                    "PostgreSQL password must be non-empty and non-placeholder in production"
                 )
             if len(self.x_token_encryption_key) < 32 or placeholder(
                 self.x_token_encryption_key

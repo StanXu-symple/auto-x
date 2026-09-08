@@ -14,7 +14,7 @@ from typing import Any
 
 from redis.asyncio import Redis
 from sqlalchemy import select
-from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -585,8 +585,8 @@ class PollingService:
             existing = set(
                 await session.scalars(select(Tweet.tweet_id).where(Tweet.tweet_id.in_(tweet_ids)))
             )
-            statement = mysql_insert(Tweet).values(chunk)
-            statement = statement.on_duplicate_key_update(tweet_id=statement.inserted.tweet_id)
+            statement = postgres_insert(Tweet).values(chunk)
+            statement = statement.on_conflict_do_nothing(index_elements=[Tweet.tweet_id])
             await session.execute(statement)
             new_ids = list(
                 dict.fromkeys(tweet_id for tweet_id in tweet_ids if tweet_id not in existing)

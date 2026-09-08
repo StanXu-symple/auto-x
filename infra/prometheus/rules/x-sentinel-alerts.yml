@@ -2,7 +2,7 @@ groups:
   - name: x-sentinel-availability
     rules:
       - alert: XSentinelTargetDown
-        expr: up{job=~"x-sentinel-api|x-sentinel-worker|x-sentinel-ai-worker|x-sentinel-qq-worker|x-sentinel-xhs-worker|x-sentinel-frontend|mysql|redis|node"} == 0
+        expr: up{job=~"x-sentinel-api|x-sentinel-worker|x-sentinel-ai-worker|x-sentinel-qq-worker|x-sentinel-xhs-worker|x-sentinel-frontend|postgres|redis|node"} == 0
         for: 2m
         labels:
           severity: critical
@@ -138,13 +138,13 @@ groups:
           summary: "Less than 10% disk space remains on {{ $labels.mountpoint }}"
           description: "Free disk space is low on {{ $labels.instance }}."
 
-      - alert: XSentinelMySQLConnectionsHigh
-        expr: mysql_global_status_threads_connected / mysql_global_variables_max_connections > 0.8
+      - alert: XSentinelPostgreSQLConnectionsHigh
+        expr: sum by (instance) (pg_stat_database_numbackends) / max by (instance) (pg_settings_max_connections) > 0.8
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "MySQL is using more than 80% of its connections"
+          summary: "PostgreSQL is using more than 80% of its connections"
           description: "Review slow queries, pool sizing and max_connections."
 
       - alert: XSentinelRedisMemoryHigh

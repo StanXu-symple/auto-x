@@ -17,7 +17,7 @@ POLL_RUNS = Counter(
 )
 TWEETS_INGESTED = Counter(
     "x_sentinel_tweets_ingested_total",
-    "New tweets inserted into MySQL",
+    "New tweets inserted into PostgreSQL",
 )
 POLL_DURATION = Histogram(
     "x_sentinel_poll_duration_seconds",

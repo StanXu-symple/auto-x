@@ -9,7 +9,7 @@ COMPOSE_EXTERNAL := $(COMPOSE) -f docker-compose.external.yml
 
 .PHONY: help init config prod-config external-config validate-prod-env validate-external-env build up prod-up external-up down prod-down external-down \
 	restart logs ps monitor-up prod-monitor-up monitor-down migrate prod-migrate external-migrate backup prod-backup restore prod-restore test test-backend \
-	test-frontend shell-backend mysql redis-cli
+	test-frontend shell-backend postgres redis-cli
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*## "; printf "X Sentinel commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -25,14 +25,14 @@ config: ## Validate the base Compose model
 prod-config: ## Validate the production Compose model
 	$(COMPOSE_PROD) config --quiet
 
-external-config: ## Validate the external MySQL/Redis Compose model
+external-config: ## Validate the external PostgreSQL/Redis Compose model
 	$(COMPOSE_EXTERNAL) config --quiet
 
 validate-prod-env: ## Reject missing or placeholder production secrets
 	@test -f "$(ENV_FILE)" || { echo "Missing $(ENV_FILE); run 'make init' first."; exit 1; }
 	./infra/scripts/validate-prod-env.sh "$(ENV_FILE)"
 
-validate-external-env: ## Validate external MySQL/Redis production settings
+validate-external-env: ## Validate external PostgreSQL/Redis production settings
 	@test -f "$(ENV_FILE)" || { echo "Missing $(ENV_FILE); copy .env.external.example first."; exit 1; }
 	./infra/scripts/validate-prod-env.sh "$(ENV_FILE)" external
 
@@ -46,7 +46,7 @@ prod-up: validate-prod-env ## Migrate, build and start the production stack
 	$(COMPOSE_PROD) config --quiet
 	$(COMPOSE_PROD) up -d --build
 
-external-up: validate-external-env ## Migrate and start API, workers and frontend with external MySQL/Redis
+external-up: validate-external-env ## Migrate and start API, workers and frontend with external PostgreSQL/Redis
 	$(COMPOSE_EXTERNAL) up -d --build backend worker ai-worker frontend
 
 down: ## Stop the core stack without deleting persistent data
@@ -75,8 +75,8 @@ prod-monitor-up: validate-prod-env ## Start production services plus monitoring 
 	$(COMPOSE_PROD) --profile monitoring up -d --build
 
 monitor-down: ## Remove only optional monitoring containers (preserves metrics volumes)
-	$(COMPOSE) --profile monitoring stop grafana prometheus node-exporter redis-exporter mysql-exporter
-	$(COMPOSE) --profile monitoring rm -f grafana prometheus node-exporter redis-exporter mysql-exporter
+	$(COMPOSE) --profile monitoring stop grafana prometheus node-exporter redis-exporter postgres-exporter
+	$(COMPOSE) --profile monitoring rm -f grafana prometheus node-exporter redis-exporter postgres-exporter
 
 migrate: ## Apply Alembic database migrations
 	$(COMPOSE) build migrate
@@ -86,14 +86,14 @@ prod-migrate: validate-prod-env ## Apply migrations with the production Compose 
 	$(COMPOSE_PROD) build migrate
 	$(COMPOSE_PROD) run --rm migrate
 
-external-migrate: validate-external-env ## Apply migrations to configured external MySQL without local data containers
+external-migrate: validate-external-env ## Apply migrations to configured external PostgreSQL without local data containers
 	$(COMPOSE_EXTERNAL) build migrate
 	$(COMPOSE_EXTERNAL) run --rm --no-deps migrate
 
-backup: ## Back up MySQL and Redis into BACKUP_DIR
+backup: ## Back up PostgreSQL and Redis into BACKUP_DIR
 	COMPOSE_ENV_FILE="$(abspath $(ENV_FILE))" COMPOSE_FILES="$(abspath docker-compose.yml)" ./infra/scripts/backup.sh
 
-prod-backup: validate-prod-env ## Back up production MySQL and Redis
+prod-backup: validate-prod-env ## Back up production PostgreSQL and Redis
 	COMPOSE_ENV_FILE="$(abspath $(ENV_FILE))" COMPOSE_FILES="$(abspath docker-compose.yml):$(abspath docker-compose.prod.yml)" ./infra/scripts/backup.sh
 
 restore: ## Restore BACKUP=<directory>; requires CONFIRM_RESTORE=yes
@@ -117,8 +117,8 @@ test-frontend: ## Install locked frontend dependencies, type-check and build
 shell-backend: ## Open a shell in the API container
 	$(COMPOSE) exec backend /bin/sh
 
-mysql: ## Open a MySQL client as the application user
-	$(COMPOSE) exec mysql sh -c 'MYSQL_PWD="$$MYSQL_PASSWORD" exec mysql -u"$$MYSQL_USER" "$$MYSQL_DATABASE"'
+postgres: ## Open a PostgreSQL client as the application user
+	$(COMPOSE) exec postgres sh -c 'PGPASSWORD="$$POSTGRES_PASSWORD" exec psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
 
 redis-cli: ## Open an authenticated Redis CLI
 	$(COMPOSE) exec redis sh -c 'exec redis-cli --no-auth-warning -a "$$REDIS_PASSWORD"'

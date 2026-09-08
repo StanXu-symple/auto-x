@@ -21,7 +21,7 @@ def upgrade():
     op.execute(
         sa.text(
             "UPDATE qq_notification_targets "
-            "SET template_variables = JSON_OBJECT() "
+            "SET template_variables = '{}'::json "
             "WHERE template_variables IS NULL"
         )
     )

@@ -50,8 +50,8 @@
       "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
       "id": 2,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
-      "targets": [{"editorMode": "code", "expr": "max(up{job=\"mysql\"})", "legendFormat": "MySQL", "range": true, "refId": "A"}],
-      "title": "MySQL",
+      "targets": [{"editorMode": "code", "expr": "max(up{job=\"postgres\"})", "legendFormat": "PostgreSQL", "range": true, "refId": "A"}],
+      "title": "PostgreSQL",
       "type": "stat"
     },
     {
@@ -250,10 +250,10 @@
       "id": 17,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"editorMode": "code", "expr": "mysql_global_status_threads_connected", "legendFormat": "connected", "range": true, "refId": "A"},
-        {"editorMode": "code", "expr": "mysql_global_status_threads_running", "legendFormat": "running", "range": true, "refId": "B"}
+        {"editorMode": "code", "expr": "sum by (instance) (pg_stat_database_numbackends)", "legendFormat": "connected", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "max by (instance) (pg_settings_max_connections)", "legendFormat": "configured limit", "range": true, "refId": "B"}
       ],
-      "title": "MySQL connections",
+      "title": "PostgreSQL connections",
       "type": "timeseries"
     },
     {

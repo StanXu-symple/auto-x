@@ -26,7 +26,7 @@ def upgrade() -> None:
         sa.Column("encrypted_app_secret", sa.Text(), nullable=False),
         sa.Column("secret_hint", sa.String(16), nullable=False),
         sa.Column("secret_fingerprint", sa.String(64), nullable=False),
-        sa.Column("is_enabled", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("is_enabled", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column(
             "verification_status", sa.String(24), server_default="unverified", nullable=False
         ),
@@ -50,8 +50,8 @@ def upgrade() -> None:
         sa.Column("bot_id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(100), nullable=False),
         sa.Column("group_openid", sa.String(128), nullable=False),
-        sa.Column("is_enabled", sa.Boolean(), server_default=sa.text("1"), nullable=False),
-        sa.Column("all_monitored_users", sa.Boolean(), server_default=sa.text("0"), nullable=False),
+        sa.Column("is_enabled", sa.Boolean(), server_default=sa.true(), nullable=False),
+        sa.Column("all_monitored_users", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column("message_template", sa.Text(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), default=now, nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), default=now, nullable=False),

@@ -4,9 +4,8 @@ Revision ID: 0003_ai_creation
 Revises: 0002_polling_fencing
 Create Date: 2026-08-31
 
-Only MySQL 5.7-compatible table/index/foreign-key operations are used. In
-particular, this migration avoids CHECK constraints, generated columns, JSON
-defaults, and MySQL 8-only DDL.
+This migration uses PostgreSQL-native JSON and timestamp expressions so a fresh
+database can be initialized without compatibility shims.
 """
 
 from datetime import UTC, datetime
@@ -24,12 +23,12 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "ai_skills",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("id", sa.Integer(), sa.Identity(start=1000), autoincrement=True, nullable=False),
         sa.Column("name", sa.String(100), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("instructions", sa.Text(), nullable=False),
         sa.Column("output_schema", sa.JSON(), nullable=True),
-        sa.Column("is_active", sa.Boolean(), server_default="1", nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("version", sa.Integer(), server_default="1", nullable=False),
         sa.Column("remote_skill_id", sa.String(128), nullable=True),
         sa.Column("remote_skill_version", sa.String(64), nullable=True),
@@ -43,9 +42,10 @@ def upgrade() -> None:
 
     op.create_table(
         "ai_settings",
+        # This is a singleton row and must remain explicitly addressable as id=1.
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("enabled", sa.Boolean(), server_default="0", nullable=False),
-        sa.Column("auto_generate", sa.Boolean(), server_default="1", nullable=False),
+        sa.Column("enabled", sa.Boolean(), server_default=sa.false(), nullable=False),
+        sa.Column("auto_generate", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("provider", sa.String(32), server_default="openai_responses", nullable=False),
         sa.Column("model", sa.String(128), server_default="gpt-5.6-terra", nullable=False),
         sa.Column(
@@ -58,7 +58,7 @@ def upgrade() -> None:
         sa.Column("prompt_template", sa.Text(), nullable=True),
         sa.Column("language", sa.String(32), server_default="zh-CN", nullable=False),
         sa.Column("tone", sa.String(64), server_default="专业自然", nullable=False),
-        sa.Column("require_review", sa.Boolean(), server_default="1", nullable=False),
+        sa.Column("require_review", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("reasoning_effort", sa.String(16), server_default="medium", nullable=False),
         sa.Column("default_skill_ids", sa.JSON(), nullable=False),
         sa.Column("max_attempts", sa.Integer(), server_default="3", nullable=False),
@@ -85,7 +85,7 @@ def upgrade() -> None:
         sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("claim_token", sa.String(36), nullable=True),
         sa.Column("claimed_by", sa.String(128), nullable=True),
-        sa.Column("manual", sa.Boolean(), server_default="0", nullable=False),
+        sa.Column("manual", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column("last_error", sa.Text(), nullable=True),
         sa.Column("request_snapshot", sa.JSON(), nullable=True),
         sa.Column("response_snapshot", sa.JSON(), nullable=True),
@@ -160,7 +160,7 @@ def upgrade() -> None:
 
     # Seed editable, local instruction sets. These IDs are safe because the table
     # was created immediately above and is empty in this migration.
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(UTC)
     skill_table = sa.table(
         "ai_skills",
         sa.column("id", sa.Integer()),
@@ -172,8 +172,8 @@ def upgrade() -> None:
         sa.column("version", sa.Integer()),
         sa.column("remote_skill_id", sa.String()),
         sa.column("remote_skill_version", sa.String()),
-        sa.column("created_at", sa.DateTime()),
-        sa.column("updated_at", sa.DateTime()),
+        sa.column("created_at", sa.DateTime(timezone=True)),
+        sa.column("updated_at", sa.DateTime(timezone=True)),
     )
     op.bulk_insert(
         skill_table,
@@ -228,8 +228,7 @@ def upgrade() -> None:
             },
         ],
     )
-    # Alembic's offline literal renderer cannot serialize JSON values. JSON_ARRAY is
-    # available in MySQL 5.7 and keeps `alembic upgrade --sql` usable.
+    # Use PostgreSQL JSON literals so offline and online upgrades use the same SQL.
     op.execute(
         sa.text(
             "INSERT INTO ai_settings "
@@ -237,9 +236,9 @@ def upgrade() -> None:
             "prompt_template, language, tone, require_review, reasoning_effort, "
             "default_skill_ids, max_attempts, max_output_tokens, "
             "request_timeout_seconds, updated_at) VALUES "
-            "(1, 0, 1, 'openai_responses', 'gpt-5.6-terra', "
-            "'https://api.openai.com/v1', NULL, NULL, 'zh-CN', '专业自然', 1, "
-            "'medium', JSON_ARRAY(1), 3, 2500, 60, UTC_TIMESTAMP())"
+            "(1, false, true, 'openai_responses', 'gpt-5.6-terra', "
+            "'https://api.openai.com/v1', NULL, NULL, 'zh-CN', '专业自然', true, "
+            "'medium', '[1]'::json, 3, 2500, 60, CURRENT_TIMESTAMP)"
         )
     )
 

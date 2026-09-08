@@ -9,12 +9,12 @@
 | 轮询进程 | `worker` | 仅容器网络 `8001` | 调度、X 请求、Worker 指标 |
 | AI 生成进程 | `ai-worker` | 仅容器网络 `8002` | AI 任务、provider 请求与 Worker 指标 |
 | QQ 投递进程 | `qq-worker` | 仅容器网络 `8003` / `8004` | NoneBot2 运行端点与 QQ 投递指标 |
-| MySQL | `mysql` | 不映射 | 持久业务数据 |
+| PostgreSQL | `postgres` | 不映射 | 持久业务数据 |
 | Redis | `redis` | 不映射 | 锁、心跳、触发标记 |
 | Prometheus | `prometheus` | `127.0.0.1:9090` | monitoring profile |
 | Grafana | `grafana` | `127.0.0.1:3000` | monitoring profile |
 
-管理台、Prometheus 与 Grafana 的宿主机端口可通过 `.env` 调整；API、轮询、AI 与 QQ Worker 的容器内端口固定为 `8000`、`8001`、`8002`、`8003/8004`。除非已有防火墙、认证和 TLS 保护，不要把 MySQL、Redis、Worker 指标或 Prometheus 暴露到公网。
+管理台、Prometheus 与 Grafana 的宿主机端口可通过 `.env` 调整；API、轮询、AI 与 QQ Worker 的容器内端口固定为 `8000`、`8001`、`8002`、`8003/8004`。除非已有防火墙、认证和 TLS 保护，不要把 PostgreSQL、Redis、Worker 指标或 Prometheus 暴露到公网。
 
 ## 上线流程
 
@@ -42,13 +42,13 @@ make prod-backup
 make prod-up
 ```
 
-### 外部 MySQL / Redis 模式
+### 外部 PostgreSQL / Redis 模式
 
 外部模式必须通过下面的定向目标启动；它只启动应用容器，不创建本地数据容器：
 
 ```bash
 install -m 600 .env.external.example .env.external
-# 填写专用 MySQL 应用账号、JWT/管理员密码和 X_TOKEN_ENCRYPTION_KEY
+# 填写专用 PostgreSQL 应用账号、JWT/管理员密码和 X_TOKEN_ENCRYPTION_KEY
 make validate-external-env ENV_FILE=.env.external
 make external-config ENV_FILE=.env.external
 make external-up ENV_FILE=.env.external
@@ -60,19 +60,19 @@ make external-up ENV_FILE=.env.external
 make external-down ENV_FILE=.env.external
 ```
 
-示例文件已配置 MySQL `10.211.55.30:3306`、Redis `10.211.55.30:6537` 且 Redis 无密码。部署前应创建仅能访问 `xsentinel` 库的专用 MySQL 用户；应用不应长期以 `root` 运行。外部数据库/Redis 的备份、恢复、Exporter 和宿主机告警应在数据服务所在服务器配置，根目录的 `backup`/`restore` 目标只处理 Compose 自带的数据容器。
+示例文件已配置 PostgreSQL `10.211.55.30:5432`、Redis `10.211.55.30:6537` 且 Redis 无密码。部署前应创建拥有 `xsentinel` 库的专用 PostgreSQL 用户；应用无需超级用户权限。外部数据库/Redis 的备份、恢复、Exporter 和宿主机告警应在数据服务所在服务器配置，根目录的 `backup`/`restore` 目标只处理 Compose 自带的数据容器。
 
 不要直接执行不带服务名的 `docker compose -f docker-compose.yml -f docker-compose.external.yml up`，因为 Compose 仍会把基础文件中没有 profile 的本地数据服务纳入启动集合。
 
 ## 健康检查
 
 - `/api/v1/health/live`：API 进程是否存活。
-- `/api/v1/health/ready`：API、MySQL 与 Redis 是否可服务。
-- 管理台“系统设置”页：CPU、内存、磁盘、进程、MySQL、Redis、轮询 Worker、AI Worker 与 QQ Worker 心跳；页面每分钟自动刷新。
-- Prometheus：抓取前端 Nginx、API、轮询/AI/QQ Worker、MySQL、Redis 和宿主机 exporter。
+- `/api/v1/health/ready`：API、PostgreSQL 与 Redis 是否可服务。
+- 管理台“系统设置”页：CPU、内存、磁盘、进程、PostgreSQL、Redis、轮询 Worker、AI Worker 与 QQ Worker 心跳；页面每分钟自动刷新。
+- Prometheus：抓取前端 Nginx、API、轮询/AI/QQ Worker、PostgreSQL、Redis 和宿主机 exporter。
 - Grafana：预置 `X Sentinel Overview` Dashboard。
 
-预置 Prometheus 规则覆盖目标离线、Worker 心跳、轮询/AI/QQ 失败率与积压、API 5xx、主机内存/磁盘、MySQL 连接数和 Redis 内存。规则会出现在 Prometheus/Grafana，但项目没有预设外部通知接收方；生产环境应配置 Alertmanager 或 Grafana Contact Point。管理台的系统页仍会直接检查 API 所连接的 MySQL、Redis 和 Worker。
+预置 Prometheus 规则覆盖目标离线、Worker 心跳、轮询/AI/QQ 失败率与积压、API 5xx、主机内存/磁盘、PostgreSQL 连接数和 Redis 内存。规则会出现在 Prometheus/Grafana，但项目没有预设外部通知接收方；生产环境应配置 Alertmanager 或 Grafana Contact Point。管理台的系统页仍会直接检查 API 所连接的 PostgreSQL、Redis 和 Worker。
 
 Worker 容器还在运行但管理台显示心跳过期时，优先查看：
 
@@ -87,7 +87,7 @@ AI 专用指标为 `x_sentinel_ai_jobs_total{status,provider}`、`x_sentinel_ai_
 
 ## AI Worker 与 provider
 
-AI 默认关闭。先在管理台“AI 数据源”保存唯一的 OpenAI 兼容 Base URL、模型和 API Key 并完成连通测试，再到“AI 创作”启用功能。Key 加密写入 MySQL，Redis 仅缓存密文；模型、最大重试、请求超时与输出限制也由管理台维护。以下参数控制 Worker 本身：
+AI 默认关闭。先在管理台“AI 数据源”保存唯一的 OpenAI 兼容 Base URL、模型和 API Key 并完成连通测试，再到“AI 创作”启用功能。Key 加密写入 PostgreSQL，Redis 仅缓存密文；模型、最大重试、请求超时与输出限制也由管理台维护。以下参数控制 Worker 本身：
 
 - `AI_WORKER_SCAN_INTERVAL_SECONDS`：扫描到期任务的间隔，默认 `2`。
 - `AI_WORKER_MAX_CONCURRENCY`：单实例并发 provider 请求数，默认 `3`。
@@ -101,7 +101,7 @@ AI 默认关闭。先在管理台“AI 数据源”保存唯一的 OpenAI 兼容
 
 ## 备份
 
-备份脚本会生成事务一致的 MySQL dump、Redis RDB、元数据和 SHA-256 校验文件。默认保存到 `.env` 中的 `BACKUP_DIR`。
+备份脚本会生成事务一致的 PostgreSQL dump、Redis RDB、元数据和 SHA-256 校验文件。默认保存到 `.env` 中的 `BACKUP_DIR`。
 
 ```bash
 make backup
@@ -113,7 +113,7 @@ make backup
 
 ```text
 backups/20260831T120000Z/
-  mysql.sql.gz
+  postgres.sql.gz
   redis.rdb
   metadata.json
   SHA256SUMS
@@ -128,7 +128,7 @@ backups/20260831T120000Z/
 
 ## 恢复
 
-恢复会替换当前 MySQL 与 Redis 数据。脚本在操作前默认先为当前状态创建一份安全备份，并要求显式确认：
+恢复会替换当前 PostgreSQL 与 Redis 数据。脚本在操作前默认先为当前状态创建一份安全备份，并要求显式确认：
 
 ```bash
 make restore BACKUP=backups/20260831T120000Z CONFIRM_RESTORE=yes
@@ -144,8 +144,8 @@ make prod-restore BACKUP=backups/20260831T120000Z CONFIRM_RESTORE=yes
 
 1. 校验 `SHA256SUMS`。
 2. 备份当前状态。
-3. 停止 API、轮询 Worker 和 AI Worker 写入。
-4. 重建目标 MySQL 数据库并导入 dump，把 Redis RDB 安装为 Redis 7 AOF base 文件。
+3. 停止 API、轮询、AI、QQ 和小红书 Worker 写入。
+4. 重建目标 PostgreSQL 数据库并导入 dump，把 Redis RDB 安装为 Redis 7 AOF base 文件。
 5. 验证 Redis 备份标记，应用当前 Alembic 迁移，再重启应用。
 
 恢复完成后检查账号数量、最近 Post、AI 任务/草稿、QQ 投递、最近轮询记录和各 Worker 心跳。
@@ -153,6 +153,8 @@ make prod-restore BACKUP=backups/20260831T120000Z CONFIRM_RESTORE=yes
 ## 数据库迁移
 
 项目同时提供开发期自动建表和 Alembic。开发环境可保留 `AUTO_CREATE_TABLES=true`；生产覆盖配置强制关闭自动建表，并在启动 API/Worker 前通过 `migrate` 一次性服务执行迁移：
+
+本版本以空 PostgreSQL 数据库初始化为前提，不包含 MySQL 数据导入或双写兼容层。旧 MySQL 数据卷不会被 Compose 自动删除，也不会被新服务读取。
 
 ```bash
 make migrate
@@ -164,16 +166,16 @@ make external-migrate ENV_FILE=.env.external
 
 ## 密码轮换与持久卷
 
-MySQL 官方镜像的 `MYSQL_*` 初始化变量只在空数据目录第一次启动时创建或设置账号。已有 `mysql_data` 卷时，仅修改 `.env` 不会修改数据库内密码，反而会让应用、健康检查或 Exporter 无法登录。
+PostgreSQL 官方镜像的 `POSTGRES_*` 初始化变量只在空数据目录第一次启动时创建或设置账号。已有 `postgres_data` 卷时，仅修改 `.env` 不会修改数据库内密码，反而会让应用、健康检查或 Exporter 无法登录。
 
 推荐轮换顺序：
 
 1. 执行 `make prod-backup` 并验证备份。
-2. 使用当前管理员凭据连接 MySQL，先执行 `SELECT user, host FROM mysql.user` 确认准确账号与 host，再对专用应用用户/Exporter 用户执行 `ALTER USER ... IDENTIFIED BY ...`。
+2. 使用当前管理员凭据通过 `psql` 连接 PostgreSQL，执行 `\du` 确认角色，再使用 `\password xsentinel` 和 `\password exporter` 交互式修改相应角色的密码（应用角色名以实际配置为准）。
 3. 立即把相同新值写入权限为 `0600` 的 `.env`，再重建相关容器：`make prod-up`。
 4. 验证 readiness、Worker 心跳、Exporter 和登录，再撤销旧凭据。
 
-不要猜测 `root` 的 host 部分，也不要把密码直接写进 shell 历史。Grafana 的管理员环境变量同样不是现有数据卷的通用密码重置机制；已有实例应先通过 Grafana UI/CLI 修改，再同步部署配置。
+不要把密码直接写进 shell 历史。Grafana 的管理员环境变量同样不是现有数据卷的通用密码重置机制；已有实例应先通过 Grafana UI/CLI 修改，再同步部署配置。
 
 ## 日志与排错
 
@@ -182,7 +184,7 @@ MySQL 官方镜像的 `MYSQL_*` 初始化变量只在空数据目录第一次启
 docker compose logs -f --tail=200 backend worker ai-worker qq-worker frontend
 
 # 数据库日志
-docker compose logs --tail=200 mysql
+docker compose logs --tail=200 postgres
 
 # Redis 日志
 docker compose logs --tail=200 redis
@@ -196,7 +198,7 @@ docker compose --profile monitoring logs --tail=200 prometheus grafana
 1. 确认 `worker` 容器健康且管理台心跳正常。
 2. 在“X 数据源”确认当前模式并测试对应凭据；官方模式还需确认 X 账户有余额且接口权限足够，twscrape 模式需确认 Cookie 会话仍有效。
 3. 查看 Worker 日志和该账号最近的轮询记录。
-4. 检查 MySQL/Redis 是否可用；立即轮询令牌持久化在 MySQL，Redis 负责每账号互斥和全局 X API 闸门。
+4. 检查 PostgreSQL/Redis 是否可用；立即轮询令牌持久化在 PostgreSQL，Redis 负责每账号互斥和全局 X API 闸门。
 
 ### 出现 429
 
@@ -212,13 +214,13 @@ docker compose --profile monitoring logs --tail=200 prometheus grafana
 
 ### 登录失败
 
-- 首次初始化时，管理员密码会以哈希写入 MySQL。
+- 首次初始化时，管理员密码会以哈希写入 PostgreSQL。
 - 修改已有环境的 `ADMIN_PASSWORD` 不应被当作自动密码重置机制；应按团队变更流程更新管理员凭据，或在确认可丢弃本地数据的全新环境重新初始化。
 - 检查浏览器请求是否到达 `/api/v1/auth/login`，以及 Nginx 与 API 日志。
 
 ### 磁盘持续增长
 
-- 查看 MySQL 数据卷、日志与 Prometheus 保留期。
+- 查看 PostgreSQL 数据卷、日志与 Prometheus 保留期。
 - `PROMETHEUS_RETENTION` 默认 `15d`，可按磁盘预算缩短。
 - Post 与轮询审计数据目前是业务记录，不会被浏览器缓存替代；如需自动清理，应先确定合规保留期，再增加数据库归档任务。
 
@@ -230,4 +232,4 @@ docker compose --profile monitoring logs --tail=200 prometheus grafana
 docker compose down
 ```
 
-不要在未备份并确认的情况下使用 `docker compose down -v`；`-v` 会删除 MySQL、Redis、Prometheus 和 Grafana 的命名卷。
+不要在未备份并确认的情况下使用 `docker compose down -v`；`-v` 会删除 PostgreSQL、Redis、Prometheus 和 Grafana 的命名卷。

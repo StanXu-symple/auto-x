@@ -48,15 +48,15 @@ def upgrade() -> None:
                  error, started_at, completed_at, created_at, updated_at)
             SELECT article_publish_attempt_id, article_id, 'qq',
                    CASE
-                       WHEN SUM(status IN ('failed', 'cancelled')) > 0 THEN 'failed'
-                       WHEN SUM(status <> 'sent') = 0 THEN 'published'
+                       WHEN COUNT(*) FILTER (WHERE status IN ('failed', 'cancelled')) > 0 THEN 'failed'
+                       WHEN COUNT(*) FILTER (WHERE status <> 'sent') = 0 THEN 'published'
                        ELSE 'queued'
                    END,
-                   CONCAT(MAX(bot_name), ' · ', COUNT(DISTINCT group_openid), ' 个群'),
+                   MAX(bot_name) || ' · ' || COUNT(DISTINCT group_openid)::text || ' 个群',
                    COUNT(*), MAX(last_error), MIN(COALESCE(started_at, created_at)),
                    CASE
-                       WHEN SUM(status IN ('failed', 'cancelled')) > 0
-                            OR SUM(status <> 'sent') = 0
+                       WHEN COUNT(*) FILTER (WHERE status IN ('failed', 'cancelled')) > 0
+                            OR COUNT(*) FILTER (WHERE status <> 'sent') = 0
                        THEN MAX(completed_at)
                        ELSE NULL
                    END,

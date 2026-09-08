@@ -18,13 +18,13 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             """
-            INSERT INTO app_settings (`key`, value, updated_at)
-            VALUES ('x_source', JSON_OBJECT('provider', 'official_api'), UTC_TIMESTAMP())
-            ON DUPLICATE KEY UPDATE `key` = VALUES(`key`)
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES ('x_source', '{"provider":"official_api"}'::json, CURRENT_TIMESTAMP)
+            ON CONFLICT (key) DO NOTHING
             """
         )
     )
 
 
 def downgrade() -> None:
-    op.execute(sa.text("DELETE FROM app_settings WHERE `key` = 'x_source'"))
+    op.execute(sa.text("DELETE FROM app_settings WHERE key = 'x_source'"))

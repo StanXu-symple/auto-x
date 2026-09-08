@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy.dialects import mysql
+from sqlalchemy.dialects import postgresql
 
 from app.models.ai import AIFeature, AISetting, AISkill
 from app.models.tweet import Tweet
@@ -97,9 +97,9 @@ async def test_auto_enqueue_is_idempotent_and_freezes_skill_audit_snapshot(
     assert inserted == 1
     assert len(session.statements) == 1
     statement = session.statements[0]
-    sql = str(statement.compile(dialect=mysql.dialect())).upper()
-    params = statement.compile(dialect=mysql.dialect()).params
-    assert "ON DUPLICATE KEY UPDATE" in sql
+    sql = str(statement.compile(dialect=postgresql.dialect())).upper()
+    params = statement.compile(dialect=postgresql.dialect()).params
+    assert "ON CONFLICT (IDEMPOTENCY_KEY) DO NOTHING" in sql
     snapshots = [value for key, value in params.items() if key.startswith("skill_snapshot")]
     assert snapshots[0][0]["instructions"] == "frozen instructions"
     request_snapshots = [

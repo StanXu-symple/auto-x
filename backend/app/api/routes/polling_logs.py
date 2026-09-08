@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentAdmin, DbSession
-from app.core.time import to_mysql_utc_naive
+from app.core.time import to_database_utc
 from app.models.monitored_user import MonitoredUser
 from app.models.polling_log import PollingLog
 from app.schemas.common import Page
@@ -52,9 +52,9 @@ async def list_polling_logs(
     if trigger:
         conditions.append(PollingLog.trigger == trigger)
     if started_after:
-        conditions.append(PollingLog.started_at >= to_mysql_utc_naive(started_after))
+        conditions.append(PollingLog.started_at >= to_database_utc(started_after))
     if started_before:
-        conditions.append(PollingLog.started_at <= to_mysql_utc_naive(started_before))
+        conditions.append(PollingLog.started_at <= to_database_utc(started_before))
 
     joined = PollingLog.__table__.join(
         MonitoredUser.__table__, PollingLog.monitored_user_id == MonitoredUser.id

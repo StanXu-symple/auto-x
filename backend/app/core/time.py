@@ -8,6 +8,6 @@ def as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def to_mysql_utc_naive(value: datetime) -> datetime:
-    """MySQL 5.7 DATETIME has no offset; bind a UTC-normalized naive value."""
-    return as_utc(value).replace(tzinfo=None)
+def to_database_utc(value: datetime) -> datetime:
+    """Normalize database filter values to UTC while preserving naive compatibility."""
+    return as_utc(value)

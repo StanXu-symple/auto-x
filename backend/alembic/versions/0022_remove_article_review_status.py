@@ -23,7 +23,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.add_column(
         "ai_settings",
-        sa.Column("require_review", sa.Boolean(), server_default="1", nullable=False),
+        sa.Column("require_review", sa.Boolean(), server_default=sa.true(), nullable=False),
     )
     op.add_column(
         "ai_drafts",

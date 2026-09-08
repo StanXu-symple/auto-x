@@ -1,6 +1,6 @@
 from contextlib import AbstractAsyncContextManager
 
-from sqlalchemy.dialects import mysql
+from sqlalchemy.dialects import postgresql
 
 from app.core.config import Settings
 from app.db import init_db
@@ -40,13 +40,14 @@ class FakeSession:
         self.statements.append(statement)
 
 
-async def test_seed_statements_are_race_safe_mysql_upserts(monkeypatch) -> None:
+async def test_seed_statements_are_race_safe_postgres_upserts(monkeypatch) -> None:
     session = FakeSession()
     monkeypatch.setattr(init_db, "AsyncSessionFactory", lambda: session)
     settings = Settings(_env_file=None)
     await init_db.seed_runtime_defaults(settings)
     # Administrator, polling/X source settings, three skills, AI feature/settings.
-    assert len(session.statements) == 9
+    assert len(session.statements) == 8
     for statement in session.statements:
-        sql = str(statement.compile(dialect=mysql.dialect())).upper()
-        assert "ON DUPLICATE KEY UPDATE" in sql
+        sql = str(statement.compile(dialect=postgresql.dialect())).upper()
+        assert "ON CONFLICT" in sql
+        assert "DO NOTHING" in sql

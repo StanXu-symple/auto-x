@@ -1,6 +1,6 @@
 # X Sentinel Console
 
-X Sentinel 的 Vue 3 管理控制台，用于管理 X/Twitter 监听账号、查看采集内容与轮询记录，并监控服务器、MySQL、Redis 和 Worker 状态。
+X Sentinel 的 Vue 3 管理控制台，用于管理 X/Twitter 监听账号、查看采集内容与轮询记录，并监控服务器、PostgreSQL、Redis 和 Worker 状态。
 
 ## 技术栈
 

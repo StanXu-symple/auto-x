@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Index, Integer, String, Text, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, utcnow
@@ -16,9 +16,9 @@ class MonitoredUser(Base):
         String(32), unique=True, nullable=True, index=True
     )
     display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
-    include_replies: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
-    include_retweets: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    include_replies: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    include_retweets: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     poll_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="idle", server_default="idle")
     last_tweet_id: Mapped[str | None] = mapped_column(String(32), nullable=True)

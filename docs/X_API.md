@@ -7,7 +7,7 @@
 - `official_api`：保留原有 App-only Bearer Token 管理和官方 X API v2 读取。
 - `twscrape`：使用专用 X 账号的 `auth_token`、`ct0` Cookie，通过 twscrape 读取网页 GraphQL。
 
-当前选择保存在 MySQL `app_settings.x_source`。Worker 的每次读取都会重新获取该值并路由到对应客户端；切换模式会清除全局认证/限流闸门，并把活跃监听账号重新排队，无需重启服务。两类凭据分别加密保存，可同时保留，切换模式不会删除另一套凭据。
+当前选择保存在 PostgreSQL `app_settings.x_source`。Worker 的每次读取都会重新获取该值并路由到对应客户端；切换模式会清除全局认证/限流闸门，并把活跃监听账号重新排队，无需重启服务。两类凭据分别加密保存，可同时保留，切换模式不会删除另一套凭据。
 
 ## 使用的官方接口
 
@@ -27,7 +27,7 @@ X Sentinel 采用 X API v2 的服务端 Bearer Token：
 
 ## 凭据
 
-在 X Developer Console 创建 App 并生成 Bearer Token。登录管理台的“X 数据源”，选择官方 X API，再选择 Developer Console 或 API Key/Secret 换取方式，按引导获取后粘贴保存。Token 使用 `X_TOKEN_ENCRYPTION_KEY` 加密持久化到 MySQL，Redis 仅临时缓存密文；不要把真实 Token 写入代码、镜像或提交记录。
+在 X Developer Console 创建 App 并生成 Bearer Token。登录管理台的“X 数据源”，选择官方 X API，再选择 Developer Console 或 API Key/Secret 换取方式，按引导获取后粘贴保存。Token 使用 `X_TOKEN_ENCRYPTION_KEY` 加密持久化到 PostgreSQL，Redis 仅临时缓存密文；不要把真实 Token 写入代码、镜像或提交记录。
 
 官方认证资料：
 
@@ -37,7 +37,7 @@ X Sentinel 采用 X API v2 的服务端 Bearer Token：
 
 ### twscrape Cookies
 
-建议创建只用于读取的专用 X 账号，在已登录浏览器的开发者工具中复制 `https://x.com` 下的 `auth_token` 和 `ct0`。管理台保存时把二者作为一个 JSON 凭据包加密到 MySQL，Redis 只缓存密文。twscrape 本身需要 SQLite 账号池，Worker 只在系统临时目录创建权限 `0600` 的运行时数据库，凭据轮换或 Worker 退出时删除。
+建议创建只用于读取的专用 X 账号，在已登录浏览器的开发者工具中复制 `https://x.com` 下的 `auth_token` 和 `ct0`。管理台保存时把二者作为一个 JSON 凭据包加密到 PostgreSQL，Redis 只缓存密文。twscrape 本身需要 SQLite 账号池，Worker 只在系统临时目录创建权限 `0600` 的运行时数据库，凭据轮换或 Worker 退出时删除。
 
 twscrape 属于非官方方案，不保证长期可用。Cookie 代表登录会话，不得使用个人主账号、不得分享或写入日志；若账号出现异常登录、验证码或限制，应立即停用该模式并在 X 中撤销会话。使用前应自行确认 [twscrape 项目说明](https://github.com/vladkens/twscrape) 与 [X 服务条款](https://x.com/en/tos)。
 

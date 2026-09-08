@@ -2,7 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    false,
+    true,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, utcnow
@@ -17,7 +29,7 @@ class QQBotAccount(Base):
     encrypted_app_secret: Mapped[str] = mapped_column(Text)
     secret_hint: Mapped[str] = mapped_column(String(16))
     secret_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
-    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     verification_status: Mapped[str] = mapped_column(
         String(24), default="unverified", server_default="unverified"
     )
@@ -65,8 +77,10 @@ class QQNotificationTarget(Base):
     )
     name: Mapped[str] = mapped_column(String(100))
     group_openid: Mapped[str] = mapped_column(String(128))
-    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
-    all_monitored_users: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    all_monitored_users: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
     message_template: Mapped[str] = mapped_column(Text)
     template_variables: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -104,7 +118,7 @@ class QQScheduledTask(Base):
     run_time: Mapped[str] = mapped_column(String(8))
     weekdays: Mapped[str] = mapped_column(String(32), default="")
     month_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

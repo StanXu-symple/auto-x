@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select
-from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai import (
@@ -268,10 +268,8 @@ async def enqueue_auto_jobs(session: AsyncSession, tweet_ids: list[int]) -> int:
             "created_at": now,
             "updated_at": now,
         })
-    statement = mysql_insert(AIGenerationJob).values(values)
-    statement = statement.on_duplicate_key_update(
-        idempotency_key=statement.inserted.idempotency_key
-    )
+    statement = postgres_insert(AIGenerationJob).values(values)
+    statement = statement.on_conflict_do_nothing(index_elements=[AIGenerationJob.idempotency_key])
     await session.execute(statement)
     return len(set(keys) - existing)
 

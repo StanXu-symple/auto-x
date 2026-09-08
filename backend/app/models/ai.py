@@ -9,10 +9,13 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     String,
     Text,
+    false,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,12 +25,16 @@ from app.db.base import Base, utcnow
 class AISkill(Base):
     __tablename__ = "ai_skills"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        Integer, Identity(start=1000), primary_key=True, autoincrement=True
+    )
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     instructions: Mapped[str] = mapped_column(Text)
     output_schema: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", index=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), index=True
+    )
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     remote_skill_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     remote_skill_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -40,12 +47,14 @@ class AISkill(Base):
 class AIFeature(Base):
     __tablename__ = "ai_features"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        Integer, Identity(start=1000), primary_key=True, autoincrement=True
+    )
     code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     base_prompt: Mapped[str] = mapped_column(Text)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -75,7 +84,7 @@ class AIUserSkillBinding(Base):
         ForeignKey("ai_skills.id", ondelete="CASCADE"), index=True
     )
     priority: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -109,8 +118,8 @@ class AISetting(Base):
 
     # A singleton row (id=1) keeps updates transactional and easy to lock.
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    auto_generate: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    auto_generate: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     provider: Mapped[str] = mapped_column(
         String(32), default="openai_responses", server_default="openai_responses"
     )
@@ -167,7 +176,7 @@ class AIGenerationJob(Base):
     )
     claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
     claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    manual: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    manual: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     request_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     response_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

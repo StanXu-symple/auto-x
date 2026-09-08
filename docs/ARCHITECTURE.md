@@ -2,14 +2,14 @@
 
 ## 目标
 
-X Sentinel 是一个面向单团队/单管理员的 X（Twitter）公开账号监控与 AI 草稿系统。管理员可以在运行时新增、暂停、恢复或删除监听账号，并为每个账号单独调整轮询周期。系统将拉取到的公开 Post 持久化到 MySQL，使用 Redis 完成分布式互斥、Worker 心跳和短期缓存，并可通过独立 AI Worker 调用统一的 OpenAI 兼容数据源生成待人工审阅的草稿。
+X Sentinel 是一个面向单团队/单管理员的 X（Twitter）公开账号监控与 AI 草稿系统。管理员可以在运行时新增、暂停、恢复或删除监听账号，并为每个账号单独调整轮询周期。系统将拉取到的公开 Post 持久化到 PostgreSQL，使用 Redis 完成分布式互斥、Worker 心跳和短期缓存，并可通过独立 AI Worker 调用统一的 OpenAI 兼容数据源生成待人工审阅的草稿。
 
 X 数据源可选择官方 API 或管理员显式启用的实验性 twscrape 模式；后者仅用于专用账号的 Cookie 会话，存在失效与账号限制风险。
 
 ## 组件图
 
 ```text
-Browser -> Nginx / Vue -> FastAPI ---------> MySQL 8
+Browser -> Nginx / Vue -> FastAPI ---------> PostgreSQL 17
                             |                  ^  ^
                             v                  |  |
                           Redis 7 <-> Polling Worker -> X API v2
@@ -27,7 +27,7 @@ Prometheus -> Nginx + FastAPI + Workers + exporters -> Grafana
 
 - API 只处理管理请求和查询，不会因为某个 X 请求缓慢而阻塞管理台。
 - Worker 可以独立扩容；Redis 锁保证多个 Worker 不会同时轮询同一个账号。
-- 轮询配置存在 MySQL 中，Worker 每个调度 tick 都读取已到期记录，因此新增账号或调整周期无需重启。
+- 轮询配置存在 PostgreSQL 中，Worker 每个调度 tick 都读取已到期记录，因此新增账号或调整周期无需重启。
 - Worker 心跳存在 Redis 中，API 可从管理台明确显示“服务在线但 Worker 已停止”的异常状态。
 - AI Worker 独立领取生成任务，因此慢模型请求、超时或 provider 限流不会占用 API 和轮询 Worker；AI provider 密钥也只需注入该进程。
 
@@ -58,8 +58,8 @@ Prometheus -> Nginx + FastAPI + Workers + exporters -> Grafana
 ## QQ 通知流程
 
 1. 管理员在 Sentinel 配置一个或多个 QQ 机器人，并为每个机器人创建多个群目标。
-2. 群目标可以订阅全部监听账号或指定账号；AppSecret 加密写入 MySQL，API 永不返回明文。
-3. 新推文入库时，同一 MySQL 事务创建幂等 QQ Delivery Outbox 行；提交后将 Delivery ID 写入 Redis List 唤醒 Worker。
+2. 群目标可以订阅全部监听账号或指定账号；AppSecret 加密写入 PostgreSQL，API 永不返回明文。
+3. 新推文入库时，同一 PostgreSQL 事务创建幂等 QQ Delivery Outbox 行；提交后将 Delivery ID 写入 Redis List 唤醒 Worker。
 4. 独立 QQ Worker 同时消费 Redis 通知并扫描数据库到期任务，Redis 短暂故障不会丢失投递。
 5. Worker 使用数据库 claim token、Redis 锁和租约避免重复发送，通过 NoneBot2 官方 QQ 适配器投递，并持久化成功、失败和指数退避重试状态。
 
@@ -96,11 +96,11 @@ Prometheus -> Nginx + FastAPI + Workers + exporters -> Grafana
 ## 可靠性设计
 
 - **去重：** X Post id 唯一约束。
-- **并发控制：** Worker 全局并发上限 + 每账号 Redis 锁 + MySQL `poll_generation` fencing，失去租约的旧任务不能提交业务状态。
+- **并发控制：** Worker 全局并发上限 + 每账号 Redis 锁 + PostgreSQL `poll_generation` fencing，失去租约的旧任务不能提交业务状态。
 - **AI 并发控制：** 独立并发/批量上限、数据库 claim token 和 Redis 租约共同避免重复生成；任务结果仍以数据库状态为准。
 - **故障恢复：** 网络错误采用指数退避；锁和心跳均有 TTL，进程崩溃后会自动恢复。
 - **限流处理：** 读取 X 限流响应头，避免在窗口重置前反复请求。
-- **健康检查：** liveness 只验证进程；readiness 同时验证 MySQL 与 Redis。
+- **健康检查：** liveness 只验证进程；readiness 同时验证 PostgreSQL 与 Redis。
 - **优雅退出：** API、轮询 Worker 和 AI Worker 响应终止信号，停止接收新任务并完成/取消在途工作。
 - **可观测性：** 结构化日志、轮询审计表、Prometheus 指标、Grafana 面板。
 

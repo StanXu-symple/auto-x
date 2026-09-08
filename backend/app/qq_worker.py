@@ -118,7 +118,7 @@ def register_group_event_handlers() -> None:
 
 
 async def load_inbound_bot_infos() -> list[BotInfo]:
-    """Build webhook bot entries from the encrypted bot accounts in MySQL."""
+    """Build webhook bot entries from the encrypted bot accounts in PostgreSQL."""
     async with AsyncSessionFactory() as session:
         rows = (
             await session.scalars(select(QQBotAccount).where(QQBotAccount.is_enabled.is_(True)))

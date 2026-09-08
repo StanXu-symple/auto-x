@@ -26,11 +26,11 @@ value_for() {
   printf '%s\n' "${value}"
 }
 
-required=(MYSQL_DATABASE MYSQL_USER MYSQL_PASSWORD JWT_SECRET_KEY ADMIN_USERNAME ADMIN_PASSWORD X_TOKEN_ENCRYPTION_KEY CORS_ORIGINS)
+required=(POSTGRES_DATABASE POSTGRES_USER POSTGRES_PASSWORD JWT_SECRET_KEY ADMIN_USERNAME ADMIN_PASSWORD X_TOKEN_ENCRYPTION_KEY CORS_ORIGINS)
 if [[ "${mode}" == "external" ]]; then
-  required+=(MYSQL_HOST MYSQL_PORT REDIS_HOST REDIS_PORT)
+  required+=(POSTGRES_HOST POSTGRES_PORT REDIS_HOST REDIS_PORT)
 else
-  required+=(MYSQL_ROOT_PASSWORD MYSQL_EXPORTER_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD)
+  required+=(POSTGRES_EXPORTER_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD)
 fi
 
 failed=false
@@ -69,7 +69,7 @@ done
 jwt_secret="$(value_for JWT_SECRET_KEY)"
 admin_password="$(value_for ADMIN_PASSWORD)"
 x_token_encryption_key="$(value_for X_TOKEN_ENCRYPTION_KEY)"
-mysql_database="$(value_for MYSQL_DATABASE)"
+postgres_database="$(value_for POSTGRES_DATABASE)"
 if (( ${#jwt_secret} < 32 )); then
   echo >&2 "JWT_SECRET_KEY must contain at least 32 characters"
   failed=true
@@ -82,15 +82,15 @@ if (( ${#x_token_encryption_key} < 32 )); then
   echo >&2 "X_TOKEN_ENCRYPTION_KEY must contain at least 32 characters"
   failed=true
 fi
-if [[ ! "${mysql_database}" =~ ^[A-Za-z0-9_]+$ ]]; then
-  echo >&2 "MYSQL_DATABASE may contain only letters, numbers, and underscores"
+if [[ ! "${postgres_database}" =~ ^[A-Za-z0-9_]+$ ]]; then
+  echo >&2 "POSTGRES_DATABASE may contain only letters, numbers, and underscores"
   failed=true
 fi
 
 if [[ "${mode}" != "external" ]]; then
-  exporter_password="$(value_for MYSQL_EXPORTER_PASSWORD)"
+  exporter_password="$(value_for POSTGRES_EXPORTER_PASSWORD)"
   if [[ ! "${exporter_password}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
-    echo >&2 "MYSQL_EXPORTER_PASSWORD may contain only letters, numbers, dot, underscore, or hyphen"
+    echo >&2 "POSTGRES_EXPORTER_PASSWORD may contain only letters, numbers, dot, underscore, or hyphen"
     failed=true
   fi
 fi

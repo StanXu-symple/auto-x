@@ -4,7 +4,7 @@ Revision ID: 0002_polling_fencing
 Revises: 0001_initial
 Create Date: 2026-08-31
 
-The migration uses operations supported by MySQL 5.7. It intentionally avoids
+The migration uses portable Alembic operations and intentionally avoids
 ``ADD COLUMN IF NOT EXISTS`` because that syntax is version-dependent.
 """
 

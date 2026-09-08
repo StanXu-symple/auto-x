@@ -43,18 +43,16 @@ CPU_SAMPLER = CumulativeCPUSampler()
 async def _database_resources(session: AsyncSession) -> dict[str, Any]:
     result = await session.execute(
         text(
-            "SHOW GLOBAL STATUS WHERE Variable_name IN "
-            "('Cpu_time', 'Innodb_buffer_pool_bytes_data')"
+            "SELECT pg_database_size(current_database()), "
+            "COALESCE((SELECT SUM(pg_total_relation_size(oid)) FROM pg_class "
+            "WHERE relkind IN ('r', 'm', 't')), 0)"
         )
     )
-    values = {str(row[0]).lower(): str(row[1]) for row in result}
-    total_bytes = int(await session.scalar(text("SELECT @@innodb_buffer_pool_size")) or 0)
-    used_bytes = int(values.get("innodb_buffer_pool_bytes_data", 0))
-    cpu_time_ms = float(values["cpu_time"]) if "cpu_time" in values else None
+    total_raw, used_raw = result.one()
+    total_bytes = int(total_raw or 0)
+    used_bytes = int(used_raw or 0)
     return {
-        "cpu_percent": (
-            CPU_SAMPLER.sample("mysql", cpu_time_ms / 1000) if cpu_time_ms is not None else None
-        ),
+        "cpu_percent": None,
         "memory_used_bytes": used_bytes,
         "memory_total_bytes": total_bytes,
         "memory_percent": round((used_bytes / total_bytes) * 100, 2) if total_bytes else None,

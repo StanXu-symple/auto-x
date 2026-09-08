@@ -46,7 +46,7 @@ const services = computed<ServiceHealth[]>(() => {
   if (server) {
     const values = [
       { name: 'API 服务', status: server.api.status, message: server.api.error },
-      { name: 'MySQL 数据库', status: server.database.status, latency_ms: server.database.latency_ms, message: server.database.error },
+      { name: 'PostgreSQL 数据库', status: server.database.status, latency_ms: server.database.latency_ms, message: server.database.error },
       { name: 'Redis 缓存', status: server.redis.status, latency_ms: server.redis.latency_ms, message: server.redis.error },
       { name: '轮询 Worker', status: server.worker.status, message: server.worker.error },
     ]
