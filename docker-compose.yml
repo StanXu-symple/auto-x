@@ -36,6 +36,22 @@ x-backend: &backend-common
     REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-redis}
     REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-3}
     REDIS_URL: ${REDIS_URL:-}
+    # Nacos bootstrap settings stay in the local environment so the process
+    # can fetch the remote document before opening database/Redis connections.
+    NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:-}
+    NACOS_NAMESPACE: ${NACOS_NAMESPACE:-public}
+    NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
+    NACOS_USERNAME: ${NACOS_USERNAME:-}
+    NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+    # An empty NACOS_SERVER_ADDR makes the application skip the remote source,
+    # so enabling the switch by default keeps direct Compose and installer
+    # deployments on the same configuration path without requiring Nacos for
+    # a legacy single-host .env.
+    NACOS_CONFIG_ENABLED: ${NACOS_CONFIG_ENABLED:-true}
+    NACOS_CONFIG_DATA_ID: ${NACOS_CONFIG_DATA_ID:-x-sentinel-config.json}
+    NACOS_CONFIG_GROUP: ${NACOS_CONFIG_GROUP:-}
+    NACOS_CONFIG_TIMEOUT_SECONDS: ${NACOS_CONFIG_TIMEOUT_SECONDS:-3}
+    NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
     JWT_SECRET_KEY: ${JWT_SECRET_KEY:-development-only-change-me}
     JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
     JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-480}

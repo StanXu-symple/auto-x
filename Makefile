@@ -5,10 +5,11 @@ COMPOSE := docker compose --env-file $(ENV_FILE) -f docker-compose.yml
 COMPOSE_MICROSERVICES := $(COMPOSE) -f docker-compose.microservices.yml
 COMPOSE_PROD := $(COMPOSE) -f docker-compose.prod.yml
 COMPOSE_EXTERNAL := $(COMPOSE) -f docker-compose.external.yml
+SYNC_REQUIRED_NACOS := $(PYTHON) infra/scripts/nacos-config.py --env-file "$(ENV_FILE)" --write-bootstrap --if-required --production
 
 .DEFAULT_GOAL := help
 
-.PHONY: help init config prod-config external-config validate-prod-env validate-external-env build up prod-up external-up down prod-down external-down \
+.PHONY: help init config nacos-config prod-config external-config validate-prod-env validate-external-env build up prod-up external-up down prod-down external-down \
 	restart logs ps monitor-up prod-monitor-up monitor-down migrate prod-migrate external-migrate backup prod-backup restore prod-restore test test-backend \
 	test-frontend shell-backend postgres redis-cli network-groups microservices-init microservices-up microservices-down
 
@@ -22,6 +23,9 @@ init: ## Create .env from .env.example without overwriting an existing file
 
 config: ## Validate the base Compose model
 	$(COMPOSE) config --quiet
+
+nacos-config: ## Seed or update the runtime configuration in Nacos Config
+	$(PYTHON) infra/scripts/nacos-config.py --env-file "$(ENV_FILE)" --write-bootstrap
 
 prod-config: ## Validate the production Compose model
 	$(COMPOSE_PROD) config --quiet
@@ -43,11 +47,15 @@ build: ## Build application images
 up: ## Build and start the core stack
 	$(COMPOSE) up -d --build
 
-prod-up: validate-prod-env ## Migrate, build and start the production stack
+prod-up: ## Sync required Nacos config, migrate, build and start production
+	$(SYNC_REQUIRED_NACOS)
+	$(MAKE) validate-prod-env ENV_FILE="$(ENV_FILE)"
 	$(COMPOSE_PROD) config --quiet
 	$(COMPOSE_PROD) up -d --build
 
-external-up: validate-external-env ## Migrate and start API, workers and frontend with external PostgreSQL/Redis
+external-up: ## Sync required Nacos config and start with external PostgreSQL/Redis
+	$(SYNC_REQUIRED_NACOS)
+	$(MAKE) validate-external-env ENV_FILE="$(ENV_FILE)"
 	$(COMPOSE_EXTERNAL) up -d --build backend worker ai-worker frontend
 
 down: ## Stop the core stack without deleting persistent data
@@ -76,16 +84,18 @@ microservices-init: ## Generate service topology and service-auth keys
 	./infra/scripts/microservices-init.sh
 
 network-groups: ## Create named Docker network groups from NETWORK_GROUPS
-	./infra/scripts/network-groups.sh
+	NETWORK_GROUPS_ENV_FILE="$(ENV_FILE)" ./infra/scripts/network-groups.sh
 
-microservices-up: microservices-init ## Start the auth center, monitoring center and node agent
+microservices-up: microservices-init network-groups ## Start the auth center, monitoring center and node agent
 	$(COMPOSE_MICROSERVICES) up -d backend auth-center monitor-center monitor-agent
 
 microservices-down: ## Stop the optional microservice control plane
 	$(COMPOSE_MICROSERVICES) stop auth-center monitor-center monitor-agent
 	$(COMPOSE_MICROSERVICES) rm -f auth-center monitor-center monitor-agent
 
-prod-monitor-up: validate-prod-env ## Start production services plus monitoring without changing deployment mode
+prod-monitor-up: ## Sync required Nacos config and start production plus monitoring
+	$(SYNC_REQUIRED_NACOS)
+	$(MAKE) validate-prod-env ENV_FILE="$(ENV_FILE)"
 	$(COMPOSE_PROD) --profile monitoring up -d --build
 
 monitor-down: ## Remove only optional monitoring containers (preserves metrics volumes)
@@ -96,11 +106,15 @@ migrate: ## Apply Alembic database migrations
 	$(COMPOSE) build migrate
 	$(COMPOSE) run --rm migrate
 
-prod-migrate: validate-prod-env ## Apply migrations with the production Compose model
+prod-migrate: ## Sync required Nacos config and apply production migrations
+	$(SYNC_REQUIRED_NACOS)
+	$(MAKE) validate-prod-env ENV_FILE="$(ENV_FILE)"
 	$(COMPOSE_PROD) build migrate
 	$(COMPOSE_PROD) run --rm migrate
 
-external-migrate: validate-external-env ## Apply migrations to configured external PostgreSQL without local data containers
+external-migrate: ## Sync required Nacos config and migrate external PostgreSQL
+	$(SYNC_REQUIRED_NACOS)
+	$(MAKE) validate-external-env ENV_FILE="$(ENV_FILE)"
 	$(COMPOSE_EXTERNAL) build migrate
 	$(COMPOSE_EXTERNAL) run --rm --no-deps migrate
 

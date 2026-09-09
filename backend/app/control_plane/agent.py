@@ -7,7 +7,15 @@ from datetime import UTC, datetime
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 
-from app.control_plane.config import Service, Topology, load_topology, read_secret
+from app.control_plane.config import (
+    Service,
+    Topology,
+    apply_runtime_topology,
+    load_runtime_config,
+    load_topology,
+    read_secret,
+    runtime_float,
+)
 from app.control_plane.contracts import ResourceSnapshot
 from app.control_plane.nacos import NacosClient, advertise_identity, heartbeat_loop
 from app.control_plane.resources import docker_resources, unavailable
@@ -126,57 +134,79 @@ class DockerCollector:
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        topology = load_topology()
+        local_topology = load_topology()
+        bootstrap_timeout = runtime_float(
+            {},
+            "nacos_config_timeout_seconds",
+            "NACOS_CONFIG_TIMEOUT_SECONDS",
+            3,
+            minimum=0.1,
+            maximum=30,
+        )
+        async with httpx.AsyncClient(timeout=bootstrap_timeout, trust_env=False) as bootstrap_http:
+            bootstrap_nacos = NacosClient(
+                bootstrap_http,
+                os.environ["NACOS_SERVER_ADDR"],
+                os.environ.get("NACOS_NAMESPACE", "public"),
+                os.environ.get("NACOS_GROUP", "X_SENTINEL"),
+                os.environ.get("NACOS_USERNAME", ""),
+                os.environ.get("NACOS_PASSWORD", ""),
+            )
+            runtime = await load_runtime_config(bootstrap_nacos)
+        topology = apply_runtime_topology(local_topology, runtime)
         node = os.environ.get("MONITOR_NODE_ID", "local")
         if node not in topology.nodes:
             raise ValueError("MONITOR_NODE_ID is not in the static topology")
         app.state.verifier = ServiceVerifier(
             read_secret("SERVICE_AUTH_PUBLIC_KEY_FILE"), f"agent:{node}", "resources:read"
         )
-        http_nacos = httpx.AsyncClient(timeout=topology.timeout_seconds, trust_env=False)
-        nacos = NacosClient(
-            http_nacos,
-            os.environ["NACOS_SERVER_ADDR"],
-            os.environ.get("NACOS_NAMESPACE", "public"),
-            os.environ.get("NACOS_GROUP", "X_SENTINEL"),
-            os.environ.get("NACOS_USERNAME", ""),
-            os.environ.get("NACOS_PASSWORD", ""),
-        )
-        ip, port = advertise_identity()
-        service_name = os.environ.get("NACOS_SERVICE_NAME", f"xsentinel-monitor-agent-{node}")
-        await nacos.register(service_name, ip, port)
-        beat = asyncio.create_task(heartbeat_loop(nacos, service_name, ip, port))
-        app.state.snapshot = None
-        transport = httpx.AsyncHTTPTransport(
-            uds=os.environ.get("DOCKER_SOCKET", "/var/run/docker.sock")
-        )
         async with httpx.AsyncClient(
-            transport=transport,
-            base_url="http://docker",
-            timeout=topology.timeout_seconds,
-            trust_env=False,
-        ) as http:
-            collector = DockerCollector(topology, node, http)
+            timeout=topology.timeout_seconds, trust_env=False
+        ) as http_nacos:
+            nacos = NacosClient(
+                http_nacos,
+                os.environ["NACOS_SERVER_ADDR"],
+                os.environ.get("NACOS_NAMESPACE", "public"),
+                os.environ.get("NACOS_GROUP", "X_SENTINEL"),
+                os.environ.get("NACOS_USERNAME", ""),
+                os.environ.get("NACOS_PASSWORD", ""),
+            )
+            ip, port = advertise_identity()
+            service_name = os.environ.get(
+                "NACOS_SERVICE_NAME", f"xsentinel-monitor-agent-{node}"
+            )
+            await nacos.register(service_name, ip, port)
+            beat = asyncio.create_task(heartbeat_loop(nacos, service_name, ip, port))
+            app.state.snapshot = None
+            transport = httpx.AsyncHTTPTransport(
+                uds=os.environ.get("DOCKER_SOCKET", "/var/run/docker.sock")
+            )
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://docker",
+                timeout=topology.timeout_seconds,
+                trust_env=False,
+            ) as http:
+                collector = DockerCollector(topology, node, http)
 
-            async def loop():
-                while True:
-                    try:
-                        app.state.snapshot = await collector.collect()
-                    except (httpx.HTTPError, ValueError, KeyError):
-                        app.state.snapshot = None
-                    await asyncio.sleep(topology.interval_seconds)
+                async def loop():
+                    while True:
+                        try:
+                            app.state.snapshot = await collector.collect()
+                        except (httpx.HTTPError, ValueError, KeyError):
+                            app.state.snapshot = None
+                        await asyncio.sleep(topology.interval_seconds)
 
-            task = asyncio.create_task(loop())
-            try:
-                yield
-            finally:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-                beat.cancel()
-                with suppress(asyncio.CancelledError):
-                    await beat
-        await http_nacos.aclose()
+                task = asyncio.create_task(loop())
+                try:
+                    yield
+                finally:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+                    beat.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await beat
 
     app = FastAPI(
         title="X Sentinel node agent",

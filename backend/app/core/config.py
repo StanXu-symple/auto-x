@@ -1,9 +1,336 @@
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import Mapping
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote, unquote, urlsplit
 
 from pydantic import AliasChoices, Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# These values are needed to reach Nacos itself and therefore must remain in
+# the process environment (or the local dotenv file). They are deliberately
+# never accepted from the remote document, so a bad/compromised config cannot
+# redirect the bootstrap client or replace its credentials.
+_NACOS_BOOTSTRAP_FIELDS = {
+    "nacos_server_addr",
+    "nacos_namespace",
+    "nacos_group",
+    "nacos_username",
+    "nacos_password",
+    "nacos_config_enabled",
+    "nacos_config_data_id",
+    "nacos_config_group",
+    "nacos_config_timeout_seconds",
+    "nacos_config_required",
+}
+
+# These values describe the process/container in which the application is
+# running. They must remain local so a shared Nacos document cannot make every
+# service bind to the same port, switch a deployment's transport mode, or use
+# another host's mounted secret file. Runtime tuning and shared data-service
+# coordinates remain eligible for Nacos Config.
+_NACOS_LOCAL_ONLY_FIELDS = {
+    "environment",
+    "debug",
+    "startup_strict",
+    "auto_create_tables",
+    "service_auth_url",
+    "monitor_center_url",
+    "service_client_secret_file",
+    "service_auth_public_key_file",
+    "nacos_service_name",
+    "nacos_advertise_ip",
+    "nacos_service_port",
+    "worker_metrics_port",
+    "ai_worker_metrics_port",
+    "qq_worker_port",
+    "qq_worker_metrics_port",
+    "xhs_worker_metrics_port",
+    "xhs_transport",
+    "xhs_service_name",
+    "xhs_service_port",
+    "xhs_service_advertise_ip",
+    "xhs_service_advertise_port",
+    # Provider credentials are stored encrypted in PostgreSQL by the data
+    # source UI.  Keep legacy environment fallbacks local instead of allowing
+    # a shared config document to become a second plaintext credential store.
+    "openai_api_key",
+    "codex_bridge_api_key",
+    # The administrator credential seeds a database row and must not be
+    # rotated implicitly by a shared remote document.  JWT/X-token keys are
+    # intentionally *not* listed here because replicas need the same values.
+    "admin_username",
+    "admin_password",
+}
+
+_POSTGRES_DSN_COMPONENT_FIELDS = {
+    "postgres_host",
+    "postgres_port",
+    "postgres_database",
+    "postgres_user",
+    "postgres_password",
+}
+_REDIS_URL_COMPONENT_FIELDS = {
+    "redis_host",
+    "redis_port",
+    "redis_db",
+    "redis_password",
+}
+
+
+def _normalise_key(value: object) -> str:
+    """Return a settings-compatible key for a flat or nested JSON document."""
+
+    key = str(value).strip().lower().replace("-", "_").replace(".", "_")
+    # Accept the names commonly used by PostgreSQL/Compose dotenv files while
+    # keeping the application's canonical field names stable.
+    if key == "postgresql":
+        return "postgres"
+    if key.startswith("postgresql_"):
+        return "postgres_" + key[len("postgresql_") :]
+    if key == "postgres_db":
+        return "postgres_database"
+    if key == "tz":
+        return "app_timezone"
+    return key
+
+
+def _flatten_config(value: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
+    """Flatten nested Nacos JSON while preserving arrays and scalar values.
+
+    Both of these forms are accepted, which makes the config document pleasant
+    to edit by hand and easy for the installer to generate::
+
+        {"postgres_host": "db", "redis_port": 6379}
+        {"postgres": {"host": "db"}, "redis": {"port": 6379}}
+    """
+
+    result: dict[str, Any] = {}
+    for raw_key, raw_value in value.items():
+        key = _normalise_key(raw_key)
+        if not key:
+            continue
+        # Normalize after joining the prefix as well. This handles aliases in
+        # nested documents, for example ``{"postgres": {"db": ...}}``.
+        full_key = _normalise_key(f"{prefix}_{key}" if prefix else key)
+        if isinstance(raw_value, Mapping):
+            result.update(_flatten_config(raw_value, full_key))
+        else:
+            result[full_key] = raw_value
+    return result
+
+
+def _non_empty(value: Any) -> Any:
+    """Treat empty bootstrap strings as unset while retaining false/zero values."""
+
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+class NacosConfigSettingsSource(PydanticBaseSettingsSource):
+    """Synchronous Nacos Config source used during Settings construction.
+
+    Settings are resolved while modules such as ``app.db.session`` are
+    imported, before an asyncio event loop exists. A small synchronous HTTP
+    request is therefore intentional here; runtime service-to-service calls
+    continue to use the async Nacos client.
+    """
+
+    def __init__(
+        self,
+        settings_cls: type[BaseSettings],
+        *,
+        env_settings: EnvSettingsSource,
+        dotenv_settings: DotEnvSettingsSource,
+        _init_state: Any = None,
+    ) -> None:
+        super().__init__(settings_cls, _init_state=_init_state)
+        self.env_settings = env_settings
+        self.dotenv_settings = dotenv_settings
+
+    def get_field_value(
+        self, field: FieldInfo, field_name: str
+    ) -> tuple[Any, str, bool]:  # pragma: no cover - source is mapping based
+        raise NotImplementedError("Nacos source resolves the complete document at once")
+
+    def __call__(self) -> dict[str, Any]:
+        bootstrap = self._bootstrap_values()
+        if not _as_bool(bootstrap.get("nacos_config_enabled"), default=True):
+            return {}
+
+        required = _as_bool(bootstrap.get("nacos_config_required"), default=False)
+        server = str(bootstrap.get("nacos_server_addr") or "").strip()
+        if not server:
+            if required:
+                raise RuntimeError(
+                    "NACOS_SERVER_ADDR must be configured when NACOS_CONFIG_REQUIRED=true"
+                )
+            return {}
+
+        namespace = str(bootstrap.get("nacos_namespace") or "public").strip() or "public"
+        naming_group = str(bootstrap.get("nacos_group") or "X_SENTINEL").strip()
+        config_group = str(bootstrap.get("nacos_config_group") or naming_group).strip()
+        data_id = (
+            str(bootstrap.get("nacos_config_data_id") or "x-sentinel-config.json").strip()
+            or "x-sentinel-config.json"
+        )
+        timeout = _as_float(bootstrap.get("nacos_config_timeout_seconds"), default=3.0)
+
+        client = None
+        try:
+            # Import lazily to keep core settings usable in tools that only
+            # install the settings package and to avoid import cycles.
+            from app.control_plane.nacos_config import NacosConfigClient
+
+            client = NacosConfigClient(
+                server=server,
+                namespace=namespace,
+                group=config_group,
+                username=str(bootstrap.get("nacos_username") or "").strip(),
+                password=str(bootstrap.get("nacos_password") or ""),
+                timeout=timeout,
+            )
+            payload = client.get_json_config(data_id)
+        except Exception as exc:  # noqa: BLE001 - startup fallback is intentional
+            message = f"Unable to load Nacos Config {data_id!r}: {exc}"
+            if required:
+                raise RuntimeError(message) from exc
+            logger.warning("%s; using local environment fallback", message)
+            return {}
+        finally:
+            if client is not None:
+                close = getattr(client, "close", None)
+                if close is not None:
+                    try:
+                        close()
+                    except Exception:  # noqa: BLE001 - cleanup must not mask config errors
+                        logger.debug("Failed to close temporary Nacos Config client", exc_info=True)
+
+        if payload is None:
+            message = f"Nacos Config {data_id!r} was not found in group {config_group!r}"
+            if required:
+                raise RuntimeError(message)
+            logger.warning("%s; using local environment fallback", message)
+            return {}
+        if not isinstance(payload, Mapping):
+            message = f"Nacos Config {data_id!r} must contain a JSON object"
+            if required:
+                raise RuntimeError(message)
+            logger.warning("%s; using local environment fallback", message)
+            return {}
+
+        fields = self.settings_cls.model_fields
+        # Map validation aliases as well as canonical field names. This keeps
+        # hand-written documents using legacy names such as
+        # ``codex_bridge_token`` compatible with the existing env contract.
+        field_keys: dict[str, str] = {}
+        for field_name, field in fields.items():
+            field_keys[_normalise_key(field_name)] = field_name
+            alias = field.validation_alias
+            if isinstance(alias, str):
+                field_keys[_normalise_key(alias)] = field_name
+            elif isinstance(alias, AliasChoices):
+                for choice in alias.choices:
+                    if isinstance(choice, str):
+                        field_keys[_normalise_key(choice)] = field_name
+        result: dict[str, Any] = {}
+        for raw_key, value in _flatten_config(payload).items():
+            # A JSON ``null`` is treated as an omitted setting. This lets an
+            # operator remove a remote override and fall back to the local
+            # value without making a non-nullable Pydantic field invalid.
+            if value is None:
+                continue
+            if (
+                raw_key in _NACOS_BOOTSTRAP_FIELDS
+                or raw_key not in field_keys
+            ):
+                continue
+            key = field_keys[raw_key]
+            if key in _NACOS_LOCAL_ONLY_FIELDS:
+                continue
+            field = fields[key]
+            # Values published by the shell installer are normally native JSON
+            # values. Also accept JSON-encoded arrays/objects for hand-written
+            # documents, matching pydantic-settings' dotenv behaviour.
+            if isinstance(value, str) and self.field_is_complex(field):
+                try:
+                    value = json.loads(value)
+                except (TypeError, ValueError):
+                    pass
+            # Pydantic treats a validation alias as the input key for a
+            # settings source. Emit the preferred alias when one exists;
+            # otherwise a canonical field name is sufficient.
+            target_key = key
+            alias = field.validation_alias
+            if isinstance(alias, str):
+                target_key = alias
+            elif isinstance(alias, AliasChoices) and alias.choices:
+                target_key = str(alias.choices[0])
+            result[target_key] = value
+        if "postgres_dsn" not in result and _POSTGRES_DSN_COMPONENT_FIELDS.intersection(result):
+            result["postgres_dsn"] = ""
+        if "redis_url" not in result and _REDIS_URL_COMPONENT_FIELDS.intersection(result):
+            result["redis_url"] = ""
+        return result
+
+    def _bootstrap_values(self) -> dict[str, Any]:
+        """Collect bootstrap keys from explicit init, process env and dotenv.
+
+        The source itself is ordered before regular env/dotenv sources so that
+        remote values take precedence for application settings. Bootstrap
+        values are merged in the opposite direction (init > process env >
+        dotenv) and are never returned as remote values.
+        """
+
+        merged: dict[str, Any] = {}
+        for source in (self.dotenv_settings.env_vars, self.env_settings.env_vars):
+            for raw_key, raw_value in source.items():
+                key = _normalise_key(raw_key)
+                if key in _NACOS_BOOTSTRAP_FIELDS:
+                    value = _non_empty(raw_value)
+                    if value is not None:
+                        merged[key] = value
+        for raw_key, raw_value in self.current_state.items():
+            key = _normalise_key(raw_key)
+            if key in _NACOS_BOOTSTRAP_FIELDS:
+                value = _non_empty(raw_value)
+                if value is not None:
+                    merged[key] = value
+        # ``current_state`` contains explicit init kwargs and must win over
+        # process env. The maps above are already dotenv < env < init.
+        return merged
+
+
+def _as_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _as_float(value: Any, *, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    # Match the validated Settings field and keep a malformed bootstrap value
+    # from turning startup into an unexpectedly long blocking request.
+    return parsed if 0 < parsed <= 30 else default
 
 
 class Settings(BaseSettings):
@@ -51,6 +378,13 @@ class Settings(BaseSettings):
     nacos_group: str = "X_SENTINEL"
     nacos_username: str = ""
     nacos_password: str = ""
+    # Nacos Config bootstrap. These values are intentionally local bootstrap
+    # settings; all application settings may be supplied by the remote JSON.
+    nacos_config_enabled: bool = True
+    nacos_config_data_id: str = "x-sentinel-config.json"
+    nacos_config_group: str = ""
+    nacos_config_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    nacos_config_required: bool = False
     nacos_service_name: str = "xsentinel-api"
     nacos_advertise_ip: str = ""
     nacos_service_port: int = Field(default=8000, ge=1, le=65535)
@@ -126,8 +460,35 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings,
+        env_settings: EnvSettingsSource,
+        dotenv_settings: DotEnvSettingsSource,
+        file_secret_settings,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # Nacos is deliberately before env/dotenv: once a remote key exists it
+        # is authoritative, while local values remain a useful fallback for
+        # first boot and for fields not yet migrated. Explicit constructor
+        # values retain the highest priority through init_settings.
+        nacos_settings = NacosConfigSettingsSource(
+            settings_cls,
+            env_settings=env_settings,
+            dotenv_settings=dotenv_settings,
+            _init_state=init_settings._init_state,
+        )
+        return (
+            init_settings,
+            nacos_settings,
+            env_settings,
+            dotenv_settings,
+            file_secret_settings,
+        )
+
     @model_validator(mode="after")
-    def validate_production_secrets(self) -> "Settings":
+    def validate_production_secrets(self) -> Settings:
         if bool(self.service_auth_url) != bool(self.monitor_center_url):
             raise ValueError("SERVICE_AUTH_URL and MONITOR_CENTER_URL must be configured together")
         if not self.postgres_dsn:

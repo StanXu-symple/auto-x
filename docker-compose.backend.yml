@@ -7,3 +7,17 @@ services:
     extends:
       file: docker-compose.yml
       service: frontend
+
+networks:
+  control:
+    name: ${CONTROL_NETWORK_NAME:-x-sentinel-control}
+    external: ${CONTROL_NETWORK_EXTERNAL:-true}
+  app:
+    name: ${APP_NETWORK_NAME:-x-sentinel_app}
+    external: ${APP_NETWORK_EXTERNAL:-true}
+  data:
+    name: ${DATA_NETWORK_NAME:-x-sentinel_data}
+    external: ${DATA_NETWORK_EXTERNAL:-true}
+  monitoring:
+    name: ${MONITORING_NETWORK_NAME:-x-sentinel_monitoring}
+    external: ${MONITORING_NETWORK_EXTERNAL:-true}

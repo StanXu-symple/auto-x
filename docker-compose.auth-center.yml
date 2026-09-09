@@ -3,3 +3,8 @@ services:
     extends:
       file: docker-compose.microservices.yml
       service: auth-center
+
+networks:
+  control:
+    name: ${CONTROL_NETWORK_NAME:-x-sentinel-control}
+    external: ${CONTROL_NETWORK_EXTERNAL:-true}

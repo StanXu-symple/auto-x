@@ -65,11 +65,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
+      # Shared application secrets and runtime tuning are resolved from Nacos.
+      # Data-service values remain a local Compose bootstrap cache.
       ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME must be set}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
-      X_TOKEN_ENCRYPTION_KEY: ${X_TOKEN_ENCRYPTION_KEY:?X_TOKEN_ENCRYPTION_KEY must be set}
-      CORS_ORIGINS: '${CORS_ORIGINS:?CORS_ORIGINS must be set}'
     restart: always
     deploy:
       resources:
@@ -89,11 +88,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
       ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME must be set}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
-      X_TOKEN_ENCRYPTION_KEY: ${X_TOKEN_ENCRYPTION_KEY:?X_TOKEN_ENCRYPTION_KEY must be set}
-      CORS_ORIGINS: '${CORS_ORIGINS:?CORS_ORIGINS must be set}'
     restart: always
     deploy:
       resources:
@@ -113,11 +109,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
       ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME must be set}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
-      X_TOKEN_ENCRYPTION_KEY: ${X_TOKEN_ENCRYPTION_KEY:?X_TOKEN_ENCRYPTION_KEY must be set}
-      CORS_ORIGINS: '${CORS_ORIGINS:?CORS_ORIGINS must be set}'
     restart: always
     deploy:
       resources:
@@ -141,11 +134,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
       ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME must be set}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
-      X_TOKEN_ENCRYPTION_KEY: ${X_TOKEN_ENCRYPTION_KEY:?X_TOKEN_ENCRYPTION_KEY must be set}
-      CORS_ORIGINS: '${CORS_ORIGINS:?CORS_ORIGINS must be set}'
     restart: always
     deploy:
       resources:
@@ -171,11 +161,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
       ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME must be set}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
-      X_TOKEN_ENCRYPTION_KEY: ${X_TOKEN_ENCRYPTION_KEY:?X_TOKEN_ENCRYPTION_KEY must be set}
-      CORS_ORIGINS: '${CORS_ORIGINS:?CORS_ORIGINS must be set}'
       XHS_BROWSER_POOL_SIZE: ${XHS_BROWSER_POOL_SIZE:-1}
       XHS_BROWSER_MAX_CONCURRENCY: ${XHS_BROWSER_MAX_CONCURRENCY:-1}
     restart: always

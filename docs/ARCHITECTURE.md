@@ -106,7 +106,7 @@ Prometheus -> Nginx + FastAPI + Workers + exporters -> Grafana
 
 ## 安全边界
 
-- 管理接口需要 JWT；初始管理员凭据、JWT 密钥与凭据加密主密钥来自环境变量，X/AI 访问凭据由管理台加密保存。
+- 管理接口需要 JWT；初始管理员凭据来自本机引导配置，JWT 密钥与凭据加密主密钥可由受 ACL 保护的 Nacos Config 统一提供（本机环境仍保留启动回退值），X/AI 访问凭据由管理台加密保存。
 - AI API Key 加密写入 `ai_data_sources`，Redis 仅缓存密文，API 不返回明文；任务快照只记录数据源名称和版本。
 - 原 Post、Skill 指令和必要上下文会发送到所选 AI provider。部署者需要自行确认数据处理协议、保留策略、地区与版权要求，并优先使用 HTTPS 和受控 Bridge。
 - 管理员配置的 provider URL 会收到对应 Authorization 凭据；API 与 AI Worker 以 `AI_ALLOWED_PROVIDER_HOSTS` 做 hostname allowlist，并要求携带凭据的非本机目标使用 HTTPS。生产部署还应在网络层重复限制出站目标，降低误配置或管理员账号失陷导致的密钥外泄风险。

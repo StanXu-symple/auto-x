@@ -12,7 +12,7 @@ import jwt
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, SecretStr
 
-from app.control_plane.config import read_secret
+from app.control_plane.config import load_runtime_config, read_secret, runtime_float, runtime_int
 from app.control_plane.contracts import ServiceTokenResponse
 from app.control_plane.nacos import NacosClient, advertise_identity, heartbeat_loop
 from app.control_plane.security import ISSUER
@@ -32,34 +32,67 @@ def create_app() -> FastAPI:
         jwt.encode({"check": True}, app.state.private_key, algorithm="RS256")
         app.state.clients = json.loads(read_secret("SERVICE_AUTH_CLIENTS_FILE"))
         app.state.requests = deque()
+        runtime = {}
         nacos = None
         beat = None
-        if os.environ.get("NACOS_SERVER_ADDR"):
-            http = httpx.AsyncClient(timeout=5, trust_env=False)
-            nacos = NacosClient(
-                http,
-                os.environ["NACOS_SERVER_ADDR"],
-                os.environ.get("NACOS_NAMESPACE", "public"),
-                os.environ.get("NACOS_GROUP", "X_SENTINEL"),
-                os.environ.get("NACOS_USERNAME", ""),
-                os.environ.get("NACOS_PASSWORD", ""),
-            )
-            ip, port = advertise_identity()
-            await nacos.register(
-                os.environ.get("NACOS_SERVICE_NAME", "xsentinel-auth-center"), ip, port
-            )
-            beat = asyncio.create_task(
-                heartbeat_loop(
-                    nacos, os.environ.get("NACOS_SERVICE_NAME", "xsentinel-auth-center"), ip, port
+        http = None
+        try:
+            if os.environ.get("NACOS_SERVER_ADDR"):
+                timeout = runtime_float(
+                    {},
+                    "nacos_config_timeout_seconds",
+                    "NACOS_CONFIG_TIMEOUT_SECONDS",
+                    3,
+                    minimum=0.1,
+                    maximum=30,
                 )
+                http = httpx.AsyncClient(timeout=timeout, trust_env=False)
+                nacos = NacosClient(
+                    http,
+                    os.environ["NACOS_SERVER_ADDR"],
+                    os.environ.get("NACOS_NAMESPACE", "public"),
+                    os.environ.get("NACOS_GROUP", "X_SENTINEL"),
+                    os.environ.get("NACOS_USERNAME", ""),
+                    os.environ.get("NACOS_PASSWORD", ""),
+                )
+                runtime = await load_runtime_config(nacos)
+                ip, port = advertise_identity()
+                service_name = os.environ.get(
+                    "NACOS_SERVICE_NAME", "xsentinel-auth-center"
+                )
+                await nacos.register(service_name, ip, port)
+                beat = asyncio.create_task(
+                    heartbeat_loop(nacos, service_name, ip, port)
+                )
+            else:
+                # Keep the same required/optional semantics as the main
+                # Settings source. In particular, do not silently start an
+                # auth center when production explicitly requires Nacos.
+                runtime = await load_runtime_config(None)
+            app.state.rate_limit = runtime_int(
+                runtime,
+                "service_auth_rate_limit",
+                "SERVICE_AUTH_RATE_LIMIT",
+                120,
+                minimum=1,
+                maximum=10000,
             )
-        yield
-        if beat:
-            beat.cancel()
-            with suppress(asyncio.CancelledError):
-                await beat
-        if nacos:
-            await nacos.http.aclose()
+            app.state.token_lifetime = runtime_int(
+                runtime,
+                "service_auth_token_lifetime_seconds",
+                "SERVICE_AUTH_TOKEN_LIFETIME_SECONDS",
+                120,
+                minimum=30,
+                maximum=3600,
+            )
+            yield
+        finally:
+            if beat:
+                beat.cancel()
+                with suppress(asyncio.CancelledError):
+                    await beat
+            if http:
+                await http.aclose()
 
     app = FastAPI(
         title="X Sentinel service authentication",
@@ -79,7 +112,7 @@ def create_app() -> FastAPI:
         requests = app.state.requests
         while requests and requests[0] < now - 60:
             requests.popleft()
-        if len(requests) >= int(os.environ.get("SERVICE_AUTH_RATE_LIMIT", "120")):
+        if len(requests) >= app.state.rate_limit:
             raise HTTPException(429, "Token request limit reached", headers={"Retry-After": "60"})
         requests.append(now)
         client = app.state.clients.get(request.client_id, {})
@@ -88,7 +121,7 @@ def create_app() -> FastAPI:
         grants = client.get("grants", {})
         if not valid or request.audience not in grants:
             raise HTTPException(401, "Invalid service credentials or audience")
-        lifetime = 120
+        lifetime = app.state.token_lifetime
         token = jwt.encode(
             {
                 "sub": request.client_id,

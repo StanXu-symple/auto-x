@@ -6,7 +6,14 @@ from datetime import UTC, datetime
 import httpx
 from fastapi import Depends, FastAPI, Request
 
-from app.control_plane.config import Topology, load_topology, read_secret
+from app.control_plane.config import (
+    Topology,
+    apply_runtime_topology,
+    load_runtime_config,
+    load_topology,
+    read_secret,
+    runtime_float,
+)
 from app.control_plane.contracts import ResourceSnapshot
 from app.control_plane.nacos import NacosClient, advertise_identity, heartbeat_loop
 from app.control_plane.resources import unavailable
@@ -101,7 +108,26 @@ class MonitorCollector:
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        topology = load_topology()
+        local_topology = load_topology()
+        bootstrap_timeout = runtime_float(
+            {},
+            "nacos_config_timeout_seconds",
+            "NACOS_CONFIG_TIMEOUT_SECONDS",
+            3,
+            minimum=0.1,
+            maximum=30,
+        )
+        async with httpx.AsyncClient(timeout=bootstrap_timeout, trust_env=False) as bootstrap_http:
+            bootstrap_nacos = NacosClient(
+                bootstrap_http,
+                os.environ["NACOS_SERVER_ADDR"],
+                os.environ.get("NACOS_NAMESPACE", "public"),
+                os.environ.get("NACOS_GROUP", "X_SENTINEL"),
+                os.environ.get("NACOS_USERNAME", ""),
+                os.environ.get("NACOS_PASSWORD", ""),
+            )
+            runtime = await load_runtime_config(bootstrap_nacos)
+        topology = apply_runtime_topology(local_topology, runtime)
         app.state.verifier = ServiceVerifier(
             read_secret("SERVICE_AUTH_PUBLIC_KEY_FILE"), "monitor", "monitor:read"
         )

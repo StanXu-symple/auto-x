@@ -129,7 +129,8 @@ docker compose -f docker-compose.yml \
 
 ## Nacos 与微服务控制平面
 
-先准备可访问的 Nacos 2.x 服务，然后在 `.env` 中配置：
+先准备可访问的 Nacos 2.x 服务。每台主机的 `.env` 只需要保留 Nacos
+连接信息、服务注册身份、宿主机端口/网络和本地密钥文件路径等启动引导项：
 
 ```dotenv
 NACOS_SERVER_ADDR=http://127.0.0.1:8848
@@ -137,7 +138,47 @@ NACOS_NAMESPACE=public
 NACOS_GROUP=X_SENTINEL
 NACOS_USERNAME=nacos
 NACOS_PASSWORD=replace-with-your-nacos-password
+NACOS_CONFIG_ENABLED=true
+NACOS_CONFIG_DATA_ID=x-sentinel-config.json
+NACOS_CONFIG_GROUP=X_SENTINEL
+NACOS_CONFIG_REQUIRED=true
 ```
+
+首次安装或从旧版 `.env` 迁移时，将可集中管理的运行配置同步到 Nacos：
+
+```bash
+make nacos-config
+```
+
+Data ID 内容既可以使用 `.env` 风格的扁平键，也可以按服务分组。例如：
+
+```json
+{
+  "postgres": {
+    "host": "10.211.55.30",
+    "port": 5432,
+    "database": "xsentinel",
+    "user": "xsentinel",
+    "password": "replace-with-database-password"
+  },
+  "redis": {
+    "host": "10.211.55.30",
+    "port": 6379,
+    "db": 0,
+    "password": "replace-with-redis-password"
+  },
+  "worker": {"max_concurrency": 5, "scan_interval_seconds": 2},
+  "ai_worker": {"max_concurrency": 3},
+  "qq_worker": {"max_concurrency": 5},
+  "xhs": {"browser_pool_size": 1, "job_timeout_seconds": 300}
+}
+```
+
+同步工具采用“远端优先”：Nacos 中已有值不会被本地 `.env` 覆盖，只会补充新版本新增的配置项。PostgreSQL/Redis 的地址、端口、库名、账号、密码与连接池参数，JWT 签名密钥、X 凭据加密密钥，以及轮询、AI、QQ、小红书 Worker 的运行参数都可以放在该 JSON 配置中。为保证 Compose 自带的数据容器与远端配置一致，工具只把最终的 PostgreSQL/Redis 引导值原子回写到本地 `.env`，并将文件收紧为所有者可读（可写时为 `0600`）；应用进程仍以 Nacos Config 为权威来源。
+
+Nacos 连接凭据、`NACOS_ADVERTISE_IP`、服务名/监听端口、Docker 网络与宿主机端口、挂载的密钥文件路径、初始管理员密码和 provider API Key 不进入共享配置。它们分别属于启动引导、单实例身份或独立秘密，继续由本机部署配置和管理台管理。由于 Nacos 文档包含数据库/Redis 密码及共享加密密钥，应为 namespace 配置最小权限账号，并在跨主机通信时使用受保护的内网或 TLS 入口。
+
+应用在进程启动时读取一次 Nacos Config；修改远端配置后重启受影响的 API/Worker。`make prod-up`、`make external-up` 和对应的生产迁移命令会在 `NACOS_CONFIG_REQUIRED=true` 时自动同步配置、校验远端生产密钥，并刷新 Compose 所需的 PostgreSQL/Redis 本地引导缓存；也可单独执行 `make nacos-config`。required 模式下读取失败或 Data ID 不存在会阻止实例启动；设为 `false` 时会回退到本地环境变量。
 
 `NACOS_ADVERTISE_IP` 是服务注册到 Nacos 后供其他服务访问的地址。不配置时程序会自动探测非回环 IPv4；跨 Docker 主机部署时建议显式填写本机 LAN/VPC 地址，并确保对应服务端口已放行。它不是 Nacos 服务端地址，不能填写 `NACOS_SERVER_ADDR`。
 
@@ -149,7 +190,7 @@ make network-groups
 make microservices-up
 ```
 
-控制平面服务包括 `auth-center`、`monitor-center` 和每台 Docker 主机一个 `monitor-agent`。监控 Agent 通过 Docker Engine API 采集容器 CPU 与 working-set 内存；监控中心通过 Nacos 发现 Agent 和其他服务。服务之间不再写死 URL，也不需要单独的注册中心配置文件。
+控制平面服务包括 `auth-center`、`monitor-center` 和每台 Docker 主机一个 `monitor-agent`。监控 Agent 通过 Docker Engine API 采集容器 CPU 与 working-set 内存；监控中心通过 Nacos 发现 Agent 和其他服务。服务之间不再写死 URL；服务注册身份和每台主机的监控拓扑仍保留为本机引导配置。
 
 ## AI 草稿生成
 
@@ -218,6 +259,8 @@ Worker 会在每次用户名解析和时间线读取前从 PostgreSQL 获取当�
 | `REDIS_PASSWORD` | Redis 密码；外部实例无密码时可留空 | 本地模式必须修改 |
 | `NACOS_SERVER_ADDR` | Nacos 服务端地址 | 空（启用微服务时必填） |
 | `NACOS_USERNAME` / `NACOS_PASSWORD` | Nacos 登录凭据 | 空 |
+| `NACOS_CONFIG_DATA_ID` / `NACOS_CONFIG_GROUP` | 共享运行配置的 Data ID / Group | `x-sentinel-config.json` / `X_SENTINEL` |
+| `NACOS_CONFIG_REQUIRED` | Nacos Config 不可用时是否拒绝启动 | `false`（生产建议 `true`） |
 | `NACOS_ADVERTISE_IP` | 注册到 Nacos 的可达 IP；留空自动探测 | 自动探测 |
 | `XHS_TRANSPORT` | 小红书调用模式：`redis` 或 `http` | `redis` |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
@@ -265,6 +308,8 @@ install -m 600 .env.example .env
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
+
+原生进程模式同样支持 Nacos Config：在 `backend/.env` 设置引导项后，可从仓库根目录执行 `make nacos-config ENV_FILE=backend/.env` 完成首次同步，再运行 `start.sh` 或各 Python 进程。
 
 另开终端启动轮询 Worker；需要调试 AI 流程时再开一个终端启动 AI Worker：
 

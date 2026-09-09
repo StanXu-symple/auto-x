@@ -26,7 +26,22 @@ value_for() {
   printf '%s\n' "${value}"
 }
 
-required=(POSTGRES_DATABASE POSTGRES_USER POSTGRES_PASSWORD JWT_SECRET_KEY ADMIN_USERNAME ADMIN_PASSWORD X_TOKEN_ENCRYPTION_KEY CORS_ORIGINS)
+centralized=false
+if [[ "$(value_for NACOS_CONFIG_REQUIRED)" == "true" ]]; then
+  centralized=true
+fi
+
+# PostgreSQL/Redis values are still required locally because Compose needs
+# them before an application process can contact Nacos. The sync command
+# maintains this small bootstrap cache. Initial administrator credentials also
+# stay local by design. Shared application secrets are validated by Settings
+# after the required Nacos document has been loaded.
+required=(POSTGRES_DATABASE POSTGRES_USER POSTGRES_PASSWORD ADMIN_USERNAME ADMIN_PASSWORD)
+if [[ "${centralized}" == true ]]; then
+  required+=(NACOS_SERVER_ADDR)
+else
+  required+=(JWT_SECRET_KEY X_TOKEN_ENCRYPTION_KEY CORS_ORIGINS)
+fi
 if [[ "${mode}" == "external" ]]; then
   required+=(POSTGRES_HOST POSTGRES_PORT REDIS_HOST REDIS_PORT)
 else
@@ -66,21 +81,23 @@ for key in "${required[@]}"; do
   esac
 done
 
-jwt_secret="$(value_for JWT_SECRET_KEY)"
 admin_password="$(value_for ADMIN_PASSWORD)"
-x_token_encryption_key="$(value_for X_TOKEN_ENCRYPTION_KEY)"
 postgres_database="$(value_for POSTGRES_DATABASE)"
-if (( ${#jwt_secret} < 32 )); then
-  echo >&2 "JWT_SECRET_KEY must contain at least 32 characters"
-  failed=true
-fi
 if (( ${#admin_password} < 12 )); then
   echo >&2 "ADMIN_PASSWORD must contain at least 12 characters"
   failed=true
 fi
-if (( ${#x_token_encryption_key} < 32 )); then
-  echo >&2 "X_TOKEN_ENCRYPTION_KEY must contain at least 32 characters"
-  failed=true
+if [[ "${centralized}" != true ]]; then
+  jwt_secret="$(value_for JWT_SECRET_KEY)"
+  x_token_encryption_key="$(value_for X_TOKEN_ENCRYPTION_KEY)"
+  if (( ${#jwt_secret} < 32 )); then
+    echo >&2 "JWT_SECRET_KEY must contain at least 32 characters"
+    failed=true
+  fi
+  if (( ${#x_token_encryption_key} < 32 )); then
+    echo >&2 "X_TOKEN_ENCRYPTION_KEY must contain at least 32 characters"
+    failed=true
+  fi
 fi
 if [[ ! "${postgres_database}" =~ ^[A-Za-z0-9_]+$ ]]; then
   echo >&2 "POSTGRES_DATABASE may contain only letters, numbers, and underscores"

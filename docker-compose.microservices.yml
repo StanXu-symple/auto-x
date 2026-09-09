@@ -8,6 +8,11 @@ services:
       NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
       NACOS_USERNAME: ${NACOS_USERNAME:-}
       NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      NACOS_CONFIG_ENABLED: ${NACOS_CONFIG_ENABLED:-true}
+      NACOS_CONFIG_DATA_ID: ${NACOS_CONFIG_DATA_ID:-x-sentinel-config.json}
+      NACOS_CONFIG_GROUP: ${NACOS_CONFIG_GROUP:-}
+      NACOS_CONFIG_TIMEOUT_SECONDS: ${NACOS_CONFIG_TIMEOUT_SECONDS:-3}
+      NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
       SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/backend.secret
     volumes:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
@@ -26,6 +31,11 @@ services:
       NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
       NACOS_USERNAME: ${NACOS_USERNAME:-}
       NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      NACOS_CONFIG_ENABLED: ${NACOS_CONFIG_ENABLED:-true}
+      NACOS_CONFIG_DATA_ID: ${NACOS_CONFIG_DATA_ID:-x-sentinel-config.json}
+      NACOS_CONFIG_GROUP: ${NACOS_CONFIG_GROUP:-}
+      NACOS_CONFIG_TIMEOUT_SECONDS: ${NACOS_CONFIG_TIMEOUT_SECONDS:-3}
+      NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
       NACOS_SERVICE_NAME: xsentinel-xhs-worker
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
       NACOS_SERVICE_PORT: 8006
@@ -48,11 +58,18 @@ services:
       NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
       NACOS_USERNAME: ${NACOS_USERNAME:-}
       NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      NACOS_CONFIG_ENABLED: ${NACOS_CONFIG_ENABLED:-true}
+      NACOS_CONFIG_DATA_ID: ${NACOS_CONFIG_DATA_ID:-x-sentinel-config.json}
+      NACOS_CONFIG_GROUP: ${NACOS_CONFIG_GROUP:-}
+      NACOS_CONFIG_TIMEOUT_SECONDS: ${NACOS_CONFIG_TIMEOUT_SECONDS:-3}
+      NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
       NACOS_SERVICE_NAME: xsentinel-auth-center
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
       NACOS_SERVICE_PORT: 9100
       SERVICE_AUTH_PRIVATE_KEY_FILE: /run/xsentinel/private.pem
       SERVICE_AUTH_CLIENTS_FILE: /run/xsentinel/clients.json
+      SERVICE_AUTH_RATE_LIMIT: ${SERVICE_AUTH_RATE_LIMIT:-120}
+      SERVICE_AUTH_TOKEN_LIFETIME_SECONDS: ${SERVICE_AUTH_TOKEN_LIFETIME_SECONDS:-120}
     volumes:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
     ports: ["${AUTH_CENTER_BIND_IP:-0.0.0.0}:${AUTH_CENTER_PORT:-9100}:9100"]
@@ -68,15 +85,23 @@ services:
       NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
       NACOS_USERNAME: ${NACOS_USERNAME:-}
       NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      NACOS_CONFIG_ENABLED: ${NACOS_CONFIG_ENABLED:-true}
+      NACOS_CONFIG_DATA_ID: ${NACOS_CONFIG_DATA_ID:-x-sentinel-config.json}
+      NACOS_CONFIG_GROUP: ${NACOS_CONFIG_GROUP:-}
+      NACOS_CONFIG_TIMEOUT_SECONDS: ${NACOS_CONFIG_TIMEOUT_SECONDS:-3}
+      NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
       NACOS_SERVICE_NAME: xsentinel-monitor-center
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
       NACOS_SERVICE_PORT: 9102
       SERVICE_AUTH_PUBLIC_KEY_FILE: /run/xsentinel/public.pem
       SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/monitor.secret
       SERVICE_TOPOLOGY_FILE: /run/xsentinel/services.json
+      MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-10}
+      MONITOR_STALE_SECONDS: ${MONITOR_STALE_SECONDS:-45}
+      MONITOR_TIMEOUT_SECONDS: ${MONITOR_TIMEOUT_SECONDS:-3}
+      MONITOR_CONCURRENCY: ${MONITOR_CONCURRENCY:-8}
     volumes:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
-    depends_on: [auth-center]
     ports: ["${MONITOR_CENTER_BIND:-0.0.0.0}:${MONITOR_CENTER_PORT:-9102}:9102"]
     networks: [control]
     restart: unless-stopped
@@ -90,6 +115,11 @@ services:
       NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
       NACOS_USERNAME: ${NACOS_USERNAME:-}
       NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      NACOS_CONFIG_ENABLED: ${NACOS_CONFIG_ENABLED:-true}
+      NACOS_CONFIG_DATA_ID: ${NACOS_CONFIG_DATA_ID:-x-sentinel-config.json}
+      NACOS_CONFIG_GROUP: ${NACOS_CONFIG_GROUP:-}
+      NACOS_CONFIG_TIMEOUT_SECONDS: ${NACOS_CONFIG_TIMEOUT_SECONDS:-3}
+      NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
       NACOS_SERVICE_NAME: xsentinel-monitor-agent-${MONITOR_NODE_ID:-local}
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
       NACOS_SERVICE_PORT: 9101
@@ -97,11 +127,14 @@ services:
       SERVICE_AUTH_PUBLIC_KEY_FILE: /run/xsentinel/public.pem
       SERVICE_TOPOLOGY_FILE: /run/xsentinel/services.json
       DOCKER_SOCKET: /var/run/docker.sock
+      MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-10}
+      MONITOR_STALE_SECONDS: ${MONITOR_STALE_SECONDS:-45}
+      MONITOR_TIMEOUT_SECONDS: ${MONITOR_TIMEOUT_SECONDS:-3}
+      MONITOR_CONCURRENCY: ${MONITOR_CONCURRENCY:-8}
     volumes:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     group_add: ["${DOCKER_SOCKET_GID:-0}"]
-    depends_on: [auth-center]
     ports: ["${MONITOR_AGENT_BIND_IP:-0.0.0.0}:${MONITOR_AGENT_PORT:-9101}:9101"]
     networks: [control, app, data, monitoring]
     restart: unless-stopped
@@ -109,7 +142,7 @@ services:
 networks:
   control:
     name: ${CONTROL_NETWORK_NAME:-x-sentinel-control}
-    external: ${CONTROL_NETWORK_EXTERNAL:-false}
+    external: ${CONTROL_NETWORK_EXTERNAL:-true}
   app:
     name: ${APP_NETWORK_NAME:-x-sentinel_app}
     external: true
