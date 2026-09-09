@@ -35,7 +35,9 @@ Prometheus -> Nginx + API + Workers + exporters -> Grafana
 
 ```
 
-For deployments where services run on multiple Docker hosts, the optional control plane provides a static service topology, a short-lived service authentication center, a monitoring center, and one Docker resource agent per host. It uses Docker cgroup CPU and working-set memory for every container, so PostgreSQL, Redis, API, and workers share the same resource fields. Configure `infra/microservices/services.json`, run `make microservices-init`, then set `SERVICE_AUTH_URL` and `MONITOR_CENTER_URL` in `.env` before `make microservices-up`. Join hosts to named network groups with `NETWORK_GROUPS` and `make network-groups`; service addresses in the topology are the addresses reachable from that node's agent. There is deliberately no service registry: topology changes are reviewed configuration changes.
+For deployments where services run on multiple Docker hosts, the optional control plane provides a Nacos-backed service registry, a short-lived service authentication center, a monitoring center, and one Docker resource agent per host. It uses Docker cgroup CPU and working-set memory for every container, so PostgreSQL, Redis, API, and workers share the same resource fields. Run `make microservices-init`, configure `NACOS_SERVER_ADDR`, `NACOS_USERNAME`, `NACOS_PASSWORD`, and use `NACOS_ADVERTISE_IP` only when automatic address detection is not suitable. Join hosts to named network groups with `NETWORK_GROUPS` and `make network-groups`.
+
+The Xiaohongshu worker can run as an independent HTTP microservice. In that mode the API discovers `xsentinel-xhs-worker` through Nacos and calls it with `httpx` and Pydantic contracts; set `XHS_TRANSPORT=http`. The default `redis` transport keeps the single-host deployment compatible with the original queue worker.
 
 详细设计见 [架构说明](docs/ARCHITECTURE.md)，X 官方接口见 [X API 接入说明](docs/X_API.md)。
 
@@ -95,6 +97,59 @@ docker compose --profile monitoring up -d
 - Grafana：[http://127.0.0.1:3000](http://127.0.0.1:3000)
 
 Grafana 使用 `.env` 中的 `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`，数据源、告警规则和 X Sentinel Dashboard 会自动配置。预置规则默认只在 Prometheus/Grafana 中显示状态；若要向邮件、企业微信等渠道推送，还需按所在环境接入 Alertmanager 或 Grafana Contact Point。
+
+## 按需部署服务
+
+`docker-compose.yml` 提供基础设施和单机服务；微服务覆盖文件按组件拆分：
+
+```text
+docker-compose.backend.yml
+docker-compose.xhs-worker.yml
+docker-compose.auth-center.yml
+docker-compose.monitor-center.yml
+docker-compose.monitor-agent.yml
+```
+
+使用 `apps/auto-x.conf` 安装时，可选择要部署的服务，例如：
+
+```text
+backend,frontend,xhs-worker
+```
+
+选择结果保存在 `/home/docker/auto-x/.auto-x-services`，后续更新会沿用该列表。输入 `all` 部署全部服务。PostgreSQL 和 Redis 作为本地基础设施按依赖启动；如果使用外部数据服务，请改用外部配置覆盖文件。
+
+手动部署时也可以直接组合 Compose 文件：
+
+```bash
+docker compose -f docker-compose.yml \
+  -f docker-compose.backend.yml \
+  -f docker-compose.xhs-worker.yml \
+  up -d backend frontend xhs-worker
+```
+
+## Nacos 与微服务控制平面
+
+先准备可访问的 Nacos 2.x 服务，然后在 `.env` 中配置：
+
+```dotenv
+NACOS_SERVER_ADDR=http://127.0.0.1:8848
+NACOS_NAMESPACE=public
+NACOS_GROUP=X_SENTINEL
+NACOS_USERNAME=nacos
+NACOS_PASSWORD=replace-with-your-nacos-password
+```
+
+`NACOS_ADVERTISE_IP` 是服务注册到 Nacos 后供其他服务访问的地址。不配置时程序会自动探测非回环 IPv4；跨 Docker 主机部署时建议显式填写本机 LAN/VPC 地址，并确保对应服务端口已放行。它不是 Nacos 服务端地址，不能填写 `NACOS_SERVER_ADDR`。
+
+初始化认证密钥、客户端授权和服务拓扑：
+
+```bash
+make microservices-init
+make network-groups
+make microservices-up
+```
+
+控制平面服务包括 `auth-center`、`monitor-center` 和每台 Docker 主机一个 `monitor-agent`。监控 Agent 通过 Docker Engine API 采集容器 CPU 与 working-set 内存；监控中心通过 Nacos 发现 Agent 和其他服务。服务之间不再写死 URL，也不需要单独的注册中心配置文件。
 
 ## AI 草稿生成
 
@@ -161,6 +216,10 @@ Worker 会在每次用户名解析和时间线读取前从 PostgreSQL 获取当�
 | `AI_WORKER_BATCH_SIZE` | 每轮领取 AI 任务上限 | `50` |
 | `POSTGRES_*` | PostgreSQL 数据库与凭据 | 见示例文件 |
 | `REDIS_PASSWORD` | Redis 密码；外部实例无密码时可留空 | 本地模式必须修改 |
+| `NACOS_SERVER_ADDR` | Nacos 服务端地址 | 空（启用微服务时必填） |
+| `NACOS_USERNAME` / `NACOS_PASSWORD` | Nacos 登录凭据 | 空 |
+| `NACOS_ADVERTISE_IP` | 注册到 Nacos 的可达 IP；留空自动探测 | 自动探测 |
+| `XHS_TRANSPORT` | 小红书调用模式：`redis` 或 `http` | `redis` |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 | `TZ` | 容器显示时区 | `Asia/Shanghai` |
 
@@ -265,6 +324,7 @@ docs/                     架构、API 接入和运维文档
 docker-compose.yml        核心服务与可选 monitoring profile
 docker-compose.prod.yml   生产环境覆盖配置
 docker-compose.external.yml 外部 PostgreSQL/Redis 覆盖配置
+docker-compose.backend.yml / docker-compose.*.yml 按服务拆分的微服务配置
 ```
 
 ## API
