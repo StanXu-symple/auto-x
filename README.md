@@ -35,9 +35,9 @@ Prometheus -> Nginx + API + Workers + exporters -> Grafana
 
 ```
 
-For deployments where services run on multiple Docker hosts, the optional control plane provides a Nacos-backed service registry, a short-lived service authentication center, a monitoring center, and one Docker resource agent per host. It uses Docker cgroup CPU and working-set memory for every container, so PostgreSQL, Redis, API, and workers share the same resource fields. Run `make microservices-init`, configure `NACOS_SERVER_ADDR`, `NACOS_USERNAME`, `NACOS_PASSWORD`, and use `NACOS_ADVERTISE_IP` only when automatic address detection is not suitable. Join hosts to named network groups with `NETWORK_GROUPS` and `make network-groups`.
+当服务部署在多台 Docker 主机时，可启用可选的控制平面。控制平面提供基于 Nacos 的服务注册发现、短时服务认证中心、监控中心，以及每台 Docker 主机上的一个资源监控 Agent。它通过 Docker cgroup 采集所有容器的 CPU 和 working-set 内存，让 PostgreSQL、Redis、API 和各类 Worker 使用统一的资源指标。先执行 `make microservices-init`，再配置 `NACOS_SERVER_ADDR`、`NACOS_USERNAME`、`NACOS_PASSWORD`；只有在自动探测地址不适用时才需要设置 `NACOS_ADVERTISE_IP`。如需将主机加入命名网络组，可配置 `NETWORK_GROUPS` 并执行 `make network-groups`。
 
-The Xiaohongshu worker can run as an independent HTTP microservice. In that mode the API discovers `xsentinel-xhs-worker` through Nacos and calls it with `httpx` and Pydantic contracts; set `XHS_TRANSPORT=http`. The default `redis` transport keeps the single-host deployment compatible with the original queue worker.
+小红书 Worker 支持作为独立的 HTTP 微服务运行。启用该模式后，API 会通过 Nacos 发现 `xsentinel-xhs-worker`，并使用 `httpx` 与 Pydantic 契约进行服务调用；将 `XHS_TRANSPORT` 设置为 `http` 即可。默认的 `redis` 传输模式继续兼容单机部署下的原始队列 Worker。
 
 详细设计见 [架构说明](docs/ARCHITECTURE.md)，X 官方接口见 [X API 接入说明](docs/X_API.md)。
 
