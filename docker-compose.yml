@@ -140,6 +140,8 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
     expose:
       - "5432"
+    ports:
+      - "${POSTGRES_BIND_IP:-0.0.0.0}:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init/10-monitoring-user.sh:/docker-entrypoint-initdb.d/10-monitoring-user.sh:ro
@@ -195,6 +197,8 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
     expose:
       - "6379"
+    ports:
+      - "${REDIS_BIND_IP:-0.0.0.0}:${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -270,6 +274,8 @@ services:
       - --proxy-headers
     expose:
       - "8000"
+    ports:
+      - "${BACKEND_BIND_IP:-0.0.0.0}:${BACKEND_HOST_PORT:-8000}:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -306,6 +312,8 @@ services:
       - app.worker
     expose:
       - "8001"
+    ports:
+      - "${WORKER_BIND_IP:-0.0.0.0}:${WORKER_HOST_PORT:-8001}:8001"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -343,6 +351,8 @@ services:
       - runtime_logs:/var/log/xsentinel
     expose:
       - "8002"
+    ports:
+      - "${AI_WORKER_BIND_IP:-0.0.0.0}:${AI_WORKER_HOST_PORT:-8002}:8002"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -382,6 +392,8 @@ services:
       - app.qq_worker
     expose:
       - "8003"
+    ports:
+      - "${QQ_WORKER_BIND_IP:-0.0.0.0}:${QQ_WORKER_HOST_PORT:-8003}:8003"
       - "8004"
     depends_on:
       migrate:
@@ -427,6 +439,8 @@ services:
       - runtime_logs:/var/log/xsentinel
     expose:
       - "8005"
+    ports:
+      - "${XHS_WORKER_BIND_IP:-0.0.0.0}:${XHS_WORKER_HOST_PORT:-8006}:8005"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -589,7 +603,7 @@ services:
       - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
       - --web.enable-lifecycle
     ports:
-      - "${PROMETHEUS_BIND_IP:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+      - "${PROMETHEUS_BIND_IP:-0.0.0.0}:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/prometheus/rules:/etc/prometheus/rules:ro
@@ -642,7 +656,7 @@ services:
       prometheus:
         condition: service_healthy
     ports:
-      - "${GRAFANA_BIND_IP:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+      - "${GRAFANA_BIND_IP:-0.0.0.0}:${GRAFANA_PORT:-3000}:3000"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
