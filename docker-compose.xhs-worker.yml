@@ -3,6 +3,10 @@ services:
     extends:
       file: docker-compose.microservices.yml
       service: xhs-worker
+    # The base single-host compose file defines the same service on port 8005.
+    # Replace that mapping instead of merging a second host binding to 8006.
+    ports: !override
+      - "${XHS_WORKER_BIND_IP:-0.0.0.0}:${XHS_WORKER_HOST_PORT:-8006}:8006"
 
 networks:
   control:

@@ -20,7 +20,7 @@ services:
 
   xhs-worker:
     image: ${XHS_WORKER_IMAGE:-x-sentinel-xhs-worker}:${IMAGE_TAG:-latest}
-    command: ["python", "-m", "app.xhs_service"]
+    command: ["uvicorn", "app.xhs_service:app", "--host", "0.0.0.0", "--port", "8006"]
     environment:
       XHS_TRANSPORT: http
       XHS_SERVICE_NAME: xsentinel-xhs-worker
