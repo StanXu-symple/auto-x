@@ -19,6 +19,7 @@ services:
     networks: [control, app, data, monitoring]
 
   xhs-worker:
+    image: ${XHS_WORKER_IMAGE:-x-sentinel-xhs-worker}:${IMAGE_TAG:-latest}
     command: ["python", "-m", "app.xhs_service"]
     environment:
       XHS_TRANSPORT: http

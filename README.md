@@ -110,6 +110,8 @@ docker-compose.monitor-center.yml
 docker-compose.monitor-agent.yml
 ```
 
+镜像按运行时依赖拆分：`BACKEND_IMAGE` 提供 API、轮询、AI、QQ 和控制平面等不需要浏览器的服务；`XHS_WORKER_IMAGE` 仅供小红书浏览器 Worker 使用，包含 Camoufox 浏览器运行时。安装或更新单个普通服务时不会再下载约 1GB 的浏览器层；只有选择 `xhs-worker` 时才会拉取该镜像。
+
 使用 `apps/auto-x.conf` 安装时，可选择要部署的服务，例如：
 
 ```text

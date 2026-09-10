@@ -9,6 +9,7 @@ x-logging: &default-logging
 x-backend: &backend-common
   build:
     context: ./backend
+    target: core
   image: ${BACKEND_IMAGE:-x-sentinel-backend}:${IMAGE_TAG:-latest}
   environment: &backend-environment
     APP_NAME: ${APP_NAME:-X Sentinel}
@@ -437,6 +438,10 @@ services:
 
   xhs-worker:
     <<: *backend-common
+    build:
+      context: ./backend
+      target: xhs-worker
+    image: ${XHS_WORKER_IMAGE:-x-sentinel-xhs-worker}:${IMAGE_TAG:-latest}
     environment:
       <<: *backend-environment
       HOME: /var/lib/xsentinel/xhs-home

@@ -7,8 +7,8 @@ on:
     paths:
       - "backend/**"
       - "frontend/**"
-      - "docker-compose.yml"
-      - ".env.example"
+      - "docker-compose*.yml"
+      - ".env*.example"
       - ".github/workflows/publish-images.yml"
   workflow_dispatch:
 
@@ -23,6 +23,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE: ghcr.io/stanxu-symple/auto-x-backend
+  XHS_WORKER_IMAGE: ghcr.io/stanxu-symple/auto-x-xhs-worker
   FRONTEND_IMAGE: ghcr.io/stanxu-symple/auto-x-frontend
 
 jobs:
@@ -57,11 +58,37 @@ jobs:
         with:
           context: ./backend
           file: ./backend/Dockerfile
+          target: core
           push: true
           tags: ${{ steps.backend_meta.outputs.tags }}
           labels: ${{ steps.backend_meta.outputs.labels }}
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
+          provenance: false
+          sbom: false
+
+      - name: Generate xhs-worker image metadata
+        id: xhs_worker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.XHS_WORKER_IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=sha-${{ github.sha }}
+
+      - name: Build and push xhs-worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          target: xhs-worker
+          push: true
+          tags: ${{ steps.xhs_worker_meta.outputs.tags }}
+          labels: ${{ steps.xhs_worker_meta.outputs.labels }}
+          cache-from: |
+            type=gha,scope=backend
+            type=gha,scope=xhs-worker
+          cache-to: type=gha,mode=max,scope=xhs-worker
           provenance: false
           sbom: false
 
