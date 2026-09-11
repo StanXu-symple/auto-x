@@ -74,6 +74,8 @@ services:
     volumes:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
     ports: ["${AUTH_CENTER_BIND_IP:-0.0.0.0}:${AUTH_CENTER_PORT:-9100}:9100"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/health/live', timeout=3)"]
     networks: [control]
     restart: unless-stopped
 
@@ -104,6 +106,8 @@ services:
     volumes:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
     ports: ["${MONITOR_CENTER_BIND:-0.0.0.0}:${MONITOR_CENTER_PORT:-9102}:9102"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9102/health/live', timeout=3)"]
     networks: [control]
     restart: unless-stopped
 
@@ -137,6 +141,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     group_add: ["${DOCKER_SOCKET_GID:-0}"]
     ports: ["${MONITOR_AGENT_BIND_IP:-0.0.0.0}:${MONITOR_AGENT_PORT:-9101}:9101"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9101/health/live', timeout=3)"]
     networks: [control, app, data, monitoring]
     restart: unless-stopped
 
