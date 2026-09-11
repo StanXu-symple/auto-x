@@ -188,6 +188,42 @@ def test_main_keeps_remote_values_authoritative_and_caches_data_bootstrap(
     assert cached["REDIS_PASSWORD"] == "remote-redis-pw"
 
 
+def test_check_mode_reads_nacos_without_publishing_or_rewriting_env(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    module = load_script()
+    env_file = tmp_path / ".env"
+    original = (
+        "NACOS_SERVER_ADDR=http://nacos:8848\n"
+        "NACOS_USERNAME=nacos\n"
+        "NACOS_PASSWORD=secret\n"
+        "POSTGRES_PASSWORD=local-pw\n"
+    )
+    env_file.write_text(original, encoding="utf-8")
+    calls = 0
+
+    def fake_load_remote(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return {"POSTGRES_PASSWORD": "remote-pw"}, "token"
+
+    def unexpected_publish(*_args, **_kwargs):
+        raise AssertionError("check mode must not publish Nacos config")
+
+    monkeypatch.setattr(module, "load_remote", fake_load_remote)
+    monkeypatch.setattr(module, "publish", unexpected_publish)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["nacos-config.py", "--env-file", str(env_file), "--check"],
+    )
+
+    assert module.main() == 0
+    assert calls == 1
+    assert env_file.read_text(encoding="utf-8") == original
+    assert "Nacos 连接及认证验证成功" in capsys.readouterr().out
+
+
 def test_bootstrap_cache_tightens_permissive_file_mode(tmp_path: Path) -> None:
     module = load_script()
     env_file = tmp_path / ".env"

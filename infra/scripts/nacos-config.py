@@ -561,6 +561,11 @@ def main() -> int:
         action="store_true",
         help="validate the effective document as production configuration before publishing",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify Nacos connectivity, authentication, and config readability without publishing",
+    )
     # Enabled by default: a local Compose database must use the same
     # PostgreSQL/Redis coordinates that Nacos made authoritative.  The
     # explicit opt-out is useful for operators who run only external data
@@ -621,6 +626,9 @@ def main() -> int:
         password=password,
         timeout=timeout,
     )
+    if args.check:
+        print(f"Nacos 连接及认证验证成功: {data_id}")
+        return 0
     # Older installer versions could accidentally publish bootstrap or
     # per-container keys.  Remove those keys from the effective document on
     # the next sync so the Config item remains a runtime-only contract.
