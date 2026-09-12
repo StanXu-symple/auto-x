@@ -193,7 +193,7 @@ class Service(BaseModel):
     node: str
     project: str = "x-sentinel"
     container_service: str
-    port: int = Field(default=8000, ge=1, le=65535)
+    port: int = Field(default=8200, ge=1, le=65535)
 
 
 class Topology(BaseModel):

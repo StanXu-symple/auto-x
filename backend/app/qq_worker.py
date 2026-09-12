@@ -32,6 +32,8 @@ from prometheus_client import start_http_server
 from redis.asyncio import Redis
 from sqlalchemy import and_, func, or_, select, text
 
+from app import __version__
+from app.control_plane.nacos import start_service_registration
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
@@ -282,6 +284,12 @@ class QQDeliveryWorker:
     async def run(self, *, check_dependencies: bool = True) -> None:
         if check_dependencies:
             await self.check_dependencies()
+        nacos_registration = await start_service_registration(
+            self.settings,
+            "xsentinel-qq-worker",
+            self.settings.qq_worker_port,
+            metadata={"component": "qq-worker", "version": __version__},
+        )
         logger.info("X Sentinel QQ worker started", extra={"worker_id": self.worker_id})
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         try:
@@ -303,6 +311,8 @@ class QQDeliveryWorker:
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
+            if nacos_registration is not None:
+                await nacos_registration.aclose()
             await self.redis.aclose()
             await engine.dispose()
             logger.info("X Sentinel QQ worker stopped", extra={"worker_id": self.worker_id})

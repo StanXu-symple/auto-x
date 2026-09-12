@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 from starlette.responses import Response
 
+from app import __version__
 from app.control_plane.nacos import NacosClient, heartbeat_loop
 from app.control_plane.security import ServiceVerifier
 from app.core.config import Settings, get_settings
@@ -134,8 +135,6 @@ def create_app(settings: Settings | None = None, worker_factory=None) -> FastAPI
         from app.xhs_worker import UPLOAD_DIR, XiaohongshuWorker
 
         config = settings or get_settings()
-        public_key = await asyncio.to_thread(Path(config.service_auth_public_key_file).read_text)
-        app.state.verifier = ServiceVerifier(public_key, "xhs-worker", "xhs:execute")
         ip = config.xhs_service_advertise_ip or socket.gethostbyname(socket.gethostname())
         worker = (worker_factory or XiaohongshuWorker)(config)
         await worker._wait_for_dependencies()
@@ -151,15 +150,30 @@ def create_app(settings: Settings | None = None, worker_factory=None) -> FastAPI
                 config.nacos_username,
                 config.nacos_password,
             )
+            app.state.verifier = ServiceVerifier(
+                None,
+                "xhs-worker",
+                "xhs:execute",
+                http=http,
+                auth_center_url=config.service_auth_url,
+                nacos=nacos,
+            )
             beat = None
+            metadata = {"component": "xhs-worker", "version": __version__}
             try:
-                await nacos.register(config.xhs_service_name, ip, config.xhs_service_advertise_port)
+                await nacos.register(
+                    config.xhs_service_name,
+                    ip,
+                    config.xhs_service_advertise_port,
+                    metadata,
+                )
                 beat = asyncio.create_task(
                     heartbeat_loop(
                         nacos,
                         config.xhs_service_name,
                         ip,
                         config.xhs_service_advertise_port,
+                        metadata=metadata,
                     )
                 )
                 yield

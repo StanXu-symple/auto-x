@@ -12,6 +12,18 @@ services:
       REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
       REDIS_PASSWORD: ${REDIS_PASSWORD-}
 
+  auth-center:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      AUTO_CREATE_TABLES: "false"
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT must be set}
+      REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
+      REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD-}
+    restart: always
+
   backend:
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads

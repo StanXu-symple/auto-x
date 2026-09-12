@@ -2,7 +2,7 @@ groups:
   - name: x-sentinel-availability
     rules:
       - alert: XSentinelTargetDown
-        expr: up{job=~"x-sentinel-api|x-sentinel-worker|x-sentinel-ai-worker|x-sentinel-qq-worker|x-sentinel-xhs-worker|x-sentinel-frontend|postgres|redis|node"} == 0
+        expr: up{job=~"xsentinel-backend|xsentinel-worker|xsentinel-ai-worker|xsentinel-qq-worker|xsentinel-xhs-worker|xsentinel-frontend|postgres|redis|node"} == 0
         for: 2m
         labels:
           severity: critical
@@ -110,7 +110,7 @@ groups:
           description: "Check xhs-worker logs, login cookies, memory pressure and platform availability."
 
       - alert: XSentinelAPIErrorRateHigh
-        expr: sum(rate(http_requests_total{job="x-sentinel-api",status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total{job="x-sentinel-api"}[5m])), 0.001) > 0.05
+        expr: sum(rate(http_requests_total{job="xsentinel-backend",status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total{job="xsentinel-backend"}[5m])), 0.001) > 0.05
         for: 5m
         labels:
           severity: warning

@@ -1,130 +1,188 @@
-import hashlib
-import logging
-from datetime import UTC, datetime
+from __future__ import annotations
+
+import ipaddress
+from collections.abc import Mapping
 
 from fastapi import APIRouter, Request
-from sqlalchemy import select
 
-from app.api.deps import CurrentAdmin, DbSession, RedisClient
+from app.api.deps import CurrentAdmin
 from app.api.errors import APIError
-from app.core.config import get_settings
-from app.core.security import create_access_token, hash_password, verify_password
-from app.models.admin import Admin
 from app.schemas.auth import AdminPublic, ChangePasswordRequest, LoginRequest, TokenResponse
 from app.schemas.common import MessageResponse
+from app.services.auth_center import (
+    AuthCenterClient,
+    AuthCenterRejected,
+    AuthCenterUnavailable,
+)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
-logger = logging.getLogger(__name__)
-settings = get_settings()
-DUMMY_PASSWORD_HASH = hash_password("x-sentinel-invalid-login-dummy-password")
 
-LOGIN_FAILURE_SCRIPT = """
-local attempts = redis.call('incr', KEYS[1])
-if attempts == 1 then
-  redis.call('expire', KEYS[1], ARGV[1])
-end
-local ttl = redis.call('ttl', KEYS[1])
-return {attempts, ttl}
-"""
-
-
-def _login_rate_key(request: Request, username: str) -> str:
-    client_ip = request.client.host if request.client else "unknown"
-    digest = hashlib.sha256(f"{client_ip}|{username.strip().lower()}".encode()).hexdigest()
-    return f"xsentinel:login:failures:{digest}"
+_TRUSTED_PROXY_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in (
+        "127.0.0.0/8",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "::1/128",
+        "fc00::/7",
+    )
+)
 
 
-def _rate_limited(ttl: int) -> APIError:
-    retry_after = max(1, ttl)
-    return APIError(
-        429,
-        "login_rate_limited",
-        "Too many failed login attempts; try again later",
-        headers={"Retry-After": str(retry_after)},
+def _client(request: Request) -> AuthCenterClient:
+    client = getattr(request.app.state, "auth_center", None)
+    if not isinstance(client, AuthCenterClient):
+        raise APIError(503, "auth_unavailable", "Authentication service is unavailable")
+    return client
+
+
+def _token(request: Request) -> str:
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise APIError(401, "not_authenticated", "Authentication credentials were not provided")
+    return token
+
+
+def _request_id(request: Request) -> str:
+    return str(getattr(request.state, "request_id", ""))[:128]
+
+
+def _forwarded_for(request: Request) -> str:
+    peer = request.client.host if request.client else ""
+    try:
+        peer_address = ipaddress.ip_address(peer)
+    except ValueError:
+        peer_address = None
+    trusted_peer = peer_address is not None and any(
+        peer_address in network for network in _TRUSTED_PROXY_NETWORKS
+    )
+    forwarded_values = request.headers.getlist("x-forwarded-for")
+    if trusted_peer and len(forwarded_values) == 1:
+        # The edge nginx replaces, rather than appends to, this header. Reject
+        # chains and duplicate fields so an incorrectly configured proxy cannot
+        # silently reintroduce a caller-controlled left-most address.
+        forwarded = forwarded_values[0].strip()
+        try:
+            if forwarded and "," not in forwarded and len(forwarded) <= 64:
+                return str(ipaddress.ip_address(forwarded))
+        except ValueError:
+            pass
+    # A direct public caller must not choose its auth-center rate-limit bucket
+    # by supplying a forged X-Forwarded-For header.
+    return peer[:64]
+
+
+def _raise_auth_error(exc: AuthCenterRejected, default_code: str) -> None:
+    code = default_code
+    message = "Authentication request was rejected"
+    details: object = None
+    if isinstance(exc.payload, Mapping):
+        error = exc.payload.get("error")
+        if isinstance(error, Mapping):
+            remote_code = error.get("code")
+            remote_message = error.get("message")
+            if isinstance(remote_code, str) and remote_code:
+                code = remote_code
+            if isinstance(remote_message, str) and remote_message:
+                message = remote_message
+            details = error.get("details")
+        else:
+            detail = exc.payload.get("detail")
+            if isinstance(detail, str) and detail:
+                message = detail
+            elif detail is not None:
+                details = detail
+    raise APIError(
+        exc.status_code,
+        code,
+        message,
+        details=details,
+        headers=exc.headers or None,
     )
 
 
-async def _check_login_limit(redis: RedisClient, key: str) -> None:
+async def _proxy(operation, *, default_code: str):
     try:
-        attempts = int(await redis.get(key) or 0)
-        if attempts >= settings.login_rate_limit_attempts:
-            raise _rate_limited(int(await redis.ttl(key)))
-    except APIError:
-        raise
-    except Exception:
-        logger.exception("Login rate-limit precheck failed open")
-
-
-async def _record_login_failure(redis: RedisClient, key: str) -> None:
-    try:
-        attempts, ttl = await redis.eval(
-            LOGIN_FAILURE_SCRIPT,
-            1,
-            key,
-            settings.login_rate_limit_window_seconds,
-        )
-        if int(attempts) >= settings.login_rate_limit_attempts:
-            raise _rate_limited(int(ttl))
-    except APIError:
-        raise
-    except Exception:
-        logger.exception("Login rate-limit update failed open")
-
-
-async def _clear_login_limit(redis: RedisClient, key: str) -> None:
-    try:
-        await redis.delete(key)
-    except Exception:
-        logger.exception("Could not clear successful login rate-limit state")
+        return await operation
+    except AuthCenterUnavailable:
+        raise APIError(503, "auth_unavailable", "Authentication service is unavailable") from None
+    except AuthCenterRejected as exc:
+        _raise_auth_error(exc, default_code)
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(
-    payload: LoginRequest,
-    request: Request,
-    db: DbSession,
-    redis: RedisClient,
-) -> TokenResponse:
-    rate_key = _login_rate_key(request, payload.username)
-    await _check_login_limit(redis, rate_key)
-    admin = await db.scalar(select(Admin).where(Admin.username == payload.username.strip()))
-    password_digest = admin.password_hash if admin is not None else DUMMY_PASSWORD_HASH
-    valid_password = verify_password(payload.password, password_digest)
-    if admin is None or not admin.is_active or not valid_password:
-        await _record_login_failure(redis, rate_key)
-        raise APIError(401, "invalid_credentials", "Invalid username or password")
-
-    admin.last_login_at = datetime.now(UTC)
-    await db.commit()
-    await _clear_login_limit(redis, rate_key)
-    token, expires_in = create_access_token(admin.username, user_id=admin.id)
-    return TokenResponse(
-        access_token=token,
-        expires_in=expires_in,
-        user=AdminPublic.model_validate(admin),
+async def login(payload: LoginRequest, request: Request) -> TokenResponse:
+    result = await _proxy(
+        _client(request).login(
+            payload.username,
+            payload.password,
+            forwarded_for=_forwarded_for(request),
+            request_id=_request_id(request),
+        ),
+        default_code="invalid_credentials",
     )
+    try:
+        return TokenResponse.model_validate(result)
+    except (TypeError, ValueError):
+        raise APIError(
+            502,
+            "auth_invalid_response",
+            "Authentication service returned an invalid response",
+        ) from None
 
 
 @router.get("/me", response_model=AdminPublic)
-async def current_admin(admin: CurrentAdmin) -> AdminPublic:
-    return AdminPublic.model_validate(admin)
+async def current_admin(request: Request, _: CurrentAdmin) -> AdminPublic:
+    result = await _proxy(
+        _client(request).me(_token(request), request_id=_request_id(request)),
+        default_code="invalid_token",
+    )
+    try:
+        return AdminPublic.model_validate(result)
+    except (TypeError, ValueError):
+        raise APIError(
+            502,
+            "auth_invalid_response",
+            "Authentication service returned an invalid response",
+        ) from None
 
 
 @router.patch("/password", response_model=MessageResponse)
 async def change_password(
     payload: ChangePasswordRequest,
-    admin: CurrentAdmin,
-    db: DbSession,
+    request: Request,
+    _: CurrentAdmin,
 ) -> MessageResponse:
-    if not verify_password(payload.current_password, admin.password_hash):
-        raise APIError(400, "current_password_invalid", "Current password is incorrect")
-    if payload.new_password == payload.current_password:
+    result = await _proxy(
+        _client(request).change_password(
+            _token(request),
+            payload.model_dump(),
+            request_id=_request_id(request),
+        ),
+        default_code="invalid_token",
+    )
+    try:
+        return MessageResponse.model_validate(result)
+    except (TypeError, ValueError):
         raise APIError(
-            400,
-            "password_unchanged",
-            "New password must be different from the current password",
-        )
+            502,
+            "auth_invalid_response",
+            "Authentication service returned an invalid response",
+        ) from None
 
-    admin.password_hash = hash_password(payload.new_password)
-    await db.commit()
-    return MessageResponse(message="Password updated successfully")
+
+@router.post("/logout", response_model=MessageResponse)
+async def logout(request: Request, _: CurrentAdmin) -> MessageResponse:
+    result = await _proxy(
+        _client(request).logout(_token(request), request_id=_request_id(request)),
+        default_code="invalid_token",
+    )
+    try:
+        return MessageResponse.model_validate(result)
+    except (TypeError, ValueError):
+        raise APIError(
+            502,
+            "auth_invalid_response",
+            "Authentication service returned an invalid response",
+        ) from None

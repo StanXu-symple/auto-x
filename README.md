@@ -118,7 +118,7 @@ docker-compose.monitor-agent.yml
 backend,frontend,xhs-worker
 ```
 
-选择结果保存在 `/home/docker/auto-x/.auto-x-services`，后续更新会沿用该列表。输入 `all` 部署全部服务。PostgreSQL 和 Redis 作为本地基础设施按依赖启动；如果使用外部数据服务，请改用外部配置覆盖文件。
+选择结果保存在 `/home/docker/auto-x/.auto-x-services`，后续更新会沿用该列表。输入 `all` 部署全部服务。`monitor-agent` 是每台 Docker 主机的必装组件，安装器会自动加入；选择 `backend`、`frontend`、`xhs-worker` 或 `monitor-center` 时也会自动加入 `auth-center`。只有选择了 `backend` 才会询问应用对外端口。PostgreSQL 和 Redis 默认作为本机基础设施按依赖启动；当 Nacos 中的 PostgreSQL 与 Redis 地址同时指向外部主机时，安装器会自动追加 `docker-compose.external.yml`，只配置其中一项会直接拒绝启动。
 
 手动部署时也可以直接组合 Compose 文件：
 
@@ -184,6 +184,8 @@ Nacos 连接凭据、`NACOS_ADVERTISE_IP`、服务名/监听端口、Docker 网�
 
 `NACOS_ADVERTISE_IP` 是服务注册到 Nacos 后供其他服务访问的地址。不配置时程序会自动探测非回环 IPv4；跨 Docker 主机部署时建议显式填写本机 LAN/VPC 地址，并确保对应服务端口已放行。它不是 Nacos 服务端地址，不能填写 `NACOS_SERVER_ADDR`。
 
+核心应用实例使用统一的 `xsentinel-` 前缀注册到 Nacos：`xsentinel-backend:8200`、`xsentinel-worker:8201`、`xsentinel-ai-worker:8202`、`xsentinel-qq-worker:8203`。这里登记的是宿主机可达端口；若修改对应的 `*_HOST_PORT`，注册端口会同步变化。进程启动时注册、运行中发送心跳，连接恢复后重新注册，并在正常退出时注销。
+
 初始化认证密钥、客户端授权和服务拓扑：
 
 ```bash
@@ -192,7 +194,9 @@ make network-groups
 make microservices-up
 ```
 
-控制平面服务包括 `auth-center`、`monitor-center` 和每台 Docker 主机一个 `monitor-agent`。监控 Agent 通过 Docker Engine API 采集容器 CPU 与 working-set 内存；监控中心通过 Nacos 发现 Agent 和其他服务。服务之间不再写死 URL；服务注册身份和每台主机的监控拓扑仍保留为本机引导配置。
+控制平面服务包括 `auth-center`、`monitor-center` 和每台 Docker 主机一个 `monitor-agent`。监控 Agent 通过 Docker Engine API 采集容器 CPU 与 working-set 内存；监控中心通过 Nacos 发现 Agent 和其他服务。浏览器登录、管理员会话和服务凭据统一由 auth-center 处理；业务服务仅接受带 `kid` 的 RS256 Token，并通过 JWKS 验证严格的 issuer、audience、token type 和 scope。用户、会话、撤销记录、服务身份、授权和加密后的轮换签名密钥均以 PostgreSQL 为权威，Redis 提供共享限流与撤销缓存，因此多个 auth-center 副本可以共同服务。
+
+多节点并不等于每台主机各启一套默认数据容器。部署第二个 auth-center 前，必须让所有节点同时指向同一个跨主机可达的 PostgreSQL 和 Redis，并为所有 auth-center 副本安全注入完全相同的 `SERVICE_AUTH_KEY_ENCRYPTION_KEY`；该专用 KEK 不发布到 Nacos，也不能与 `JWT_SECRET_KEY` 或 `X_TOKEN_ENCRYPTION_KEY` 共用。kejilion 安装前可在各节点设置相同的 `KJ_AUTO_X_SERVICE_AUTH_KEK`，或把同一值预置到各节点的 `.env`。`SERVICE_AUTH_URL` 默认优先访问本机 `auth-center:9100`；跨主机认证流量必须位于受保护的 VPC/加密 overlay 中，或使用受信任的 TLS 入口。除前端外，8200–8203、8006、9100–9102 只应对集群内可信地址开放。
 
 ## AI 草稿生成
 
@@ -213,7 +217,7 @@ AI API Key 使用服务端凭据加密密钥持久化到 PostgreSQL，Redis 只�
 
 添加群目标时，先选择发送机器人，再从“选择已加入的群”下拉框选择群；OpenID 自动填入，群名称可作为本地备注修改。列表按 AppID 隔离，来自 PostgreSQL 保存的入群和群消息事件，收到退群事件后移除，重复或乱序事件不会恢复旧状态。它是已观察到的群列表，不是 QQ 全量历史群列表；此前已加入的群可在群里 @ 一次机器人后刷新，也可切换“手动填写”。入群事件不包含群名，未命名的群显示 OpenID。
 
-事件接入：每个机器人的 QQ 开放平台后台需配置公网 HTTPS 回调地址 `https://你的域名/qq/webhook`，完成平台验证，并订阅机器人入群、退群和群 @ 消息事件。前端 Nginx 已将该路径转发到 `qq-worker:8003`，NoneBot QQ 适配器按 AppID 和 AppSecret 验签。`qq-worker` 使用 QQ Gateway WebSocket 保持已启用机器人在线，并同时提供 Webhook；新增、停用或修改机器人的接入配置约 15 秒内同步。若 QQ 后台仍显示离线，先确认 `qq-worker` 正常运行、开放平台已开启对应 Gateway 事件权限，以及容器可以访问 `api.sgroup.qq.com`。部署更新时执行 `alembic upgrade head`（新增 `0010_qq_joined_groups`），再更新后端、QQ Worker 和前端；本地开发的同一路径代理到 `localhost:8003`。
+事件接入：每个机器人的 QQ 开放平台后台需配置公网 HTTPS 回调地址 `https://你的域名/qq/webhook`，完成平台验证，并订阅机器人入群、退群和群 @ 消息事件。前端 Nginx 已将该路径转发到 `qq-worker:8203`，NoneBot QQ 适配器按 AppID 和 AppSecret 验签。`qq-worker` 使用 QQ Gateway WebSocket 保持已启用机器人在线，并同时提供 Webhook；新增、停用或修改机器人的接入配置约 15 秒内同步。若 QQ 后台仍显示离线，先确认 `qq-worker` 正常运行、开放平台已开启对应 Gateway 事件权限，以及容器可以访问 `api.sgroup.qq.com`。部署更新时执行 `alembic upgrade head`（新增 `0010_qq_joined_groups`），再更新后端、QQ Worker 和前端；本地开发的同一路径代理到 `localhost:8203`。
 
 ## 使用外部 PostgreSQL 与 Redis
 
@@ -325,7 +329,7 @@ python -m app.ai_worker
 
 ```
 
-API 文档默认位于 [http://localhost:8000/docs](http://localhost:8000/docs)。
+API 文档默认位于 [http://localhost:8200/docs](http://localhost:8200/docs)。
 
 ### 前端
 

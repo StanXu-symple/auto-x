@@ -106,7 +106,8 @@ Prometheus -> Nginx + FastAPI + Workers + exporters -> Grafana
 
 ## 安全边界
 
-- 管理接口需要 JWT；初始管理员凭据来自本机引导配置，JWT 密钥与凭据加密主密钥可由受 ACL 保护的 Nacos Config 统一提供（本机环境仍保留启动回退值），X/AI 访问凭据由管理台加密保存。
+- 管理员登录、改密、登出和服务凭据交换统一进入 auth-center。auth-center 签发带 `kid` 的 RS256 Token；业务 API 严格校验 issuer、audience、token type、scope、用户/会话/JTI，并从共享 PostgreSQL 确认管理员和会话状态。用户 Token 与服务 Token 不能混用。
+- auth-center 的用户、会话、撤销、服务身份、授权和加密签名密钥以 PostgreSQL 为唯一权威，Redis 只承担共享限流及撤销缓存。多副本必须共享 PostgreSQL、Redis 和只注入 auth-center 的专用 KEK；legacy 私钥与客户端文件只用于一次性引导。
 - AI API Key 加密写入 `ai_data_sources`，Redis 仅缓存密文，API 不返回明文；任务快照只记录数据源名称和版本。
 - 原 Post、Skill 指令和必要上下文会发送到所选 AI provider。部署者需要自行确认数据处理协议、保留策略、地区与版权要求，并优先使用 HTTPS 和受控 Bridge。
 - 管理员配置的 provider URL 会收到对应 Authorization 凭据；API 与 AI Worker 以 `AI_ALLOWED_PROVIDER_HOSTS` 做 hostname allowlist，并要求携带凭据的非本机目标使用 HTTPS。生产部署还应在网络层重复限制出站目标，降低误配置或管理员账号失陷导致的密钥外泄风险。
@@ -114,7 +115,7 @@ Prometheus -> Nginx + FastAPI + Workers + exporters -> Grafana
 - AI 结果只保存为草稿，不应被视为事实或直接自动发布；管理员发布前需核验来源、引用、敏感信息和平台合规性。
 - `.env` 不进入版本控制；生产环境应以权限为 `0600` 的宿主机环境文件注入，或由部署平台在启动时注入环境变量。当前版本不直接读取 Docker secret 的 `*_FILE` 约定。
 - 默认只读取公开账号与公开 Post，不保存 X 登录 Cookie。
-- 建议仅通过 HTTPS 暴露 Nginx，并限制数据库、Redis、Prometheus 的公网访问。
+- 建议仅通过 HTTPS 暴露 Nginx，并限制数据库、Redis、auth-center、8200–8203 服务端口及 Prometheus 的公网访问；跨主机控制面通信必须使用受保护的 VPC、加密 overlay 或 TLS/mTLS。
 - 生产环境需替换所有示例密码，并定期轮换 X Token 和 JWT 密钥。
 
 ## 扩展方向

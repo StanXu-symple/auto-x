@@ -57,7 +57,7 @@ class XHSServiceClient:
         )
         self.tokens = TokenClient(
             self.http,
-            "",
+            settings.service_auth_url,
             "backend",
             settings.service_client_secret_file,
             nacos=self.nacos,

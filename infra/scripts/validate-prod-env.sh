@@ -36,7 +36,14 @@ fi
 # maintains this small bootstrap cache. Initial administrator credentials also
 # stay local by design. Shared application secrets are validated by Settings
 # after the required Nacos document has been loaded.
-required=(POSTGRES_DATABASE POSTGRES_USER POSTGRES_PASSWORD ADMIN_USERNAME ADMIN_PASSWORD)
+required=(
+  POSTGRES_DATABASE
+  POSTGRES_USER
+  POSTGRES_PASSWORD
+  ADMIN_USERNAME
+  ADMIN_PASSWORD
+  SERVICE_AUTH_KEY_ENCRYPTION_KEY
+)
 if [[ "${centralized}" == true ]]; then
   required+=(NACOS_SERVER_ADDR)
 else
@@ -83,8 +90,13 @@ done
 
 admin_password="$(value_for ADMIN_PASSWORD)"
 postgres_database="$(value_for POSTGRES_DATABASE)"
+service_auth_kek="$(value_for SERVICE_AUTH_KEY_ENCRYPTION_KEY)"
 if (( ${#admin_password} < 12 )); then
   echo >&2 "ADMIN_PASSWORD must contain at least 12 characters"
+  failed=true
+fi
+if (( ${#service_auth_kek} < 32 )); then
+  echo >&2 "SERVICE_AUTH_KEY_ENCRYPTION_KEY must contain at least 32 characters"
   failed=true
 fi
 if [[ "${centralized}" != true ]]; then
@@ -96,6 +108,12 @@ if [[ "${centralized}" != true ]]; then
   fi
   if (( ${#x_token_encryption_key} < 32 )); then
     echo >&2 "X_TOKEN_ENCRYPTION_KEY must contain at least 32 characters"
+    failed=true
+  fi
+  if [[ -n "${service_auth_kek}" ]] \
+    && { [[ "${service_auth_kek}" == "${jwt_secret}" ]] \
+      || [[ "${service_auth_kek}" == "${x_token_encryption_key}" ]]; }; then
+    echo >&2 "SERVICE_AUTH_KEY_ENCRYPTION_KEY must be independent from application secrets"
     failed=true
   fi
 fi

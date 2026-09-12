@@ -50,6 +50,18 @@ services:
         reservations:
           memory: 64m
 
+  auth-center:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      AUTO_CREATE_TABLES: "false"
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:?POSTGRES_DATABASE must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      SERVICE_AUTH_KEY_ENCRYPTION_KEY: ${SERVICE_AUTH_KEY_ENCRYPTION_KEY:?SERVICE_AUTH_KEY_ENCRYPTION_KEY must be set}
+    restart: always
+
   backend:
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads

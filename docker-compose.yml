@@ -44,6 +44,7 @@ x-backend: &backend-common
     NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
     NACOS_USERNAME: ${NACOS_USERNAME:-}
     NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+    NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
     # An empty NACOS_SERVER_ADDR makes the application skip the remote source,
     # so enabling the switch by default keeps direct Compose and installer
     # deployments on the same configuration path without requiring Nacos for
@@ -70,7 +71,7 @@ x-backend: &backend-common
     AI_WORKER_BATCH_SIZE: ${AI_WORKER_BATCH_SIZE:-50}
     AI_WORKER_LOCK_TTL_SECONDS: ${AI_WORKER_LOCK_TTL_SECONDS:-180}
     AI_WORKER_HEARTBEAT_TTL_SECONDS: ${AI_WORKER_HEARTBEAT_TTL_SECONDS:-30}
-    AI_WORKER_METRICS_PORT: "8002"
+    AI_WORKER_METRICS_PORT: "8202"
     QQ_AUTH_URL: ${QQ_AUTH_URL:-https://bots.qq.com/app/getAppAccessToken}
     QQ_API_BASE_URL: ${QQ_API_BASE_URL:-https://api.sgroup.qq.com/}
     QQ_REQUEST_TIMEOUT_SECONDS: ${QQ_REQUEST_TIMEOUT_SECONDS:-20}
@@ -81,7 +82,7 @@ x-backend: &backend-common
     QQ_WORKER_MAX_ATTEMPTS: ${QQ_WORKER_MAX_ATTEMPTS:-3}
     QQ_WORKER_LOCK_TTL_SECONDS: ${QQ_WORKER_LOCK_TTL_SECONDS:-60}
     QQ_WORKER_HEARTBEAT_TTL_SECONDS: ${QQ_WORKER_HEARTBEAT_TTL_SECONDS:-30}
-    QQ_WORKER_PORT: "8003"
+    QQ_WORKER_PORT: "8203"
     QQ_WORKER_METRICS_PORT: "8004"
     XHS_JOB_TIMEOUT_SECONDS: ${XHS_JOB_TIMEOUT_SECONDS:-300}
     XHS_JOB_RESULT_TTL_SECONDS: ${XHS_JOB_RESULT_TTL_SECONDS:-300}
@@ -96,7 +97,7 @@ x-backend: &backend-common
     WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-100}
     WORKER_LOCK_TTL_SECONDS: ${WORKER_LOCK_TTL_SECONDS:-120}
     WORKER_HEARTBEAT_TTL_SECONDS: ${WORKER_HEARTBEAT_TTL_SECONDS:-30}
-    WORKER_METRICS_PORT: "8001"
+    WORKER_METRICS_PORT: "8201"
     CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:5173","http://localhost:8080"]}'
     PYTHONDONTWRITEBYTECODE: "1"
     PYTHONUNBUFFERED: "1"
@@ -272,11 +273,62 @@ services:
           cpus: "0.50"
           memory: 384m
 
+  auth-center:
+    <<: *backend-common
+    command:
+      - uvicorn
+      - app.control_plane.auth:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9100"
+    environment:
+      <<: *backend-environment
+      SERVICE_NAME: auth-center
+      # Schema ownership belongs to Alembic. Waiting for migrate avoids a
+      # create_all/Alembic race during first install and upgrades.
+      AUTO_CREATE_TABLES: "false"
+      NACOS_SERVICE_NAME: xsentinel-auth-center
+      NACOS_SERVICE_PORT: "${AUTH_CENTER_PORT:-9100}"
+      SERVICE_AUTH_PRIVATE_KEY_FILE: ""
+      SERVICE_AUTH_CLIENTS_FILE: ""
+      SERVICE_AUTH_KEY_ENCRYPTION_KEY: ${SERVICE_AUTH_KEY_ENCRYPTION_KEY:-}
+      SERVICE_AUTH_KEY_ROTATION_DAYS: ${SERVICE_AUTH_KEY_ROTATION_DAYS:-30}
+      SERVICE_AUTH_KEY_OVERLAP_DAYS: ${SERVICE_AUTH_KEY_OVERLAP_DAYS:-7}
+      SERVICE_AUTH_RATE_LIMIT: ${SERVICE_AUTH_RATE_LIMIT:-120}
+      SERVICE_AUTH_RATE_WINDOW_SECONDS: ${SERVICE_AUTH_RATE_WINDOW_SECONDS:-60}
+      SERVICE_AUTH_TOKEN_LIFETIME_SECONDS: ${SERVICE_AUTH_TOKEN_LIFETIME_SECONDS:-120}
+    expose:
+      - "9100"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/health/ready', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256m
+        reservations:
+          memory: 128m
+
   backend:
     <<: *backend-common
     environment:
       <<: *backend-environment
       SERVICE_NAME: backend
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
+      NACOS_SERVICE_NAME: xsentinel-backend
+      NACOS_SERVICE_PORT: "${BACKEND_HOST_PORT:-8200}"
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
       - article_uploads:/var/lib/xsentinel/article-uploads
@@ -287,13 +339,15 @@ services:
       - --host
       - 0.0.0.0
       - --port
-      - "8000"
+      - "8200"
       - --proxy-headers
     expose:
-      - "8000"
+      - "8200"
     ports:
-      - "${BACKEND_BIND_IP:-0.0.0.0}:${BACKEND_HOST_PORT:-8000}:8000"
+      - "${BACKEND_BIND_IP:-0.0.0.0}:${BACKEND_HOST_PORT:-8200}:8200"
     depends_on:
+      auth-center:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
       log-init:
@@ -303,7 +357,7 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/api/v1/health/ready', timeout=3)"
       interval: 15s
       timeout: 5s
       retries: 5
@@ -321,6 +375,8 @@ services:
     environment:
       <<: *backend-environment
       SERVICE_NAME: worker
+      NACOS_SERVICE_NAME: xsentinel-worker
+      NACOS_SERVICE_PORT: "${WORKER_HOST_PORT:-8201}"
     volumes:
       - runtime_logs:/var/log/xsentinel
     command:
@@ -328,9 +384,9 @@ services:
       - -m
       - app.worker
     expose:
-      - "8001"
+      - "8201"
     ports:
-      - "${WORKER_BIND_IP:-0.0.0.0}:${WORKER_HOST_PORT:-8001}:8001"
+      - "${WORKER_BIND_IP:-0.0.0.0}:${WORKER_HOST_PORT:-8201}:8201"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -341,7 +397,7 @@ services:
         - CMD
         - python
         - -c
-        - "import os, redis, urllib.request; u=os.getenv('REDIS_URL'); c=redis.Redis.from_url(u, socket_timeout=3) if u else redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), db=int(os.getenv('REDIS_DB', '0')), password=os.getenv('REDIS_PASSWORD') or None, socket_timeout=3); c.ping(); urllib.request.urlopen('http://127.0.0.1:8001/metrics', timeout=3)"
+        - "import os, redis, urllib.request; u=os.getenv('REDIS_URL'); c=redis.Redis.from_url(u, socket_timeout=3) if u else redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), db=int(os.getenv('REDIS_DB', '0')), password=os.getenv('REDIS_PASSWORD') or None, socket_timeout=3); c.ping(); urllib.request.urlopen('http://127.0.0.1:8201/metrics', timeout=3)"
       interval: 20s
       timeout: 5s
       retries: 5
@@ -364,12 +420,14 @@ services:
     environment:
       <<: *backend-environment
       SERVICE_NAME: ai-worker
+      NACOS_SERVICE_NAME: xsentinel-ai-worker
+      NACOS_SERVICE_PORT: "${AI_WORKER_HOST_PORT:-8202}"
     volumes:
       - runtime_logs:/var/log/xsentinel
     expose:
-      - "8002"
+      - "8202"
     ports:
-      - "${AI_WORKER_BIND_IP:-0.0.0.0}:${AI_WORKER_HOST_PORT:-8002}:8002"
+      - "${AI_WORKER_BIND_IP:-0.0.0.0}:${AI_WORKER_HOST_PORT:-8202}:8202"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -380,7 +438,7 @@ services:
         - CMD
         - python
         - -c
-        - "import os, redis, urllib.request; u=os.getenv('REDIS_URL'); c=redis.Redis.from_url(u, socket_timeout=3) if u else redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), db=int(os.getenv('REDIS_DB', '0')), password=os.getenv('REDIS_PASSWORD') or None, socket_timeout=3); c.ping(); urllib.request.urlopen('http://127.0.0.1:8002/metrics', timeout=3)"
+        - "import os, redis, urllib.request; u=os.getenv('REDIS_URL'); c=redis.Redis.from_url(u, socket_timeout=3) if u else redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), db=int(os.getenv('REDIS_DB', '0')), password=os.getenv('REDIS_PASSWORD') or None, socket_timeout=3); c.ping(); urllib.request.urlopen('http://127.0.0.1:8202/metrics', timeout=3)"
       interval: 20s
       timeout: 5s
       retries: 5
@@ -400,6 +458,8 @@ services:
     environment:
       <<: *backend-environment
       SERVICE_NAME: qq-worker
+      NACOS_SERVICE_NAME: xsentinel-qq-worker
+      NACOS_SERVICE_PORT: "${QQ_WORKER_HOST_PORT:-8203}"
     volumes:
       - article_uploads:/var/lib/xsentinel/article-uploads:ro
       - runtime_logs:/var/log/xsentinel
@@ -408,9 +468,9 @@ services:
       - -m
       - app.qq_worker
     expose:
-      - "8003"
+      - "8203"
     ports:
-      - "${QQ_WORKER_BIND_IP:-0.0.0.0}:${QQ_WORKER_HOST_PORT:-8003}:8003"
+      - "${QQ_WORKER_BIND_IP:-0.0.0.0}:${QQ_WORKER_HOST_PORT:-8203}:8203"
       - "8004"
     depends_on:
       migrate:
@@ -460,8 +520,6 @@ services:
       - runtime_logs:/var/log/xsentinel
     expose:
       - "8005"
-    ports:
-      - "${XHS_WORKER_BIND_IP:-0.0.0.0}:${XHS_WORKER_HOST_PORT:-8006}:8005"
     depends_on:
       migrate:
         condition: service_completed_successfully

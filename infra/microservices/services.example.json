@@ -7,10 +7,10 @@
   "services": [
     { "id": "postgres", "name": "PostgreSQL", "component": "database", "node": "local", "project": "x-sentinel", "container_service": "postgres", "port": 5432 },
     { "id": "redis", "name": "Redis", "component": "redis", "node": "local", "project": "x-sentinel", "container_service": "redis", "port": 6379 },
-    { "id": "api", "name": "API", "component": "api", "node": "local", "project": "x-sentinel", "container_service": "backend", "port": 8000 },
-    { "id": "worker", "name": "Polling Worker", "component": "worker", "node": "local", "project": "x-sentinel", "container_service": "worker", "port": 8001 },
-    { "id": "ai-worker", "name": "AI Worker", "component": "ai_worker", "node": "local", "project": "x-sentinel", "container_service": "ai-worker", "port": 8002 },
-    { "id": "qq-worker", "name": "QQ Worker", "component": "qq_worker", "node": "local", "project": "x-sentinel", "container_service": "qq-worker", "port": 8003 },
+    { "id": "api", "name": "API", "component": "api", "node": "local", "project": "x-sentinel", "container_service": "backend", "port": 8200 },
+    { "id": "worker", "name": "Polling Worker", "component": "worker", "node": "local", "project": "x-sentinel", "container_service": "worker", "port": 8201 },
+    { "id": "ai-worker", "name": "AI Worker", "component": "ai_worker", "node": "local", "project": "x-sentinel", "container_service": "ai-worker", "port": 8202 },
+    { "id": "qq-worker", "name": "QQ Worker", "component": "qq_worker", "node": "local", "project": "x-sentinel", "container_service": "qq-worker", "port": 8203 },
     { "id": "xhs-worker", "name": "XHS Worker", "component": "xhs_worker", "node": "local", "project": "x-sentinel", "container_service": "xhs-worker", "port": 8006 }
   ]
 }

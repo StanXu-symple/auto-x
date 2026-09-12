@@ -14,6 +14,8 @@ from prometheus_client import start_http_server
 from redis.asyncio import Redis
 from sqlalchemy import case, or_, select, text
 
+from app import __version__
+from app.control_plane.nacos import start_service_registration
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
@@ -59,6 +61,12 @@ class PollingWorker:
         await self.redis.ping()
         async with AsyncSessionFactory() as session:
             await session.execute(text("SELECT 1"))
+        nacos_registration = await start_service_registration(
+            self.settings,
+            "xsentinel-worker",
+            self.settings.worker_metrics_port,
+            metadata={"component": "worker", "version": __version__},
+        )
         logger.info("X Sentinel polling worker started", extra={"worker_id": self.worker_id})
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         try:
@@ -79,6 +87,8 @@ class PollingWorker:
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
+            if nacos_registration is not None:
+                await nacos_registration.aclose()
             logger.info("X Sentinel polling worker stopping", extra={"worker_id": self.worker_id})
             await self.x_client.aclose()
             await self.redis.aclose()

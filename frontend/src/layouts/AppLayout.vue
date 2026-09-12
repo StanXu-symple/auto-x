@@ -86,9 +86,9 @@ function toggleCollapsed() {
   localStorage.setItem('x-sentinel-sidebar', collapsed.value ? 'collapsed' : 'expanded')
 }
 
-function logout() {
-  auth.logout()
-  router.push('/login')
+async function logout() {
+  await auth.logout()
+  await router.push('/login')
 }
 
 const passwordInvalid = computed(() => {
@@ -127,7 +127,9 @@ async function submitPasswordChange() {
       new_password: passwordForm.next,
     })
     passwordModalOpen.value = false
-    ElMessage.success('密码已更新')
+    ElMessage.success('密码已更新，请重新登录')
+    await auth.logout()
+    await router.push('/login')
   } catch (error) {
     const message = getErrorMessage(error, '密码修改失败，请稍后重试')
     passwordError.value =

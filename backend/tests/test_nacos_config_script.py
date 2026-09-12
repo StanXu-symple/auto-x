@@ -105,6 +105,7 @@ def test_positive_timeout_rejects_invalid_values() -> None:
 def test_deployment_network_group_is_not_published() -> None:
     module = load_script()
     assert "NETWORK_GROUPS" in module.EXCLUDED_KEYS
+    assert "SERVICE_AUTH_KEY_ENCRYPTION_KEY" in module.EXCLUDED_KEYS
 
 
 def test_runtime_allow_list_drops_legacy_mysql_and_unknown_keys(tmp_path: Path) -> None:
@@ -298,6 +299,7 @@ def test_production_env_validator_accepts_nacos_managed_application_secrets(
         "REDIS_PASSWORD=redis-secret\n"
         "ADMIN_USERNAME=admin\n"
         "ADMIN_PASSWORD=a-secure-admin-password\n"
+        "SERVICE_AUTH_KEY_ENCRYPTION_KEY=a-dedicated-auth-center-kek-with-32-bytes\n"
         "GRAFANA_ADMIN_USER=admin\n"
         "GRAFANA_ADMIN_PASSWORD=a-secure-grafana-password\n",
         encoding="utf-8",
@@ -342,3 +344,4 @@ def test_production_env_validator_requires_local_secrets_without_required_nacos(
     assert result.returncode == 1
     assert "JWT_SECRET_KEY is missing or empty" in result.stderr
     assert "X_TOKEN_ENCRYPTION_KEY is missing or empty" in result.stderr
+    assert "SERVICE_AUTH_KEY_ENCRYPTION_KEY is missing or empty" in result.stderr

@@ -44,11 +44,17 @@ export const useAuthStore = defineStore('auth', () => {
     return result
   }
 
-  function logout() {
-    token.value = null
-    user.value = null
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(USER_KEY)
+  async function logout() {
+    try {
+      if (token.value) await authApi.logout()
+    } catch {
+      // A stale/revoked remote session must never prevent local sign-out.
+    } finally {
+      token.value = null
+      user.value = null
+      localStorage.removeItem(TOKEN_KEY)
+      localStorage.removeItem(USER_KEY)
+    }
   }
 
   return { token, user, loading, isAuthenticated, login, logout, refreshUser }

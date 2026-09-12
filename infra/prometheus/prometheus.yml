@@ -14,34 +14,34 @@ scrape_configs:
       - targets:
           - prometheus:9090
 
-  - job_name: x-sentinel-api
+  - job_name: xsentinel-backend
     metrics_path: /metrics
     scrape_interval: 10s
     static_configs:
       - targets:
-          - backend:8000
+          - backend:8200
         labels:
           component: api
 
-  - job_name: x-sentinel-worker
+  - job_name: xsentinel-worker
     metrics_path: /metrics
     scrape_interval: 10s
     static_configs:
       - targets:
-          - worker:8001
+          - worker:8201
         labels:
           component: worker
 
-  - job_name: x-sentinel-ai-worker
+  - job_name: xsentinel-ai-worker
     metrics_path: /metrics
     scrape_interval: 10s
     static_configs:
       - targets:
-          - ai-worker:8002
+          - ai-worker:8202
         labels:
           component: ai-worker
 
-  - job_name: x-sentinel-qq-worker
+  - job_name: xsentinel-qq-worker
     metrics_path: /metrics
     scrape_interval: 10s
     static_configs:
@@ -50,7 +50,7 @@ scrape_configs:
         labels:
           component: qq-worker
 
-  - job_name: x-sentinel-xhs-worker
+  - job_name: xsentinel-xhs-worker
     metrics_path: /metrics
     scrape_interval: 10s
     static_configs:
@@ -59,7 +59,7 @@ scrape_configs:
         labels:
           component: xhs-worker
 
-  - job_name: x-sentinel-frontend
+  - job_name: xsentinel-frontend
     metrics_path: /metrics
     static_configs:
       - targets:

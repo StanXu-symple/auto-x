@@ -33,7 +33,7 @@
       "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
       "id": 1,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
-      "targets": [{"editorMode": "code", "expr": "max(up{job=\"x-sentinel-api\"})", "legendFormat": "API", "range": true, "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "max(up{job=\"xsentinel-backend\"})", "legendFormat": "API", "range": true, "refId": "A"}],
       "title": "API",
       "type": "stat"
     },
@@ -163,7 +163,7 @@
       "gridPos": {"h": 8, "w": 8, "x": 0, "y": 12},
       "id": 9,
       "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"editorMode": "code", "expr": "sum by (method, path) (rate(http_requests_total{job=\"x-sentinel-api\"}[$__rate_interval]))", "legendFormat": "{{method}} {{path}}", "range": true, "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "sum by (method, path) (rate(http_requests_total{job=\"xsentinel-backend\"}[$__rate_interval]))", "legendFormat": "{{method}} {{path}}", "range": true, "refId": "A"}],
       "title": "API request rate",
       "type": "timeseries"
     },
@@ -173,7 +173,7 @@
       "gridPos": {"h": 8, "w": 8, "x": 8, "y": 12},
       "id": 10,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"editorMode": "code", "expr": "sum(rate(http_requests_total{job=\"x-sentinel-api\",status=~\"5..\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_total{job=\"x-sentinel-api\"}[$__rate_interval])), 0.001)", "legendFormat": "5xx ratio", "range": true, "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "sum(rate(http_requests_total{job=\"xsentinel-backend\",status=~\"5..\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_total{job=\"xsentinel-backend\"}[$__rate_interval])), 0.001)", "legendFormat": "5xx ratio", "range": true, "refId": "A"}],
       "title": "API server error ratio",
       "type": "timeseries"
     },
@@ -184,8 +184,8 @@
       "id": 11,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"editorMode": "code", "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"x-sentinel-api\"}[$__rate_interval])))", "legendFormat": "p50", "range": true, "refId": "A"},
-        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"x-sentinel-api\"}[$__rate_interval])))", "legendFormat": "p95", "range": true, "refId": "B"}
+        {"editorMode": "code", "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"xsentinel-backend\"}[$__rate_interval])))", "legendFormat": "p50", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"xsentinel-backend\"}[$__rate_interval])))", "legendFormat": "p95", "range": true, "refId": "B"}
       ],
       "title": "API latency",
       "type": "timeseries"
@@ -239,7 +239,7 @@
       "gridPos": {"h": 7, "w": 8, "x": 0, "y": 26},
       "id": 16,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"editorMode": "code", "expr": "process_resident_memory_bytes{job=\"x-sentinel-api\"}", "legendFormat": "API RSS", "range": true, "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "process_resident_memory_bytes{job=\"xsentinel-backend\"}", "legendFormat": "API RSS", "range": true, "refId": "A"}],
       "title": "API process memory",
       "type": "timeseries"
     },
@@ -282,7 +282,7 @@
       "gridPos": {"h": 7, "w": 4, "x": 0, "y": 33},
       "id": 20,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
-      "targets": [{"editorMode": "code", "expr": "max(up{job=\"x-sentinel-ai-worker\"})", "legendFormat": "AI Worker", "range": true, "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "max(up{job=\"xsentinel-ai-worker\"})", "legendFormat": "AI Worker", "range": true, "refId": "A"}],
       "title": "AI Worker",
       "type": "stat"
     },

@@ -6,16 +6,20 @@ from datetime import UTC, datetime
 import httpx
 from fastapi import Depends, FastAPI, Request
 
+from app import __version__
 from app.control_plane.config import (
     Topology,
     apply_runtime_topology,
     load_runtime_config,
     load_topology,
-    read_secret,
     runtime_float,
 )
 from app.control_plane.contracts import ResourceSnapshot
-from app.control_plane.nacos import NacosClient, advertise_identity, heartbeat_loop
+from app.control_plane.nacos import (
+    NacosClient,
+    NacosServiceRegistration,
+    advertise_identity,
+)
 from app.control_plane.resources import unavailable
 from app.control_plane.security import ServiceVerifier, TokenClient
 
@@ -128,9 +132,6 @@ def create_app() -> FastAPI:
             )
             runtime = await load_runtime_config(bootstrap_nacos)
         topology = apply_runtime_topology(local_topology, runtime)
-        app.state.verifier = ServiceVerifier(
-            read_secret("SERVICE_AUTH_PUBLIC_KEY_FILE"), "monitor", "monitor:read"
-        )
         app.state.snapshot = {
             "sampled_at": datetime.now(UTC).isoformat(),
             "mode": "microservices",
@@ -145,12 +146,31 @@ def create_app() -> FastAPI:
                 os.environ.get("NACOS_USERNAME", ""),
                 os.environ.get("NACOS_PASSWORD", ""),
             )
+            app.state.verifier = ServiceVerifier(
+                None,
+                "monitor",
+                "monitor:read",
+                http=http,
+                auth_center_url=os.environ.get("SERVICE_AUTH_URL", ""),
+                nacos=nacos,
+            )
             ip, port = advertise_identity()
             service_name = os.environ.get("NACOS_SERVICE_NAME", "xsentinel-monitor-center")
-            await nacos.register(service_name, ip, port)
-            beat = asyncio.create_task(heartbeat_loop(nacos, service_name, ip, port))
+            registration = NacosServiceRegistration(
+                http,
+                nacos,
+                service_name,
+                ip,
+                port,
+                metadata={"component": "monitor-center", "version": __version__},
+            )
+            await registration.start()
             tokens = TokenClient(
-                http, "", "monitor", os.environ["SERVICE_CLIENT_SECRET_FILE"], nacos=nacos
+                http,
+                os.environ.get("SERVICE_AUTH_URL", ""),
+                "monitor",
+                os.environ["SERVICE_CLIENT_SECRET_FILE"],
+                nacos=nacos,
             )
             collector = MonitorCollector(topology, http, tokens)
 
@@ -166,9 +186,7 @@ def create_app() -> FastAPI:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
-                beat.cancel()
-                with suppress(asyncio.CancelledError):
-                    await beat
+                await registration.aclose()
 
     app = FastAPI(
         title="X Sentinel monitoring center",

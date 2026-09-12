@@ -56,7 +56,7 @@ prod-up: ## Sync required Nacos config, migrate, build and start production
 external-up: ## Sync required Nacos config and start with external PostgreSQL/Redis
 	$(SYNC_REQUIRED_NACOS)
 	$(MAKE) validate-external-env ENV_FILE="$(ENV_FILE)"
-	$(COMPOSE_EXTERNAL) up -d --build backend worker ai-worker frontend
+	$(COMPOSE_EXTERNAL) up -d --build auth-center backend worker ai-worker qq-worker frontend
 
 down: ## Stop the core stack without deleting persistent data
 	$(COMPOSE) down
@@ -64,15 +64,15 @@ down: ## Stop the core stack without deleting persistent data
 prod-down: ## Stop the production stack without deleting persistent data
 	$(COMPOSE_PROD) down
 
-external-down: ## Stop only API, workers and frontend in external-data mode
-	$(COMPOSE_EXTERNAL) stop backend worker ai-worker frontend
-	$(COMPOSE_EXTERNAL) rm -f migrate backend worker ai-worker frontend
+external-down: ## Stop only auth center, API, workers and frontend in external-data mode
+	$(COMPOSE_EXTERNAL) stop auth-center backend worker ai-worker qq-worker frontend
+	$(COMPOSE_EXTERNAL) rm -f migrate auth-center backend worker ai-worker qq-worker frontend
 
-restart: ## Restart API, workers and frontend
-	$(COMPOSE) restart backend worker ai-worker frontend
+restart: ## Restart auth center, API, workers and frontend
+	$(COMPOSE) restart auth-center backend worker ai-worker qq-worker frontend
 
-logs: ## Follow application logs
-	$(COMPOSE) logs -f --tail=200 backend worker ai-worker frontend
+logs: ## Follow auth center and application logs
+	$(COMPOSE) logs -f --tail=200 auth-center backend worker ai-worker qq-worker frontend
 
 ps: ## Show container and health status
 	$(COMPOSE) ps

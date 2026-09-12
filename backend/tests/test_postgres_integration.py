@@ -12,11 +12,23 @@ from sqlalchemy import delete, func, inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from alembic import command
+from app.control_plane.auth_store import AuthStore
 from app.core.config import Settings
 from app.core.time import to_database_utc
 from app.db import init_db
 from app.db.base import Base
-from app.models import Admin, AIFeature, AIGenerationJob, AISetting, AISkill, MonitoredUser, Tweet
+from app.models import (
+    Admin,
+    AIFeature,
+    AIGenerationJob,
+    AISetting,
+    AISkill,
+    MonitoredUser,
+    ServiceAuthBootstrapState,
+    ServiceAuthClientCredential,
+    ServiceAuthGrant,
+    Tweet,
+)
 from app.services.ai_jobs import enqueue_auto_jobs
 from app.services.poller import PollingService
 
@@ -120,3 +132,54 @@ async def test_fresh_database_seed_and_business_writes(database):
     async with database() as session, session.begin():
         await session.execute(delete(MonitoredUser).where(MonitoredUser.id == user_id))
         assert await session.scalar(select(func.count(Tweet.id))) == 0
+
+
+async def test_service_auth_legacy_clients_bootstrap_is_exactly_once(
+    database, tmp_path: Path
+) -> None:
+    clients_file = tmp_path / "clients.json"
+    source_a = """{
+          "backend": {
+            "secret_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "grants": {"xhs-worker": "xhs:execute"}
+          }
+        }"""
+    source_b = """{
+          "backend": {
+            "secret_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "grants": {"xhs-worker": "must:not-restore"}
+          }
+        }"""
+    clients_file.write_text(source_a, encoding="utf-8")
+    stores = [
+        AuthStore(
+            database,
+            master_secret="a-shared-key-encryption-secret-with-32-bytes",
+            legacy_clients_file=str(clients_file),
+        )
+        for _ in range(2)
+    ]
+
+    await asyncio.gather(*(store._bootstrap_legacy_clients() for store in stores))
+    clients_file.write_text(source_b, encoding="utf-8")
+    await stores[0]._bootstrap_legacy_clients()
+
+    async with database() as session, session.begin():
+        assert (
+            await session.scalar(select(func.count()).select_from(ServiceAuthBootstrapState)) == 2
+        )
+        assert await session.scalar(select(func.count(ServiceAuthClientCredential.id))) == 2
+        assert await session.scalar(select(func.count()).select_from(ServiceAuthGrant)) == 1
+        grant = await session.get(ServiceAuthGrant, ("backend", "xhs-worker"))
+        assert grant.scopes == "xhs:execute"
+        await session.execute(delete(ServiceAuthGrant))
+        await session.execute(delete(ServiceAuthClientCredential))
+
+    clients_file.write_text(source_a, encoding="utf-8")
+    await stores[0]._bootstrap_legacy_clients()
+    clients_file.write_text(source_b, encoding="utf-8")
+    await stores[0]._bootstrap_legacy_clients()
+
+    async with database() as session:
+        assert await session.scalar(select(func.count(ServiceAuthClientCredential.id))) == 0
+        assert await session.scalar(select(func.count()).select_from(ServiceAuthGrant)) == 0

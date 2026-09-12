@@ -385,9 +385,9 @@ class Settings(BaseSettings):
     nacos_config_group: str = ""
     nacos_config_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
     nacos_config_required: bool = False
-    nacos_service_name: str = "xsentinel-api"
+    nacos_service_name: str = "xsentinel-backend"
     nacos_advertise_ip: str = ""
-    nacos_service_port: int = Field(default=8000, ge=1, le=65535)
+    nacos_service_port: int = Field(default=8200, ge=1, le=65535)
 
     jwt_secret_key: str = "development-only-change-me"
     jwt_algorithm: str = "HS256"
@@ -408,7 +408,7 @@ class Settings(BaseSettings):
     worker_batch_size: int = Field(default=100, ge=1, le=1000)
     worker_lock_ttl_seconds: int = Field(default=120, ge=15, le=3600)
     worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
-    worker_metrics_port: int = Field(default=8001, ge=0, le=65535)
+    worker_metrics_port: int = Field(default=8201, ge=0, le=65535)
     pagination_resume_delay_seconds: float = Field(default=1.0, ge=0.1, le=60)
     x_auth_gate_seconds: int = Field(default=300, ge=30, le=3600)
 
@@ -430,7 +430,7 @@ class Settings(BaseSettings):
     ai_worker_batch_size: int = Field(default=50, ge=1, le=500)
     ai_worker_lock_ttl_seconds: int = Field(default=180, ge=30, le=3600)
     ai_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
-    ai_worker_metrics_port: int = Field(default=8002, ge=0, le=65535)
+    ai_worker_metrics_port: int = Field(default=8202, ge=0, le=65535)
 
     qq_auth_url: str = "https://bots.qq.com/app/getAppAccessToken"
     qq_api_base_url: str = "https://api.sgroup.qq.com/"
@@ -442,7 +442,7 @@ class Settings(BaseSettings):
     qq_worker_max_attempts: int = Field(default=3, ge=1, le=10)
     qq_worker_lock_ttl_seconds: int = Field(default=60, ge=15, le=600)
     qq_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
-    qq_worker_port: int = Field(default=8003, ge=0, le=65535)
+    qq_worker_port: int = Field(default=8203, ge=0, le=65535)
     qq_worker_metrics_port: int = Field(default=8004, ge=0, le=65535)
 
     xhs_job_timeout_seconds: float = Field(default=300.0, ge=30, le=600)
@@ -489,8 +489,6 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> Settings:
-        if bool(self.service_auth_url) != bool(self.monitor_center_url):
-            raise ValueError("SERVICE_AUTH_URL and MONITOR_CENTER_URL must be configured together")
         if not self.postgres_dsn:
             user = quote(self.postgres_user, safe="")
             password = quote(self.postgres_password, safe="")

@@ -1,22 +1,31 @@
-"""Small Nacos naming client used by the control plane.
+"""Small Nacos naming client used by X Sentinel services.
 
 The client uses Nacos' HTTP naming API so the application image does not need a
 second SDK or a fixed URL for any peer service.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
+import logging
 import os
 import socket
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import httpx
 
 from app.control_plane.contracts import NacosInstanceList
+
+if TYPE_CHECKING:
+    from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -164,7 +173,13 @@ class NacosClient:
         response = await self.http.post(f"{self.server}/nacos/v1/ns/instance", params=params)
         response.raise_for_status()
 
-    async def beat(self, service_name: str, ip: str, port: int) -> None:
+    async def beat(
+        self,
+        service_name: str,
+        ip: str,
+        port: int,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
         params = await self._params()
         params.update(
             {"serviceName": service_name, "ip": ip, "port": str(port), "ephemeral": "true"}
@@ -182,7 +197,7 @@ class NacosClient:
         response = await self.http.put(f"{self.server}/nacos/v1/ns/instance/beat", params=params)
         response.raise_for_status()
         if response.json().get("code") == 20404:
-            await self.register(service_name, ip, port)
+            await self.register(service_name, ip, port, metadata)
 
     async def deregister(self, service_name: str, ip: str, port: int) -> None:
         params = await self._params()
@@ -206,18 +221,87 @@ class NacosClient:
 
 
 async def heartbeat_loop(
-    nacos: NacosClient, service_name: str, ip: str, port: int, interval: float = 5
+    nacos: NacosClient,
+    service_name: str,
+    ip: str,
+    port: int,
+    interval: float = 5,
+    metadata: dict[str, str] | None = None,
+    readiness: Callable[[], Awaitable[bool]] | None = None,
 ):
+    registered = True
     while True:
+        ready = True
+        if readiness is not None:
+            try:
+                ready = await readiness()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - an unhealthy dependency removes the instance
+                ready = False
+                logger.warning(
+                    "Readiness probe failed for Nacos service %s at %s:%s",
+                    service_name,
+                    ip,
+                    port,
+                    exc_info=True,
+                )
         try:
-            await nacos.beat(service_name, ip, port)
+            if not ready:
+                if registered:
+                    try:
+                        await nacos.deregister(service_name, ip, port)
+                    except asyncio.CancelledError:
+                        raise
+                    except (httpx.HTTPError, RuntimeError, KeyError, ValueError):
+                        logger.warning(
+                            "Unable to deregister unready Nacos service %s at %s:%s; will retry",
+                            service_name,
+                            ip,
+                            port,
+                        )
+                    else:
+                        registered = False
+                        logger.warning(
+                            "Deregistered unready Nacos service %s at %s:%s",
+                            service_name,
+                            ip,
+                            port,
+                        )
+            elif registered:
+                await nacos.beat(service_name, ip, port, metadata)
+            else:
+                # A failed heartbeat may mean that Nacos restarted and lost
+                # its ephemeral instance state.  Register explicitly after
+                # connectivity returns instead of waiting for a 20404 beat.
+                await nacos.register(service_name, ip, port, metadata)
+                registered = True
+                logger.info(
+                    "Re-registered Nacos service %s at %s:%s",
+                    service_name,
+                    ip,
+                    port,
+                )
+        except asyncio.CancelledError:
+            raise
         except (httpx.HTTPError, RuntimeError, KeyError, ValueError):
-            pass
+            if registered:
+                logger.warning(
+                    "Nacos heartbeat failed for %s at %s:%s; registration will be retried",
+                    service_name,
+                    ip,
+                    port,
+                )
+            registered = False
         await asyncio.sleep(interval)
 
 
-def advertise_identity() -> tuple[str, int]:
-    ip = os.environ.get("NACOS_ADVERTISE_IP", "").strip()
+def advertise_identity(
+    advertise_ip: str | None = None, service_port: int | None = None
+) -> tuple[str, int]:
+    ip = (
+        os.environ.get("NACOS_ADVERTISE_IP", "") if advertise_ip is None else advertise_ip
+    ).strip()
     if not ip:
         try:
             addresses = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
@@ -228,10 +312,123 @@ def advertise_identity() -> tuple[str, int]:
         except OSError:
             ip = ""
     ip = ip or "127.0.0.1"
-    port = int(os.environ.get("NACOS_SERVICE_PORT", "0"))
+    port = (
+        int(os.environ.get("NACOS_SERVICE_PORT", "0"))
+        if service_port is None
+        else int(service_port)
+    )
     if not urlsplit(f"http://{ip}").hostname or not 0 < port < 65536:
         raise ValueError("NACOS_ADVERTISE_IP and NACOS_SERVICE_PORT must be configured")
     return ip, port
+
+
+class NacosServiceRegistration:
+    """Own one ephemeral Nacos instance and its heartbeat task."""
+
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        nacos: NacosClient,
+        service_name: str,
+        ip: str,
+        port: int,
+        metadata: dict[str, str] | None = None,
+        readiness: Callable[[], Awaitable[bool]] | None = None,
+    ) -> None:
+        self.http = http
+        self.nacos = nacos
+        self.service_name = service_name
+        self.ip = ip
+        self.port = port
+        self.metadata = metadata
+        self.readiness = readiness
+        self._heartbeat_task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        await self.nacos.register(self.service_name, self.ip, self.port, self.metadata)
+        self._heartbeat_task = asyncio.create_task(
+            heartbeat_loop(
+                self.nacos,
+                self.service_name,
+                self.ip,
+                self.port,
+                metadata=self.metadata,
+                readiness=self.readiness,
+            )
+        )
+
+    async def aclose(self) -> None:
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+            self._heartbeat_task = None
+        try:
+            await self.nacos.deregister(self.service_name, self.ip, self.port)
+        except (httpx.HTTPError, RuntimeError, KeyError, ValueError):
+            # Ephemeral instances expire automatically.  A temporary Nacos
+            # outage must not prevent a process from completing shutdown.
+            logger.warning(
+                "Unable to deregister Nacos service %s at %s:%s",
+                self.service_name,
+                self.ip,
+                self.port,
+                exc_info=True,
+            )
+        finally:
+            await self.http.aclose()
+
+
+async def start_service_registration(
+    settings: Settings,
+    default_service_name: str,
+    default_service_port: int,
+    *,
+    metadata: dict[str, str] | None = None,
+) -> NacosServiceRegistration | None:
+    """Register one application process when a Nacos server is configured.
+
+    Service identity is deployment-local.  Explicit ``NACOS_SERVICE_*``
+    environment values take precedence, while callers provide a safe
+    process-specific default for direct (non-Compose) execution.
+    """
+
+    if not settings.nacos_server_addr:
+        return None
+    service_name = os.environ.get("NACOS_SERVICE_NAME", default_service_name).strip()
+    service_name = service_name or default_service_name
+    raw_port = os.environ.get("NACOS_SERVICE_PORT", str(default_service_port))
+    try:
+        service_port = int(raw_port)
+    except ValueError as exc:
+        raise ValueError("NACOS_SERVICE_PORT must be an integer") from exc
+    ip, port = advertise_identity(settings.nacos_advertise_ip, service_port)
+    http = httpx.AsyncClient(
+        timeout=settings.nacos_config_timeout_seconds,
+        trust_env=False,
+    )
+    nacos = NacosClient(
+        http,
+        settings.nacos_server_addr,
+        settings.nacos_namespace,
+        settings.nacos_group,
+        settings.nacos_username,
+        settings.nacos_password,
+    )
+    registration = NacosServiceRegistration(
+        http,
+        nacos,
+        service_name,
+        ip,
+        port,
+        metadata,
+    )
+    try:
+        await registration.start()
+    except BaseException:
+        await http.aclose()
+        raise
+    return registration
 
 
 # Re-export the config clients from the established Nacos module so callers can
@@ -251,7 +448,9 @@ __all__ = [
     "NacosConfigClient",
     "NacosConfigError",
     "NacosConfigKey",
+    "NacosServiceRegistration",
     "advertise_identity",
     "heartbeat_loop",
     "merge_config",
+    "start_service_registration",
 ]

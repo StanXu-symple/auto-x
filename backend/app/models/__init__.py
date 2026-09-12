@@ -22,6 +22,16 @@ from app.models.qq import (
     QQScheduledTaskGroup,
     QQTargetSubscription,
 )
+from app.models.service_auth import (
+    ServiceAuthAudit,
+    ServiceAuthBootstrapState,
+    ServiceAuthClient,
+    ServiceAuthClientCredential,
+    ServiceAuthGrant,
+    ServiceAuthRevocation,
+    ServiceAuthSession,
+    ServiceAuthSigningKey,
+)
 from app.models.setting import AppSetting
 from app.models.tweet import Tweet
 from app.models.x_credential import XCredential
@@ -49,6 +59,14 @@ __all__ = [
     "QQScheduledTask",
     "QQScheduledTaskBot",
     "QQScheduledTaskGroup",
+    "ServiceAuthAudit",
+    "ServiceAuthBootstrapState",
+    "ServiceAuthClient",
+    "ServiceAuthClientCredential",
+    "ServiceAuthGrant",
+    "ServiceAuthRevocation",
+    "ServiceAuthSession",
+    "ServiceAuthSigningKey",
     "Tweet",
     "XCredential",
     "XiaohongshuCredential",

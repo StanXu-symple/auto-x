@@ -7,17 +7,21 @@ from datetime import UTC, datetime
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 
+from app import __version__
 from app.control_plane.config import (
     Service,
     Topology,
     apply_runtime_topology,
     load_runtime_config,
     load_topology,
-    read_secret,
     runtime_float,
 )
 from app.control_plane.contracts import ResourceSnapshot
-from app.control_plane.nacos import NacosClient, advertise_identity, heartbeat_loop
+from app.control_plane.nacos import (
+    NacosClient,
+    NacosServiceRegistration,
+    advertise_identity,
+)
 from app.control_plane.resources import docker_resources, unavailable
 from app.control_plane.security import ServiceVerifier
 
@@ -157,9 +161,6 @@ def create_app() -> FastAPI:
         node = os.environ.get("MONITOR_NODE_ID", "local")
         if node not in topology.nodes:
             raise ValueError("MONITOR_NODE_ID is not in the static topology")
-        app.state.verifier = ServiceVerifier(
-            read_secret("SERVICE_AUTH_PUBLIC_KEY_FILE"), f"agent:{node}", "resources:read"
-        )
         async with httpx.AsyncClient(
             timeout=topology.timeout_seconds, trust_env=False
         ) as http_nacos:
@@ -171,12 +172,27 @@ def create_app() -> FastAPI:
                 os.environ.get("NACOS_USERNAME", ""),
                 os.environ.get("NACOS_PASSWORD", ""),
             )
+            app.state.verifier = ServiceVerifier(
+                None,
+                f"agent:{node}",
+                "resources:read",
+                http=http_nacos,
+                auth_center_url=os.environ.get("SERVICE_AUTH_URL", ""),
+                nacos=nacos,
+            )
             ip, port = advertise_identity()
             service_name = os.environ.get(
                 "NACOS_SERVICE_NAME", f"xsentinel-monitor-agent-{node}"
             )
-            await nacos.register(service_name, ip, port)
-            beat = asyncio.create_task(heartbeat_loop(nacos, service_name, ip, port))
+            registration = NacosServiceRegistration(
+                http_nacos,
+                nacos,
+                service_name,
+                ip,
+                port,
+                metadata={"component": "monitor-agent", "version": __version__},
+            )
+            await registration.start()
             app.state.snapshot = None
             transport = httpx.AsyncHTTPTransport(
                 uds=os.environ.get("DOCKER_SOCKET", "/var/run/docker.sock")
@@ -204,9 +220,7 @@ def create_app() -> FastAPI:
                     task.cancel()
                     with suppress(asyncio.CancelledError):
                         await task
-                    beat.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await beat
+                    await registration.aclose()
 
     app = FastAPI(
         title="X Sentinel node agent",

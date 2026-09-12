@@ -105,12 +105,21 @@ echo "[migration] 检查并升级数据库结构"
 )
 
 start_process \
+  "auth-center" \
+  "uvicorn app.control_plane.auth:app" \
+  "$BACKEND_DIR" \
+  "$LOG_DIR/auth-center.log" \
+  "$PYTHON_BIN" -m uvicorn app.control_plane.auth:app --host 127.0.0.1 --port 9100
+wait_for_url "auth-center" "http://127.0.0.1:9100/health/ready" "$RUN_DIR/auth-center.pid" "$LOG_DIR/auth-center.log"
+
+start_process \
   "api" \
   "uvicorn app.main:app" \
   "$BACKEND_DIR" \
   "$LOG_DIR/api.log" \
-  "$PYTHON_BIN" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-wait_for_url "api" "http://127.0.0.1:8000/api/v1/health/ready" "$RUN_DIR/api.pid" "$LOG_DIR/api.log"
+  env SERVICE_AUTH_URL=http://127.0.0.1:9100 \
+  "$PYTHON_BIN" -m uvicorn app.main:app --host 127.0.0.1 --port 8200
+wait_for_url "api" "http://127.0.0.1:8200/api/v1/health/ready" "$RUN_DIR/api.pid" "$LOG_DIR/api.log"
 
 start_process \
   "poll-worker" \
@@ -137,7 +146,8 @@ wait_for_url "frontend" "http://127.0.0.1:5173/" "$RUN_DIR/frontend.pid" "$LOG_D
 echo
 echo "X Sentinel 已全部启动："
 echo "  前端：    http://127.0.0.1:5173"
-echo "  API：     http://127.0.0.1:8000"
-echo "  API 文档：http://127.0.0.1:8000/docs"
+echo "  API：     http://127.0.0.1:8200"
+echo "  API 文档：http://127.0.0.1:8200/docs"
+echo "  认证中心：http://127.0.0.1:9100"
 echo "  日志目录：$LOG_DIR"
 echo "关闭服务：./shutdown.sh"

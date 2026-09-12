@@ -13,9 +13,13 @@ services:
       NACOS_CONFIG_GROUP: ${NACOS_CONFIG_GROUP:-}
       NACOS_CONFIG_TIMEOUT_SECONDS: ${NACOS_CONFIG_TIMEOUT_SECONDS:-3}
       NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
+      NACOS_SERVICE_NAME: xsentinel-backend
+      NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
+      NACOS_SERVICE_PORT: ${BACKEND_HOST_PORT:-8200}
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
       SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/backend.secret
     volumes:
-      - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/backend.secret:/run/xsentinel/backend.secret:ro
     networks: [control, app, data, monitoring]
 
   xhs-worker:
@@ -26,6 +30,7 @@ services:
       XHS_SERVICE_NAME: xsentinel-xhs-worker
       XHS_SERVICE_PORT: 8006
       XHS_SERVICE_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
+      XHS_SERVICE_ADVERTISE_PORT: ${XHS_WORKER_HOST_PORT:-8006}
       XHS_WORKER_METRICS_PORT: 8006
       NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}
       NACOS_NAMESPACE: ${NACOS_NAMESPACE:-public}
@@ -39,11 +44,8 @@ services:
       NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
       NACOS_SERVICE_NAME: xsentinel-xhs-worker
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
-      NACOS_SERVICE_PORT: 8006
-      SERVICE_AUTH_PUBLIC_KEY_FILE: /run/xsentinel/public.pem
-      SERVICE_AUTH_CLIENT_SECRET_FILE: /run/xsentinel/backend.secret
-    volumes:
-      - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
+      NACOS_SERVICE_PORT: ${XHS_WORKER_HOST_PORT:-8006}
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
     expose: ["8006"]
     ports: ["${XHS_WORKER_BIND_IP:-0.0.0.0}:${XHS_WORKER_HOST_PORT:-8006}:8006"]
     healthcheck:
@@ -54,6 +56,29 @@ services:
     image: ${BACKEND_IMAGE:-x-sentinel-backend}:${IMAGE_TAG:-latest}
     command: ["uvicorn", "app.control_plane.auth:app", "--host", "0.0.0.0", "--port", "9100"]
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
+      AUTO_CREATE_TABLES: "false"
+      POSTGRES_DSN: ${POSTGRES_DSN:-}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-xsentinel}
+      POSTGRES_USER: ${POSTGRES_USER:-xsentinel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres}
+      POSTGRES_POOL_SIZE: ${POSTGRES_POOL_SIZE:-3}
+      POSTGRES_MAX_OVERFLOW: ${POSTGRES_MAX_OVERFLOW:-2}
+      POSTGRES_POOL_RECYCLE_SECONDS: ${POSTGRES_POOL_RECYCLE_SECONDS:-1800}
+      REDIS_URL: ${REDIS_URL:-}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-redis}
+      REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-3}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-development-only-change-me}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-480}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-now}
+      X_TOKEN_ENCRYPTION_KEY: ${X_TOKEN_ENCRYPTION_KEY:-}
       NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}
       NACOS_NAMESPACE: ${NACOS_NAMESPACE:-public}
       NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
@@ -66,17 +91,28 @@ services:
       NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
       NACOS_SERVICE_NAME: xsentinel-auth-center
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
-      NACOS_SERVICE_PORT: 9100
+      NACOS_SERVICE_PORT: ${AUTH_CENTER_PORT:-9100}
       SERVICE_AUTH_PRIVATE_KEY_FILE: /run/xsentinel/private.pem
       SERVICE_AUTH_CLIENTS_FILE: /run/xsentinel/clients.json
+      SERVICE_AUTH_KEY_ENCRYPTION_KEY: ${SERVICE_AUTH_KEY_ENCRYPTION_KEY:-}
+      SERVICE_AUTH_KEY_ROTATION_DAYS: ${SERVICE_AUTH_KEY_ROTATION_DAYS:-30}
+      SERVICE_AUTH_KEY_OVERLAP_DAYS: ${SERVICE_AUTH_KEY_OVERLAP_DAYS:-7}
       SERVICE_AUTH_RATE_LIMIT: ${SERVICE_AUTH_RATE_LIMIT:-120}
+      SERVICE_AUTH_RATE_WINDOW_SECONDS: ${SERVICE_AUTH_RATE_WINDOW_SECONDS:-60}
       SERVICE_AUTH_TOKEN_LIFETIME_SECONDS: ${SERVICE_AUTH_TOKEN_LIFETIME_SECONDS:-120}
     volumes:
-      - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
+      # This is the only service allowed to see the legacy private key. The
+      # mount is writable so auth-center can erase it after the PostgreSQL
+      # import commits; all token verification uses JWKS afterwards.
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/private.pem:/run/xsentinel/private.pem:rw
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/clients.json:/run/xsentinel/clients.json:ro
     ports: ["${AUTH_CENTER_BIND_IP:-0.0.0.0}:${AUTH_CENTER_PORT:-9100}:9100"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/health/live', timeout=3)"]
-    networks: [control]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/health/ready', timeout=3)"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [control, data]
     restart: unless-stopped
 
   monitor-center:
@@ -95,8 +131,8 @@ services:
       NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
       NACOS_SERVICE_NAME: xsentinel-monitor-center
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
-      NACOS_SERVICE_PORT: 9102
-      SERVICE_AUTH_PUBLIC_KEY_FILE: /run/xsentinel/public.pem
+      NACOS_SERVICE_PORT: ${MONITOR_CENTER_PORT:-9102}
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
       SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/monitor.secret
       SERVICE_TOPOLOGY_FILE: /run/xsentinel/services.json
       MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-10}
@@ -104,8 +140,9 @@ services:
       MONITOR_TIMEOUT_SECONDS: ${MONITOR_TIMEOUT_SECONDS:-3}
       MONITOR_CONCURRENCY: ${MONITOR_CONCURRENCY:-8}
     volumes:
-      - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
-    ports: ["${MONITOR_CENTER_BIND:-0.0.0.0}:${MONITOR_CENTER_PORT:-9102}:9102"]
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/monitor.secret:/run/xsentinel/monitor.secret:ro
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/services.json:/run/xsentinel/services.json:ro
+    ports: ["${MONITOR_CENTER_BIND_IP:-0.0.0.0}:${MONITOR_CENTER_PORT:-9102}:9102"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9102/health/live', timeout=3)"]
     networks: [control]
@@ -127,9 +164,8 @@ services:
       NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
       NACOS_SERVICE_NAME: xsentinel-monitor-agent-${MONITOR_NODE_ID:-local}
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
-      NACOS_SERVICE_PORT: 9101
+      NACOS_SERVICE_PORT: ${MONITOR_AGENT_PORT:-9101}
       MONITOR_NODE_ID: ${MONITOR_NODE_ID:-local}
-      SERVICE_AUTH_PUBLIC_KEY_FILE: /run/xsentinel/public.pem
       SERVICE_TOPOLOGY_FILE: /run/xsentinel/services.json
       DOCKER_SOCKET: /var/run/docker.sock
       MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-10}
@@ -137,7 +173,7 @@ services:
       MONITOR_TIMEOUT_SECONDS: ${MONITOR_TIMEOUT_SECONDS:-3}
       MONITOR_CONCURRENCY: ${MONITOR_CONCURRENCY:-8}
     volumes:
-      - ${CONTROL_PLANE_DIR:-./data/control-plane}:/run/xsentinel:ro
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/services.json:/run/xsentinel/services.json:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     group_add: ["${DOCKER_SOCKET_GID:-0}"]
     ports: ["${MONITOR_AGENT_BIND_IP:-0.0.0.0}:${MONITOR_AGENT_PORT:-9101}:9101"]

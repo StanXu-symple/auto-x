@@ -1,64 +1,71 @@
-import pytest
+import json
 
-from app.api.errors import APIError
-from app.api.routes.auth import change_password
-from app.core.security import hash_password, verify_password
-from app.models.admin import Admin
-from app.schemas.auth import ChangePasswordRequest
+import httpx
 
-
-class FakeDb:
-    def __init__(self) -> None:
-        self.commits = 0
-
-    async def commit(self) -> None:
-        self.commits += 1
+from app.core.config import Settings
+from app.services.auth_center import AuthCenterClient
 
 
-async def test_change_password_updates_the_persisted_hash() -> None:
-    admin = Admin(username="admin", password_hash=hash_password("existing-password"))
-    db = FakeDb()
-
-    response = await change_password(
-        ChangePasswordRequest(
-            current_password="existing-password",
-            new_password="new-secure-password",
-        ),
-        admin,
-        db,  # type: ignore[arg-type]
+def auth_settings() -> Settings:
+    return Settings(
+        _env_file=None,
+        service_auth_url="http://auth-center:9100",
+        monitor_center_url="http://monitor-center:9102",
     )
 
-    assert response.message == "Password updated successfully"
-    assert db.commits == 1
-    assert verify_password("new-secure-password", admin.password_hash)
-    assert not verify_password("existing-password", admin.password_hash)
 
+async def test_password_change_is_delegated_to_auth_center() -> None:
+    seen: dict[str, object] = {}
 
-@pytest.mark.parametrize(
-    ("current_password", "new_password", "error_code"),
-    [
-        ("wrong-password", "new-secure-password", "current_password_invalid"),
-        ("existing-password", "existing-password", "password_unchanged"),
-    ],
-)
-async def test_change_password_rejects_invalid_updates(
-    current_password: str,
-    new_password: str,
-    error_code: str,
-) -> None:
-    admin = Admin(username="admin", password_hash=hash_password("existing-password"))
-    db = FakeDb()
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["authorization"] = request.headers.get("authorization")
+        seen["payload"] = json.loads(request.content)
+        return httpx.Response(200, json={"message": "Password updated successfully"})
 
-    with pytest.raises(APIError) as exc_info:
-        await change_password(
-            ChangePasswordRequest(
-                current_password=current_password,
-                new_password=new_password,
-            ),
-            admin,
-            db,  # type: ignore[arg-type]
+    remote = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = AuthCenterClient(auth_settings(), http=remote)
+    try:
+        response = await client.change_password(
+            "user-token",
+            {
+                "current_password": "existing-password",
+                "new_password": "new-secure-password",
+            },
         )
+    finally:
+        await remote.aclose()
 
-    assert exc_info.value.code == error_code
-    assert db.commits == 0
-    assert verify_password("existing-password", admin.password_hash)
+    assert response == {"message": "Password updated successfully"}
+    assert seen == {
+        "path": "/v1/admin/password",
+        "authorization": "Bearer user-token",
+        "payload": {
+            "current_password": "existing-password",
+            "new_password": "new-secure-password",
+        },
+    }
+
+
+async def test_logout_revokes_the_remote_session() -> None:
+    seen: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["authorization"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"message": "Logged out successfully"})
+
+    remote = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = AuthCenterClient(auth_settings(), http=remote)
+    try:
+        response = await client.logout("user-token")
+    finally:
+        await remote.aclose()
+
+    assert response == {"message": "Logged out successfully"}
+    assert seen == {
+        "method": "POST",
+        "path": "/v1/admin/logout",
+        "authorization": "Bearer user-token",
+    }

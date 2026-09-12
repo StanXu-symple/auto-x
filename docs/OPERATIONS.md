@@ -5,16 +5,20 @@
 | 服务 | Compose 名称 | 对外端口 | 说明 |
 | --- | --- | --- | --- |
 | 管理台 / 反向代理 | `frontend` | `8080` | 唯一默认公网入口 |
-| API | `backend` | 仅容器网络 `8000` | FastAPI 与 API Prometheus 指标 |
-| 轮询进程 | `worker` | 仅容器网络 `8001` | 调度、X 请求、Worker 指标 |
-| AI 生成进程 | `ai-worker` | 仅容器网络 `8002` | AI 任务、provider 请求与 Worker 指标 |
-| QQ 投递进程 | `qq-worker` | 仅容器网络 `8003` / `8004` | NoneBot2 运行端点与 QQ 投递指标 |
+| API | `backend` | 集群端口 `8200` | Nacos: `xsentinel-backend`；FastAPI 与 API 指标 |
+| 轮询进程 | `worker` | 集群端口 `8201` | Nacos: `xsentinel-worker`；调度、X 请求与指标 |
+| AI 生成进程 | `ai-worker` | 集群端口 `8202` | Nacos: `xsentinel-ai-worker`；AI 任务与指标 |
+| QQ 投递进程 | `qq-worker` | 集群端口 `8203` / 指标 `8004` | Nacos: `xsentinel-qq-worker`；NoneBot2 与投递指标 |
+| 小红书 HTTP Worker | `xhs-worker` | 集群端口 `8006` | Nacos: `xsentinel-xhs-worker`；受服务 Token 保护 |
+| 认证中心 | `auth-center` | 集群端口 `9100` | Nacos: `xsentinel-auth-center`；登录、JWKS 与服务 Token |
+| 监控中心 | `monitor-center` | 集群端口 `9102` | Nacos: `xsentinel-monitor-center`；聚合节点资源 |
+| 节点 Agent | `monitor-agent` | 集群端口 `9101` | Nacos: `xsentinel-monitor-agent-*`；每台 Docker 主机必装 |
 | PostgreSQL | `postgres` | 不映射 | 持久业务数据 |
 | Redis | `redis` | 不映射 | 锁、心跳、触发标记 |
 | Prometheus | `prometheus` | `127.0.0.1:9090` | monitoring profile |
 | Grafana | `grafana` | `127.0.0.1:3000` | monitoring profile |
 
-管理台、Prometheus 与 Grafana 的宿主机端口可通过 `.env` 调整；API、轮询、AI 与 QQ Worker 的容器内端口固定为 `8000`、`8001`、`8002`、`8003/8004`。除非已有防火墙、认证和 TLS 保护，不要把 PostgreSQL、Redis、Worker 指标或 Prometheus 暴露到公网。
+管理台、Prometheus 与 Grafana 的宿主机端口可通过 `.env` 调整；API、轮询、AI 与 QQ Worker 的默认端口为 `8200`、`8201`、`8202`、`8203/8004`，修改 `*_HOST_PORT` 后 Nacos 注册端口会同步变化。“集群端口”表示需供其他节点从 LAN/VPC 访问，不表示应向公网开放。防火墙只允许可信集群 CIDR；PostgreSQL、Redis、auth-center、Worker 指标和 Prometheus不得直接暴露到互联网。
 
 ## 上线流程
 
@@ -76,6 +80,8 @@ make external-down ENV_FILE=.env.external
 
 示例文件已配置 PostgreSQL `10.211.55.30:5432`、Redis `10.211.55.30:6537` 且 Redis 无密码。部署前应创建拥有 `xsentinel` 库的专用 PostgreSQL 用户；应用无需超级用户权限。外部数据库/Redis 的备份、恢复、Exporter 和宿主机告警应在数据服务所在服务器配置，根目录的 `backup`/`restore` 目标只处理 Compose 自带的数据容器。
 
+运行多个 auth-center 副本时，外部模式是强制前提：所有副本必须连接同一 PostgreSQL 和 Redis，并使用同一个独立的 `SERVICE_AUTH_KEY_ENCRYPTION_KEY`。该 KEK 只注入 auth-center，不进入 Nacos；值不一致时副本无法解密共享签名密钥并会 readiness 失败。auth-center、backend 与其他服务之间如果跨主机通信，必须使用受保护的 VPC/加密 overlay，或在前方部署 TLS/mTLS 代理。
+
 不要直接执行不带服务名的 `docker compose -f docker-compose.yml -f docker-compose.external.yml up`，因为 Compose 仍会把基础文件中没有 profile 的本地数据服务纳入启动集合。
 
 ## 健康检查
@@ -95,7 +101,7 @@ docker compose logs --tail=200 worker
 docker compose restart worker
 ```
 
-AI Worker 使用 Redis key `xsentinel:ai-worker:heartbeat` 上报短期 JSON 心跳，字段包括 `worker_id`、`status`、`last_heartbeat`、`active_tasks`、`provider`、`provider_ready`、`key_required` 与 `key_configured`。管理台只读取这些布尔状态，不会返回密钥原文；`provider_ready` 表示凭据/目标配置通过本地检查，不等同于已探测 provider 的远端可用性。Worker 还会在容器网络 `8002/metrics` 暴露任务计数、耗时、待处理队列和草稿计数。容器健康检查同时验证 Redis 与指标端点；Prometheus 的 `x-sentinel-ai-worker` job 和 Grafana AI 面板用于观察进程与队列。
+AI Worker 使用 Redis key `xsentinel:ai-worker:heartbeat` 上报短期 JSON 心跳，字段包括 `worker_id`、`status`、`last_heartbeat`、`active_tasks`、`provider`、`provider_ready`、`key_required` 与 `key_configured`。管理台只读取这些布尔状态，不会返回密钥原文；`provider_ready` 表示凭据/目标配置通过本地检查，不等同于已探测 provider 的远端可用性。Worker 还会在容器网络 `8202/metrics` 暴露任务计数、耗时、待处理队列和草稿计数。容器健康检查同时验证 Redis 与指标端点；Prometheus 的 `xsentinel-ai-worker` job 和 Grafana AI 面板用于观察进程与队列。
 
 AI 专用指标为 `x_sentinel_ai_jobs_total{status,provider}`、`x_sentinel_ai_job_duration_seconds{status,provider}`、`x_sentinel_ai_queue_due`、`x_sentinel_ai_drafts_total{provider}` 和 `x_sentinel_ai_worker_heartbeat_timestamp_seconds`；Python 进程与 GC 指标由 Prometheus client 一并暴露。
 

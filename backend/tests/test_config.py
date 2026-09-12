@@ -4,6 +4,25 @@ from pydantic import ValidationError
 from app.core.config import Settings
 
 
+def test_application_service_default_nacos_identity_and_ports(monkeypatch) -> None:
+    for key in (
+        "NACOS_SERVICE_NAME",
+        "NACOS_SERVICE_PORT",
+        "WORKER_METRICS_PORT",
+        "AI_WORKER_METRICS_PORT",
+        "QQ_WORKER_PORT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    settings = Settings(_env_file=None, nacos_config_enabled=False)
+
+    assert settings.nacos_service_name == "xsentinel-backend"
+    assert settings.nacos_service_port == 8200
+    assert settings.worker_metrics_port == 8201
+    assert settings.ai_worker_metrics_port == 8202
+    assert settings.qq_worker_port == 8203
+
+
 def test_component_database_and_redis_settings_build_urls() -> None:
     settings = Settings(
         _env_file=None,
@@ -108,10 +127,10 @@ def test_nacos_config_overrides_dotenv_and_environment(monkeypatch, tmp_path) ->
     monkeypatch.setenv("SERVICE_AUTH_PUBLIC_KEY_FILE", "/local/public.pem")
     monkeypatch.setenv("NACOS_SERVICE_NAME", "local-api")
     monkeypatch.setenv("NACOS_ADVERTISE_IP", "127.0.0.1")
-    monkeypatch.setenv("NACOS_SERVICE_PORT", "8000")
-    monkeypatch.setenv("WORKER_METRICS_PORT", "8001")
-    monkeypatch.setenv("AI_WORKER_METRICS_PORT", "8002")
-    monkeypatch.setenv("QQ_WORKER_PORT", "8003")
+    monkeypatch.setenv("NACOS_SERVICE_PORT", "8200")
+    monkeypatch.setenv("WORKER_METRICS_PORT", "8201")
+    monkeypatch.setenv("AI_WORKER_METRICS_PORT", "8202")
+    monkeypatch.setenv("QQ_WORKER_PORT", "8203")
     monkeypatch.setenv("QQ_WORKER_METRICS_PORT", "8004")
     monkeypatch.setenv("XHS_WORKER_METRICS_PORT", "8005")
     monkeypatch.setenv("XHS_SERVICE_ADVERTISE_IP", "127.0.0.2")
@@ -155,10 +174,10 @@ def test_nacos_config_overrides_dotenv_and_environment(monkeypatch, tmp_path) ->
     assert settings.service_auth_public_key_file == "/local/public.pem"
     assert settings.nacos_service_name == "local-api"
     assert settings.nacos_advertise_ip == "127.0.0.1"
-    assert settings.nacos_service_port == 8000
-    assert settings.worker_metrics_port == 8001
-    assert settings.ai_worker_metrics_port == 8002
-    assert settings.qq_worker_port == 8003
+    assert settings.nacos_service_port == 8200
+    assert settings.worker_metrics_port == 8201
+    assert settings.ai_worker_metrics_port == 8202
+    assert settings.qq_worker_port == 8203
     assert settings.qq_worker_metrics_port == 8004
     assert settings.xhs_worker_metrics_port == 8005
     assert settings.xhs_service_advertise_ip == "127.0.0.2"

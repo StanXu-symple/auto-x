@@ -10,14 +10,16 @@ Poll commits are fenced by both a database generation and a renewable Redis leas
 ```bash
 pip install -e '.[dev]'
 alembic upgrade head
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.control_plane.auth:app --host 127.0.0.1 --port 9100
+uvicorn app.main:app --host 0.0.0.0 --port 8200
 python -m app.worker
 python -m app.ai_worker
 python -m app.xhs_worker
 ```
 
 All Xiaohongshu CLI and Camoufox operations run in the dedicated `xhs-worker`.
-The API exchanges encrypted login validation and publishing jobs with it through Redis.
+In HTTP mode the API obtains an audience-scoped service Token from auth-center,
+discovers `xsentinel-xhs-worker` through Nacos, and sends authenticated publishing jobs to it.
 Worker diagnostics are available with:
 
 ```bash
@@ -35,9 +37,10 @@ the pool allows more warm sessions, while the concurrency limit controls
 simultaneous business work. Profiles are stored below the worker's
 `XHS_CLI_HOME` directory and should be included in the persistent volume.
 
-Copy `.env.example` to `.env` and set the database, Redis, JWT, administrator, and X bearer-token
-values. `AUTO_CREATE_TABLES=true` offers an idempotent first-run path; production deployments can
-run Alembic and set it to `false`.
+Copy `.env.example` to `.env` and set the database, Redis, administrator, credential-encryption and
+service-auth values. `AUTO_CREATE_TABLES=true` offers an idempotent development path; production
+deployments run Alembic first and set it to `false`. Production auth-center replicas must share the
+same PostgreSQL, Redis and dedicated `SERVICE_AUTH_KEY_ENCRYPTION_KEY`.
 
 Revision `0002_polling_fencing` adds resumable pagination and fencing fields with
 `ALTER TABLE ... ADD COLUMN` operations. Run migrations as a one-shot before starting
@@ -60,11 +63,13 @@ database whose role may create and drop schemas.
 
 All JSON API routes use `/api/v1`: administrator login, dashboard summary, monitored-user CRUD and
 pause/resume/poll actions, tweet history, polling logs, dynamic settings, JSON system metrics, and
-liveness/readiness. Prometheus exposition is available at `/metrics`.
-The worker exposes its process-local polling counters and histograms on port `8001`; Prometheus
-should scrape `backend:8000/metrics`, `worker:8001/metrics`, and the AI worker on port `8002`.
+liveness/readiness. Login, logout, password changes and Token issuance are delegated to auth-center;
+protected business routes locally verify its rotating RS256 JWKS and confirm the administrator
+session against PostgreSQL. Prometheus exposition is available at `/metrics`.
+The worker exposes its process-local polling counters and histograms on port `8201`; Prometheus
+should scrape `backend:8200/metrics`, `worker:8201/metrics`, and the AI worker on port `8202`.
 The AI worker runs with `python -m app.ai_worker`, writes heartbeat
-`xsentinel:ai-worker:heartbeat`, and exposes process-local metrics on port `8002`. Provider API
+`xsentinel:ai-worker:heartbeat`, and exposes process-local metrics on port `8202`. Provider API
 keys are environment-only AI-worker secrets; the API reports readiness from the heartbeat and
 never accepts or returns key material. Runtime provider URLs live in the database and are managed
 through `/api/v1/ai/settings`. Every destination host must also appear in

@@ -98,6 +98,9 @@ export const authApi = {
   async changePassword(payload: ChangePasswordPayload) {
     return dataOf(await http.patch<Wrapped<{ message: string }>>('/auth/password', payload))
   },
+  async logout() {
+    return dataOf(await http.post<Wrapped<{ message: string }>>('/auth/logout'))
+  },
 }
 
 export const dashboardApi = {

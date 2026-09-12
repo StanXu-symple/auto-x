@@ -8,3 +8,6 @@ networks:
   control:
     name: ${CONTROL_NETWORK_NAME:-x-sentinel-control}
     external: ${CONTROL_NETWORK_EXTERNAL:-true}
+  data:
+    name: ${DATA_NETWORK_NAME:-x-sentinel_data}
+    external: ${DATA_NETWORK_EXTERNAL:-true}

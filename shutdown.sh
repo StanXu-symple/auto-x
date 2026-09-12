@@ -85,6 +85,7 @@ stop_process "frontend" "npm run dev" || shutdown_status=1
 stop_process "ai-worker" "app.ai_worker" || shutdown_status=1
 stop_process "poll-worker" "app.worker" || shutdown_status=1
 stop_process "api" "uvicorn app.main:app" || shutdown_status=1
+stop_process "auth-center" "uvicorn app.control_plane.auth:app" || shutdown_status=1
 
 rmdir "$RUN_DIR" 2>/dev/null || true
 if [[ "$shutdown_status" -eq 0 ]]; then

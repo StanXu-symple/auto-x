@@ -19,6 +19,7 @@ from sqlalchemy import and_, func, or_, select
 from app import __version__
 from app.api.errors import APIError
 from app.api.router import api_router
+from app.control_plane.nacos import start_service_registration
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.init_db import initialize_database
@@ -26,6 +27,7 @@ from app.db.session import AsyncSessionFactory, engine
 from app.models.ai import AIGenerationJob
 from app.models.monitored_user import MonitoredUser
 from app.services import system_health, xhs_jobs
+from app.services.auth_center import AuthCenterClient
 from app.services.metrics import (
     AI_QUEUE_DUE,
     AI_WORKER_HEARTBEAT,
@@ -43,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    app.state.auth_center = AuthCenterClient(settings)
     if settings.nacos_server_addr or (settings.monitor_center_url and settings.service_auth_url):
         system_health.MONITORING_CLIENT = system_health.MonitoringClient(settings)
     if settings.xhs_transport == "http":
@@ -66,6 +69,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.startup_errors = startup_errors
     if startup_errors and settings.startup_strict:
         raise RuntimeError("; ".join(startup_errors))
+    nacos_registration = await start_service_registration(
+        settings,
+        settings.nacos_service_name,
+        settings.nacos_service_port,
+        metadata={"component": "backend", "version": __version__},
+    )
     logger.info(
         "X Sentinel API started",
         extra={"version": __version__, "environment": settings.environment},
@@ -73,12 +82,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if nacos_registration is not None:
+            await nacos_registration.aclose()
         if system_health.MONITORING_CLIENT is not None:
             await system_health.MONITORING_CLIENT.aclose()
             system_health.MONITORING_CLIENT = None
         if xhs_jobs.HTTP_XHS_CLIENT is not None:
             await xhs_jobs.HTTP_XHS_CLIENT.aclose()
             xhs_jobs.HTTP_XHS_CLIENT = None
+        await app.state.auth_center.aclose()
         await app.state.redis.aclose()
         await engine.dispose()
         logger.info("X Sentinel API stopped")
