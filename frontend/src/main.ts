@@ -1,31 +1,9 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
-import 'element-plus/dist/index.css'
+import Antd from 'ant-design-vue'
+import 'ant-design-vue/dist/reset.css'
 import App from './App.vue'
 import router from './router'
-import './styles/main.css'
-import './styles/redesign.css'
-import './styles/finishing.css'
-import './styles/main-area.css'
-import './styles/monitoring.css'
-import './styles/runtime-logs.css'
-import './styles/accounts.css'
-import './styles/tweets.css'
-import './styles/logs.css'
-import './styles/x-authorization.css'
-import './styles/ai-data-source.css'
-import './styles/ai-writing.css'
-import './styles/articles.css'
-import './styles/qq-notifications.css'
-import './styles/qq-tasks.css'
-import './styles/settings.css'
-import './styles/xhs.css'
-import './styles/xhs-guide.css'
-import './styles/login.css'
+import './styles/theme.css'
 
-const app = createApp(App)
-app.use(createPinia())
-app.use(router)
-app.use(ElementPlus)
-app.mount('#app')
+createApp(App).use(createPinia()).use(router).use(Antd).mount('#app')

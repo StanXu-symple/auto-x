@@ -24,11 +24,11 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      chunkSizeWarningLimit: 1_200,
+      chunkSizeWarningLimit: 1_600,
       rollupOptions: {
         output: {
           manualChunks: {
-            'element-plus': ['element-plus'],
+            'ant-design-vue': ['ant-design-vue', '@ant-design/icons-vue'],
             'vue-vendor': ['vue', 'vue-router', 'pinia', 'axios'],
           },
         },

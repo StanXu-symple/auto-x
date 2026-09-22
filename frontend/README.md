@@ -1,13 +1,13 @@
-# X Sentinel Console
+# Auto-X Console
 
-X Sentinel 的 Vue 3 管理控制台，用于管理 X/Twitter 监听账号、查看采集内容与轮询记录，并监控服务器、PostgreSQL、Redis 和 Worker 状态。
+Auto-X 的 Vue 3 管理控制台，用于管理 X/Twitter 监听账号、查看采集内容与轮询记录，并监控服务器、PostgreSQL、Redis 和 Worker 状态。
 
 ## 技术栈
 
 - Vue 3 + TypeScript + Vite
-- Element Plus（深色主题定制）
+- Ant Design Vue（暖白编辑式主题）
 - Pinia + Vue Router
-- Axios + lucide-vue-next
+- Axios + @ant-design/icons-vue
 
 ## 本地运行
 
@@ -25,7 +25,7 @@ npm run dev
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | `/api/v1` | 浏览器访问的 API 前缀 |
 | `VITE_PROXY_TARGET` | `http://localhost:8200` | Vite 开发代理目标 |
-| `VITE_APP_NAME` | `X Sentinel` | 应用名称 |
+| `VITE_APP_NAME` | `Auto-X` | 应用名称 |
 
 ## 常用命令
 
