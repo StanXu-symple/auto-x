@@ -79,17 +79,15 @@ if [[ ! -d "$RUN_DIR" ]]; then
   exit 0
 fi
 
-# 与启动顺序相反，先停止入口服务，再停止后台任务和 API。
+# 与管理台启动顺序相反，先停止前端入口，再停止 API 和认证中心。
 shutdown_status=0
 stop_process "frontend" "npm run dev" || shutdown_status=1
-stop_process "ai-worker" "app.ai_worker" || shutdown_status=1
-stop_process "poll-worker" "app.worker" || shutdown_status=1
 stop_process "api" "uvicorn app.main:app" || shutdown_status=1
 stop_process "auth-center" "uvicorn app.control_plane.auth:app" || shutdown_status=1
 
 rmdir "$RUN_DIR" 2>/dev/null || true
 if [[ "$shutdown_status" -eq 0 ]]; then
-  echo "X Sentinel 前后端服务已全部停止。"
+  echo "管理控制台相关服务已全部停止。"
 else
   echo "关闭流程已完成，但存在需要人工检查的 PID 文件异常。" >&2
 fi

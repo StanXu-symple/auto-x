@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# Start the management console for local visual/login checks.
+#
+# This native-process entrypoint intentionally starts only the services needed
+# by the frontend login flow: auth-center, API, and the Vite dev server.
+# Polling/AI/QQ/XHS workers belong to the Compose/microservice deployment and
+# are not required when checking the management console UI.
+
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -122,20 +129,6 @@ start_process \
 wait_for_url "api" "http://127.0.0.1:8200/api/v1/health/ready" "$RUN_DIR/api.pid" "$LOG_DIR/api.log"
 
 start_process \
-  "poll-worker" \
-  "app.worker" \
-  "$BACKEND_DIR" \
-  "$LOG_DIR/poll-worker.log" \
-  "$PYTHON_BIN" -m app.worker
-
-start_process \
-  "ai-worker" \
-  "app.ai_worker" \
-  "$BACKEND_DIR" \
-  "$LOG_DIR/ai-worker.log" \
-  "$PYTHON_BIN" -m app.ai_worker
-
-start_process \
   "frontend" \
   "npm run dev" \
   "$FRONTEND_DIR" \
@@ -144,10 +137,11 @@ start_process \
 wait_for_url "frontend" "http://127.0.0.1:5173/" "$RUN_DIR/frontend.pid" "$LOG_DIR/frontend.log"
 
 echo
-echo "X Sentinel 已全部启动："
+echo "管理控制台已启动："
 echo "  前端：    http://127.0.0.1:5173"
 echo "  API：     http://127.0.0.1:8200"
 echo "  API 文档：http://127.0.0.1:8200/docs"
 echo "  认证中心：http://127.0.0.1:9100"
+echo "  Worker：  未启动（仅管理台模式）"
 echo "  日志目录：$LOG_DIR"
-echo "关闭服务：./shutdown.sh"
+echo "关闭服务：./stop.sh（或 ./shutdown.sh）"

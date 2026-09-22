@@ -35,16 +35,18 @@ a, button { transition: color .18s ease, background .18s ease, opacity .18s ease
 .small-brand { font-size: 13px; line-height: 1.5; letter-spacing: -.02em; color: var(--muted); }
 .edition-mark { font: 8px var(--mono); color: var(--muted); }
 .console-main { min-width: 0; background: var(--canvas); }
-.console-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 76px; padding: 0 clamp(24px, 4vw, 64px); background: transparent; border-bottom: 1px solid var(--line); line-height: normal; }
+.console-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 76px; padding: 0 clamp(24px, 4vw, 64px); background: var(--canvas) !important; border-bottom: 1px solid var(--line); color: var(--ink); line-height: normal; }
 .header-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.header-breadcrumb { font-size: 12px; color: var(--muted); }
-.header-breadcrumb span { margin: 0 13px; color: #afb2a7; }
-.header-breadcrumb strong { font-weight: 400; color: var(--ink); }
-.profile-button { display: flex; align-items: center; gap: 10px; }
+.header-breadcrumb { display: inline-flex; align-items: center; gap: 13px; font-size: 12px; color: var(--muted); }
+.header-breadcrumb span { color: var(--line-strong); }
+.header-breadcrumb strong { font-weight: 500; color: var(--ink); }
+.profile-button { display: flex; align-items: center; gap: 10px; height: 38px; padding: 4px 8px 4px 6px; border-radius: 6px; color: var(--ink) !important; }
+.profile-button:hover { background: var(--accent-soft) !important; color: var(--accent) !important; }
 .profile-button .ant-avatar { background: #e6e8dc; color: #596044; font-size: 11px; }
 .profile-name { font-size: 12px; }
 .profile-button > .anticon { font-size: 9px; color: var(--muted); }
-.mobile-menu { display: none; }
+.mobile-menu { display: none; color: var(--ink) !important; }
+.mobile-menu:hover { background: var(--accent-soft) !important; color: var(--accent) !important; }
 .console-content { width: 100%; max-width: 1520px; min-height: calc(100dvh - 160px); margin: 0 auto; padding: 54px clamp(24px, 4vw, 64px) 72px; outline: none; }
 .content-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 22px clamp(24px, 4vw, 64px); border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-bottom: 10px; }
