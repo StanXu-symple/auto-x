@@ -203,6 +203,16 @@ RUNTIME_CONFIG_KEYS = {
     "CORS_ORIGINS",
 }
 
+# ``--set`` is intentionally much narrower than the runtime document allow
+# list.  It is an installer/operator escape hatch for host-specific, non-secret
+# coordinates only; shared credentials and process-local settings must still
+# come from the dotenv bootstrap or Nacos Config.
+EXPLICIT_OVERRIDE_KEYS = {
+    "POSTGRES_HOST",
+    "REDIS_HOST",
+    "CORS_ORIGINS",
+}
+
 # Compose must know these values before it can create a local PostgreSQL or
 # Redis container.  When an existing Nacos document is authoritative, the
 # installer writes only these data-service coordinates back to its local dotenv
@@ -363,6 +373,56 @@ def canonical_key(value: object) -> str:
     if key == "TZ":
         return "APP_TIMEZONE"
     return key
+
+
+def parse_explicit_overrides(raw_values: list[str] | None) -> dict[str, object]:
+    """Parse the limited ``--set KEY=VALUE`` operator overrides.
+
+    The command-line form is deliberately not a general dotenv editor.  An
+    allow-list prevents accidentally putting credentials, Nacos bootstrap
+    values, or process-local deployment settings into a shared config item.
+    ``CORS_ORIGINS`` accepts a JSON array (the native Nacos representation) or
+    a comma-separated list for shell-friendly invocations.
+    """
+
+    overrides: dict[str, object] = {}
+    for raw in raw_values or []:
+        if "=" not in raw:
+            raise RuntimeError("--set 必须使用 KEY=VALUE 格式")
+        raw_key, raw_value = raw.split("=", 1)
+        key = canonical_key(raw_key)
+        value = raw_value.strip()
+        if key not in EXPLICIT_OVERRIDE_KEYS:
+            raise RuntimeError(
+                f"--set 不允许覆盖 {key or raw_key!r}；仅支持 "
+                "POSTGRES_HOST、REDIS_HOST、CORS_ORIGINS"
+            )
+        if not value or any(character in value for character in "\x00\r\n"):
+            raise RuntimeError(f"--set {key} 的值不能为空或包含换行符")
+        if key == "CORS_ORIGINS":
+            try:
+                parsed: object = json.loads(value)
+            except json.JSONDecodeError:
+                # A value that looks like JSON should fail loudly rather than
+                # silently becoming one malformed origin.  Plain comma
+                # separated values remain convenient for shell callers.
+                if value[:1] in "[{":
+                    raise RuntimeError(
+                        "--set CORS_ORIGINS 的 JSON 值格式无效"
+                    ) from None
+                parsed = [item.strip() for item in value.split(",") if item.strip()]
+            if isinstance(parsed, str):
+                parsed = [parsed]
+            if not isinstance(parsed, list) or not parsed or not all(
+                isinstance(item, str) and item.strip() for item in parsed
+            ):
+                raise RuntimeError(
+                    "--set CORS_ORIGINS 必须是非空 JSON 字符串数组或逗号分隔列表"
+                )
+            overrides[key] = [item.strip() for item in parsed]
+        else:
+            overrides[key] = value
+    return overrides
 
 
 def positive_timeout(value: object, *, default: float = 5.0) -> float:
@@ -570,6 +630,17 @@ def main() -> int:
         action="store_true",
         help="verify Nacos connectivity, authentication, and config readability without publishing",
     )
+    parser.add_argument(
+        "--set",
+        dest="explicit_overrides",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help=(
+            "explicitly override one non-secret runtime coordinate; repeatable "
+            "(POSTGRES_HOST, REDIS_HOST, or CORS_ORIGINS)"
+        ),
+    )
     # Enabled by default: a local Compose database must use the same
     # PostgreSQL/Redis coordinates that Nacos made authoritative.  The
     # explicit opt-out is useful for operators who run only external data
@@ -588,6 +659,10 @@ def main() -> int:
         help="do not update PostgreSQL/Redis values in the local dotenv cache",
     )
     args = parser.parse_args()
+    # Parse before contacting Nacos so malformed or unsafe operator input fails
+    # deterministically.  ``--check`` still returns before this mapping can be
+    # published or written to the local bootstrap cache.
+    explicit_overrides = parse_explicit_overrides(args.explicit_overrides)
     local_env = parse_env(args.env_file, include_excluded=True)
     if args.if_required and str(local_env.get("NACOS_CONFIG_REQUIRED", "")).strip().lower() != "true":
         print("Nacos Config 未设为 required，跳过自动同步")
@@ -645,6 +720,10 @@ def main() -> int:
     # Existing Nacos values win; local values only seed missing keys.
     merged = dict(local)
     merged.update(remote)
+    # Nacos remains authoritative by default.  An explicit command-line
+    # override is the only supported way to supersede an existing remote value,
+    # and it is applied before production validation and publication.
+    merged.update(explicit_overrides)
     if args.production or str(local_env.get("ENVIRONMENT", "")).strip().lower() == "production":
         validate_production_config(merged)
     publish(

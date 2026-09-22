@@ -1,0 +1,124 @@
+{
+  "interval_seconds": 10,
+  "stale_seconds": 45,
+  "timeout_seconds": 3,
+  "concurrency": 8,
+  "nodes": {
+    "tc-1": {
+      "agent_service_name": "xsentinel-monitor-agent-tc-1"
+    },
+    "tc-2": {
+      "agent_service_name": "xsentinel-monitor-agent-tc-2"
+    }
+  },
+  "services": [
+    {
+      "id": "tc1-xhs-worker",
+      "name": "XHS Worker",
+      "component": "xhs_worker",
+      "node": "tc-1",
+      "project": "x-sentinel",
+      "container_service": "xhs-worker",
+      "port": 8006
+    },
+    {
+      "id": "tc1-monitor-center",
+      "name": "Monitor Center",
+      "component": "monitor",
+      "node": "tc-1",
+      "project": "x-sentinel",
+      "container_service": "monitor-center",
+      "port": 9102
+    },
+    {
+      "id": "tc1-monitor-agent",
+      "name": "Monitor Agent tc-1",
+      "component": "monitor",
+      "node": "tc-1",
+      "project": "x-sentinel",
+      "container_service": "monitor-agent",
+      "port": 9101
+    },
+    {
+      "id": "tc2-postgres",
+      "name": "PostgreSQL",
+      "component": "database",
+      "node": "tc-2",
+      "project": "x-sentinel",
+      "container_service": "postgres",
+      "port": 5432
+    },
+    {
+      "id": "tc2-redis",
+      "name": "Redis",
+      "component": "redis",
+      "node": "tc-2",
+      "project": "x-sentinel",
+      "container_service": "redis",
+      "port": 6379
+    },
+    {
+      "id": "tc2-backend",
+      "name": "API",
+      "component": "api",
+      "node": "tc-2",
+      "project": "x-sentinel",
+      "container_service": "backend",
+      "port": 8200
+    },
+    {
+      "id": "tc2-worker",
+      "name": "Polling Worker",
+      "component": "worker",
+      "node": "tc-2",
+      "project": "x-sentinel",
+      "container_service": "worker",
+      "port": 8201
+    },
+    {
+      "id": "tc2-ai-worker",
+      "name": "AI Worker",
+      "component": "ai_worker",
+      "node": "tc-2",
+      "project": "x-sentinel",
+      "container_service": "ai-worker",
+      "port": 8202
+    },
+    {
+      "id": "tc2-qq-worker",
+      "name": "QQ Worker",
+      "component": "qq_worker",
+      "node": "tc-2",
+      "project": "x-sentinel",
+      "container_service": "qq-worker",
+      "port": 8203
+    },
+    {
+      "id": "tc2-auth-center",
+      "name": "Auth Center",
+      "component": "auth",
+      "node": "tc-2",
+      "project": "x-sentinel",
+      "container_service": "auth-center",
+      "port": 9100
+    },
+    {
+      "id": "tc2-monitor-agent",
+      "name": "Monitor Agent tc-2",
+      "component": "monitor",
+      "node": "tc-2",
+      "project": "x-sentinel",
+      "container_service": "monitor-agent",
+      "port": 9101
+    },
+    {
+      "id": "tc2-frontend",
+      "name": "Frontend",
+      "component": "frontend",
+      "node": "tc-2",
+      "project": "x-sentinel",
+      "container_service": "frontend",
+      "port": 8080
+    }
+  ]
+}

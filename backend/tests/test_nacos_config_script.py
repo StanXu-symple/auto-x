@@ -102,6 +102,131 @@ def test_positive_timeout_rejects_invalid_values() -> None:
             raise AssertionError(f"timeout {value!r} should be rejected")
 
 
+def test_parse_explicit_overrides_accepts_only_non_secret_runtime_keys() -> None:
+    module = load_script()
+
+    assert module.parse_explicit_overrides(
+        [
+            "POSTGRES_HOST=remote-db",
+            "REDIS_HOST=remote-cache",
+            'CORS_ORIGINS=["https://console.example"]',
+        ]
+    ) == {
+        "POSTGRES_HOST": "remote-db",
+        "REDIS_HOST": "remote-cache",
+        "CORS_ORIGINS": ["https://console.example"],
+    }
+    assert module.parse_explicit_overrides(["CORS_ORIGINS=https://a.example, https://b.example"])[
+        "CORS_ORIGINS"
+    ] == ["https://a.example", "https://b.example"]
+
+    for raw in (
+        "POSTGRES_PASSWORD=secret",
+        "NACOS_SERVER_ADDR=http://attacker:8848",
+        "SERVICE_AUTH_URL=http://auth:9100",
+        "UNKNOWN_SETTING=value",
+        "POSTGRES_HOST=",
+        "CORS_ORIGINS=[",
+        "not-a-key-value",
+    ):
+        try:
+            module.parse_explicit_overrides([raw])
+        except RuntimeError as exc:
+            assert "--set" in str(exc)
+        else:  # pragma: no cover - defensive assertion
+            raise AssertionError(f"unsafe override {raw!r} should be rejected")
+
+
+def test_explicit_overrides_win_over_nacos_and_are_bootstrap_cached(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = load_script()
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "NACOS_SERVER_ADDR=http://nacos:8848\n"
+        "POSTGRES_HOST=local-db\n"
+        "REDIS_HOST=local-cache\n"
+        "CORS_ORIGINS=[\"http://localhost:5173\"]\n",
+        encoding="utf-8",
+    )
+    published: dict[str, object] = {}
+
+    def fake_load_remote(*_args, **_kwargs):
+        return {
+            "POSTGRES_HOST": "nacos-db",
+            "REDIS_HOST": "nacos-cache",
+            "CORS_ORIGINS": ["https://nacos.example"],
+        }, "token"
+
+    def fake_publish(_server, **kwargs):
+        published.update(kwargs["content"])
+
+    monkeypatch.setattr(module, "load_remote", fake_load_remote)
+    monkeypatch.setattr(module, "publish", fake_publish)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nacos-config.py",
+            "--env-file",
+            str(env_file),
+            "--set",
+            "POSTGRES_HOST=cli-db",
+            "--set",
+            "REDIS_HOST=cli-cache",
+            "--set",
+            'CORS_ORIGINS=["https://console.example"]',
+        ],
+    )
+
+    assert module.main() == 0
+    assert published["POSTGRES_HOST"] == "cli-db"
+    assert published["REDIS_HOST"] == "cli-cache"
+    assert published["CORS_ORIGINS"] == ["https://console.example"]
+    cached = module.parse_env(env_file, include_excluded=True)
+    assert cached["POSTGRES_HOST"] == "cli-db"
+    assert cached["REDIS_HOST"] == "cli-cache"
+
+
+def test_check_with_explicit_override_never_publishes_or_rewrites_env(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    module = load_script()
+    env_file = tmp_path / ".env"
+    original = (
+        "NACOS_SERVER_ADDR=http://nacos:8848\n"
+        "NACOS_USERNAME=nacos\n"
+        "NACOS_PASSWORD=secret\n"
+        "POSTGRES_HOST=local-db\n"
+    )
+    env_file.write_text(original, encoding="utf-8")
+
+    def fake_load_remote(*_args, **_kwargs):
+        return {"POSTGRES_HOST": "nacos-db"}, "token"
+
+    def unexpected_publish(*_args, **_kwargs):
+        raise AssertionError("check mode must not publish Nacos config")
+
+    monkeypatch.setattr(module, "load_remote", fake_load_remote)
+    monkeypatch.setattr(module, "publish", unexpected_publish)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nacos-config.py",
+            "--env-file",
+            str(env_file),
+            "--check",
+            "--set",
+            "POSTGRES_HOST=cli-db",
+        ],
+    )
+
+    assert module.main() == 0
+    assert env_file.read_text(encoding="utf-8") == original
+    assert "Nacos 连接及认证验证成功" in capsys.readouterr().out
+
+
 def test_deployment_network_group_is_not_published() -> None:
     module = load_script()
     assert "NETWORK_GROUPS" in module.EXCLUDED_KEYS
