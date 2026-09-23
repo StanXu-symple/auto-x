@@ -165,9 +165,12 @@ services:
       NACOS_SERVICE_NAME: xsentinel-monitor-agent-${MONITOR_NODE_ID:-local}
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
       NACOS_SERVICE_PORT: ${MONITOR_AGENT_PORT:-9101}
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
       MONITOR_NODE_ID: ${MONITOR_NODE_ID:-local}
       SERVICE_TOPOLOGY_FILE: /run/xsentinel/services.json
       DOCKER_SOCKET: /var/run/docker.sock
+      HOST_PROC: /host/proc
+      HOST_ROOT: /host/root
       MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-10}
       MONITOR_STALE_SECONDS: ${MONITOR_STALE_SECONDS:-45}
       MONITOR_TIMEOUT_SECONDS: ${MONITOR_TIMEOUT_SECONDS:-3}
@@ -175,6 +178,8 @@ services:
     volumes:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}/services.json:/run/xsentinel/services.json:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /:/host/root:ro
     group_add: ["${DOCKER_SOCKET_GID:-0}"]
     ports: ["${MONITOR_AGENT_BIND_IP:-0.0.0.0}:${MONITOR_AGENT_PORT:-9101}:9101"]
     healthcheck:

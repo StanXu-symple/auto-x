@@ -43,3 +43,4 @@ class ResourceSnapshot(BaseModel):
     mode: str | None = None
     stale_seconds: float | None = None
     error: str | None = None
+    host: dict | None = None

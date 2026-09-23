@@ -39,7 +39,7 @@ class MonitorCollector:
         self.tokens = tokens
         self.semaphore = asyncio.Semaphore(topology.concurrency)
 
-    async def collect_node(self, node_id: str) -> list[dict]:
+    async def collect_node(self, node_id: str) -> tuple[list[dict], dict]:
         services = [s for s in self.topology.services if s.node == node_id]
         expected = {s.id: s for s in services}
         async with self.semaphore:
@@ -48,8 +48,14 @@ class MonitorCollector:
                 agent = await self.tokens.nacos.discover(
                     self.topology.nodes[node_id].agent_service_name
                 )
+                # A node cannot reliably hairpin to its own public address.
+                # Nacos advertises the public IP for cross-node discovery, so
+                # use the compose-network alias for the local agent instead.
+                agent_url = agent.url
+                if agent.ip == os.environ.get("NACOS_ADVERTISE_IP", "").strip():
+                    agent_url = "http://monitor-agent:9101"
                 response = await self.http.get(
-                    f"{agent.url}/v1/resources",
+                    f"{agent_url}/v1/resources",
                     headers={"Authorization": f"Bearer {token}"},
                 )
                 response.raise_for_status()
@@ -82,9 +88,13 @@ class MonitorCollector:
                 result.extend(
                     self.missing(s, "节点未上报此服务") for s in services if s.id not in seen
                 )
-                return result
-            except (httpx.HTTPError, ValueError, KeyError, TypeError):
-                return [self.missing(s, "节点不可达或采样已过期") for s in services]
+                host = payload.get("host") or {"status": "unknown", "error": "Agent 尚未提供宿主机指标"}
+                if not is_fresh(host.get("sampled_at"), self.topology.stale_seconds):
+                    host = {"status": "unknown", "error": "宿主机采样缺失或已过期"}
+                return result, host
+            except (httpx.HTTPError, ValueError, KeyError, TypeError, RuntimeError):
+                return ([self.missing(s, "节点不可达或采样已过期") for s in services],
+                        {"status": "unknown", "error": "节点不可达或采样已过期"})
 
     @staticmethod
     def missing(service, note: str) -> dict:
@@ -105,7 +115,8 @@ class MonitorCollector:
             "sampled_at": datetime.now(UTC).isoformat(),
             "mode": "microservices",
             "stale_seconds": self.topology.stale_seconds,
-            "instances": [item for group in groups for item in group],
+            "instances": [item for instances, _ in groups for item in instances],
+            "hosts": {node: group[1] for node, group in zip(self.topology.nodes, groups, strict=True)},
         }
 
 
@@ -136,6 +147,7 @@ def create_app() -> FastAPI:
             "sampled_at": datetime.now(UTC).isoformat(),
             "mode": "microservices",
             "instances": [MonitorCollector.missing(s, "等待首次采样") for s in topology.services],
+            "hosts": {node: {"status": "unknown", "error": "等待首次采样"} for node in topology.nodes},
         }
         async with httpx.AsyncClient(timeout=topology.timeout_seconds, trust_env=False) as http:
             nacos = NacosClient(

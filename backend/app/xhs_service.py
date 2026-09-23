@@ -159,6 +159,7 @@ def create_app(settings: Settings | None = None, worker_factory=None) -> FastAPI
                 nacos=nacos,
             )
             beat = None
+            worker_beat = None
             metadata = {"component": "xhs-worker", "version": __version__}
             try:
                 await nacos.register(
@@ -176,12 +177,18 @@ def create_app(settings: Settings | None = None, worker_factory=None) -> FastAPI
                         metadata=metadata,
                     )
                 )
+                worker_beat = asyncio.create_task(worker._heartbeat_loop())
                 yield
             finally:
                 if beat:
                     beat.cancel()
                     with suppress(asyncio.CancelledError):
                         await beat
+                if worker_beat:
+                    worker.stop_event.set()
+                    worker_beat.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await worker_beat
                 with suppress(httpx.HTTPError):
                     await nacos.deregister(
                         config.xhs_service_name, ip, config.xhs_service_advertise_port

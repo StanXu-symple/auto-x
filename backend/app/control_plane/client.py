@@ -72,6 +72,7 @@ class MonitoringClient:
 
 def apply_snapshot(metrics: dict, snapshot: dict) -> dict:
     metrics["monitoring"] = snapshot
+    metrics["nodes"] = snapshot.get("hosts", {})
     # Preserve application health/heartbeats, but never mix process RSS or Redis
     # allocator limits into container metrics when distributed monitoring is enabled.
     for component in ("api", "database", "redis", "worker", "ai_worker", "qq_worker", "xhs_worker"):

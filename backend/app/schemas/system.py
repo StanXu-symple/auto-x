@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Any
 
+from pydantic import Field
+
 from app.schemas.common import APIModel
 
 
@@ -28,3 +30,4 @@ class SystemMetricsResponse(APIModel):
     qq_worker: dict[str, Any]
     xhs_worker: dict[str, Any]
     monitoring: dict[str, Any] | None = None
+    nodes: dict[str, Any] = Field(default_factory=dict)

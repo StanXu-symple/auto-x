@@ -257,6 +257,17 @@ export interface WorkerRuntimeMetric extends RuntimeResourceMetric {
   [key: string]: unknown
 }
 
+export interface HostRuntimeMetric {
+  status: string
+  sampled_at?: string
+  error?: string
+  cpu_percent?: number | null
+  uptime_seconds?: number
+  load_average?: number[]
+  memory?: { total_bytes: number; used_bytes: number; available_bytes: number; percent: number }
+  disk?: { total_bytes: number; used_bytes: number; free_bytes: number; percent: number }
+}
+
 export interface SystemMetrics {
   generated_at: string
   cpu_percent: number
@@ -288,6 +299,7 @@ export interface SystemMetrics {
   ai_worker?: WorkerRuntimeMetric
   qq_worker?: WorkerRuntimeMetric
   xhs_worker?: WorkerRuntimeMetric
+  nodes?: Record<string, HostRuntimeMetric>
   monitoring?: {
     mode?: string
     error?: string

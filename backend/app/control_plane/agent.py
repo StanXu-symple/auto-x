@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
@@ -17,6 +18,7 @@ from app.control_plane.config import (
     runtime_float,
 )
 from app.control_plane.contracts import ResourceSnapshot
+from app.control_plane.host_resources import HostCollector
 from app.control_plane.nacos import (
     NacosClient,
     NacosServiceRegistration,
@@ -24,6 +26,8 @@ from app.control_plane.nacos import (
 )
 from app.control_plane.resources import docker_resources, unavailable
 from app.control_plane.security import ServiceVerifier
+
+logger = logging.getLogger(__name__)
 
 
 class DockerCollector:
@@ -35,6 +39,7 @@ class DockerCollector:
         self.previous: dict[str, dict] = {}
         self.semaphore = asyncio.Semaphore(topology.concurrency)
         self.api = ""
+        self.host = HostCollector(os.environ.get("HOST_PROC", "/host/proc"), os.environ.get("HOST_ROOT", "/host/root"))
 
     async def collect_service(self, service: Service) -> list[dict]:
         async with self.semaphore:
@@ -131,7 +136,8 @@ class DockerCollector:
         active_ids = {item["instance_id"] for item in instances}
         self.previous = {key: value for key, value in self.previous.items() if key in active_ids}
         return ResourceSnapshot(
-            node=self.node_id, sampled_at=datetime.now(UTC).isoformat(), instances=instances
+            node=self.node_id, sampled_at=datetime.now(UTC).isoformat(),
+            instances=instances, host=self.host.collect(),
         ).model_dump(mode="json")
 
 
@@ -204,13 +210,25 @@ def create_app() -> FastAPI:
                 trust_env=False,
             ) as http:
                 collector = DockerCollector(topology, node, http)
+                app.state.collector = collector
+
+                # Publish a first snapshot before serving requests.  A
+                # background task alone can leave the endpoint in its
+                # startup state indefinitely when the first collection hits
+                # a transient Docker/Nacos delay.
+                try:
+                    app.state.snapshot = await collector.collect()
+                except Exception:
+                    logger.exception("Initial Docker resource collection failed")
 
                 async def loop():
                     while True:
                         try:
                             app.state.snapshot = await collector.collect()
                         except (httpx.HTTPError, ValueError, KeyError):
-                            app.state.snapshot = None
+                            logger.warning("Docker resource collection failed; keeping last snapshot")
+                        except Exception:
+                            logger.exception("Docker resource collection failed")
                         await asyncio.sleep(topology.interval_seconds)
 
                 task = asyncio.create_task(loop())
@@ -240,7 +258,14 @@ def create_app() -> FastAPI:
     @app.get("/v1/resources", dependencies=[Depends(authorize)])
     async def resources() -> ResourceSnapshot:
         if app.state.snapshot is None:
-            raise HTTPException(503, "Docker resource snapshot unavailable")
+            # Recover on demand if the background sampler has not published
+            # its first result yet. This keeps a transient startup failure
+            # from making the whole node look unavailable.
+            try:
+                app.state.snapshot = await app.state.collector.collect()
+            except Exception as exc:
+                logger.exception("On-demand Docker resource collection failed")
+                raise HTTPException(503, "Docker resource snapshot unavailable") from exc
         return ResourceSnapshot.model_validate(app.state.snapshot)
 
     return app
