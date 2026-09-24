@@ -491,3 +491,29 @@ def test_production_env_validator_requires_local_secrets_without_required_nacos(
     assert "JWT_SECRET_KEY is missing or empty" in result.stderr
     assert "X_TOKEN_ENCRYPTION_KEY is missing or empty" in result.stderr
     assert "SERVICE_AUTH_KEY_ENCRYPTION_KEY is missing or empty" in result.stderr
+
+
+def test_data_owner_publishes_public_mapped_endpoints():
+    module = load_script()
+    values = {"POSTGRES_HOST": "postgres", "REDIS_HOST": "redis"}
+    module.resolve_data_endpoints(values, {
+        "AUTO_X_MANAGE_DATA": "true", "NACOS_ADVERTISE_IP": "43.172.88.37",
+        "POSTGRES_HOST_PORT": "15432", "REDIS_HOST_PORT": "16379",
+    })
+    assert values["POSTGRES_HOST"] == values["REDIS_HOST"] == "43.172.88.37"
+    assert values["POSTGRES_PORT"] == "15432"
+    assert values["REDIS_PORT"] == "16379"
+
+
+def test_consumer_rejects_docker_only_endpoints():
+    import pytest
+    module = load_script()
+    with pytest.raises(RuntimeError, match="先安装数据节点"):
+        module.resolve_data_endpoints({"POSTGRES_HOST": "postgres"}, {"AUTO_X_MANAGE_DATA": "false"})
+
+
+def test_consumer_preserves_remote_data_owner():
+    module = load_script()
+    values = {"POSTGRES_HOST": "43.172.88.37", "REDIS_HOST": "43.172.88.37"}
+    module.resolve_data_endpoints(values, {"AUTO_X_MANAGE_DATA": "false", "NACOS_ADVERTISE_IP": "118.25.197.211"})
+    assert values["POSTGRES_HOST"] == "43.172.88.37"

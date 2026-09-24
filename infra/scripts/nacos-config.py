@@ -643,6 +643,30 @@ def publish(
         raise RuntimeError(f"发布 Nacos Config 失败（HTTP {status}）")
 
 
+def resolve_data_endpoints(merged: dict, local: Mapping[str, str]) -> None:
+    """Publish owner endpoints; consumers must never seed Docker-only names."""
+    managed = str(local.get("AUTO_X_MANAGE_DATA", "")).lower()
+    if managed not in {"true", "false"}:
+        return  # Legacy non-installer callers retain their existing contract.
+    if managed == "true":
+        address = local.get("NACOS_ADVERTISE_IP", "")
+        if not address:
+            raise RuntimeError("数据节点缺少 NACOS_ADVERTISE_IP")
+        previous = merged.get("AUTO_X_DATA_ADDRESS")
+        for prefix, alias, port in (("POSTGRES", "postgres", "5432"), ("REDIS", "redis", "6379")):
+            host = merged.get(f"{prefix}_HOST")
+            if host not in (None, "", alias, previous, address):
+                raise RuntimeError(f"Nacos 已存在另一数据节点 {prefix}_HOST={host}，拒绝覆盖")
+            merged[f"{prefix}_HOST"] = address
+            merged[f"{prefix}_PORT"] = local.get(f"{prefix}_HOST_PORT", port)
+        merged["AUTO_X_DATA_ADDRESS"] = address
+        merged.update(POSTGRES_DSN="", REDIS_URL="")
+    else:
+        for prefix, alias in (("POSTGRES", "postgres"), ("REDIS", "redis")):
+            if merged.get(f"{prefix}_HOST") in (None, "", alias, "localhost", "127.0.0.1"):
+                raise RuntimeError(f"Nacos 缺少可跨节点访问的 {prefix}_HOST，请先安装数据节点")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", required=True, type=Path)
@@ -765,6 +789,7 @@ def main() -> int:
     # override is the only supported way to supersede an existing remote value,
     # and it is applied before production validation and publication.
     merged.update(explicit_overrides)
+    resolve_data_endpoints(merged, local_env)
     if args.production or str(local_env.get("ENVIRONMENT", "")).strip().lower() == "production":
         validate_production_config(merged)
     publish(
@@ -779,7 +804,11 @@ def main() -> int:
     # Use the effective document rather than ``remote`` alone.  This also
     # normalizes newly seeded local values and leaves the cache correct when
     # Nacos returned an empty document on first install.
-    cached = write_bootstrap_cache(args.env_file, merged) if args.write_bootstrap else 0
+    cache = dict(merged)
+    if str(local_env.get("AUTO_X_MANAGE_DATA", "")).lower() == "true":
+        cache.update(POSTGRES_HOST="postgres", POSTGRES_PORT="5432",
+                     REDIS_HOST="redis", REDIS_PORT="6379", POSTGRES_DSN="", REDIS_URL="")
+    cached = write_bootstrap_cache(args.env_file, cache) if args.write_bootstrap else 0
     control_plane = (
         write_control_plane_values(args.control_plane_dir, merged)
         if args.control_plane_dir

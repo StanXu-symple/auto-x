@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any, Literal
@@ -216,6 +217,14 @@ class NacosConfigSettingsSource(PydanticBaseSettingsSource):
                 raise RuntimeError(message)
             logger.warning("%s; using local environment fallback", message)
             return {}
+
+        # The owning Docker host uses local container DNS; peers use the
+        # published endpoints. Credentials remain authoritative in Nacos.
+        if os.environ.get("AUTO_X_MANAGE_DATA", "").lower() == "true":
+            payload = dict(payload)
+            payload.update(POSTGRES_HOST="postgres", POSTGRES_PORT=5432,
+                           REDIS_HOST="redis", REDIS_PORT=6379,
+                           POSTGRES_DSN="", REDIS_URL="")
 
         fields = self.settings_cls.model_fields
         # Map validation aliases as well as canonical field names. This keeps
