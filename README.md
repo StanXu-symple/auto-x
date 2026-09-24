@@ -176,11 +176,11 @@ Data ID 内容既可以使用 `.env` 风格的扁平键，也可以按服务分�
 }
 ```
 
-同步工具采用“远端优先”：Nacos 中已有值不会被本地 `.env` 覆盖，只会补充新版本新增的配置项。PostgreSQL/Redis 的地址、端口、库名、账号、密码与连接池参数，JWT 签名密钥、X 凭据加密密钥，以及轮询、AI、QQ、小红书 Worker 的运行参数都可以放在该 JSON 配置中。为保证 Compose 自带的数据容器与远端配置一致，工具只把最终的 PostgreSQL/Redis 引导值原子回写到本地 `.env`，并将文件收紧为所有者可读（可写时为 `0600`）；应用进程仍以 Nacos Config 为权威来源。
+同步工具采用“远端优先”：Nacos 中已有值不会被本地 `.env` 覆盖，只会补充新版本新增的配置项。数据库、Redis、管理员账号、认证密钥、服务凭据、JWT/X 密钥，以及轮询、AI、QQ、小红书 Worker 的运行参数全部可以由该 JSON 配置统一管理。首次安装会自动生成缺失值并发布到 Nacos，随后把生效配置回写为 Compose 的本地引导缓存；应用进程启动时仍以 Nacos Config 为权威来源。认证中心的私钥、服务客户端凭据和控制面文件也会由安装器自动同步到 Nacos，不需要手工复制。
 
-Nacos 连接凭据、`NACOS_ADVERTISE_IP`、服务名/监听端口、Docker 网络与宿主机端口、挂载的密钥文件路径、初始管理员密码和 provider API Key 不进入共享配置。它们分别属于启动引导、单实例身份或独立秘密，继续由本机部署配置和管理台管理。由于 Nacos 文档包含数据库/Redis 密码及共享加密密钥，应为 namespace 配置最小权限账号，并在跨主机通信时使用受保护的内网或 TLS 入口。
+只有 Nacos 自身的连接引导（`NACOS_*`）、单实例注册身份、监听端口、Docker 网络/宿主机端口和密钥文件路径保留在本机；数据库、Redis、管理员密码、provider API Key、JWT/X 密钥以及认证中心 KEK 都会进入共享配置。这样安装器只需获取 Nacos 地址、命名空间、账号和密码即可完成其余初始化。由于 Nacos 文档包含完整的账号密码及共享密钥，应为 namespace 配置最小权限账号，并在跨主机通信时使用受保护的内网或 TLS 入口。
 
-应用在进程启动时读取一次 Nacos Config；修改远端配置后重启受影响的 API/Worker。`make prod-up`、`make external-up` 和对应的生产迁移命令会在 `NACOS_CONFIG_REQUIRED=true` 时自动同步配置、校验远端生产密钥，并刷新 Compose 所需的 PostgreSQL/Redis 本地引导缓存；也可单独执行 `make nacos-config`。required 模式下读取失败或 Data ID 不存在会阻止实例启动；设为 `false` 时会回退到本地环境变量。
+应用在进程启动时读取一次 Nacos Config；修改远端配置后重启受影响的 API/Worker。`make prod-up`、`make external-up` 和 `bash kejilion.sh apps auto-x` 会在 `NACOS_CONFIG_REQUIRED=true` 时自动同步配置、校验远端生产密钥，并刷新完整 Compose 引导缓存；也可单独执行 `make nacos-config`。required 模式下读取失败或 Data ID 不存在会阻止实例启动；设为 `false` 时才会回退到本地环境变量。安装 Auto-X 时只需要选择服务并填写 Nacos 连接信息，其他应用配置由安装器自动生成或复用 Nacos 中已有值。
 
 `NACOS_ADVERTISE_IP` 是服务注册到 Nacos 后供其他服务访问的地址。不配置时程序会自动探测非回环 IPv4；跨 Docker 主机部署时建议显式填写本机 LAN/VPC 地址，并确保对应服务端口已放行。它不是 Nacos 服务端地址，不能填写 `NACOS_SERVER_ADDR`。
 
@@ -196,7 +196,7 @@ make microservices-up
 
 控制平面服务包括 `auth-center`、`monitor-center` 和每台 Docker 主机一个 `monitor-agent`。监控 Agent 通过 Docker Engine API 采集容器 CPU 与 working-set 内存；监控中心通过 Nacos 发现 Agent 和其他服务。浏览器登录、管理员会话和服务凭据统一由 auth-center 处理；业务服务仅接受带 `kid` 的 RS256 Token，并通过 JWKS 验证严格的 issuer、audience、token type 和 scope。用户、会话、撤销记录、服务身份、授权和加密后的轮换签名密钥均以 PostgreSQL 为权威，Redis 提供共享限流与撤销缓存，因此多个 auth-center 副本可以共同服务。
 
-多节点并不等于每台主机各启一套默认数据容器。部署第二个 auth-center 前，必须让所有节点同时指向同一个跨主机可达的 PostgreSQL 和 Redis，并为所有 auth-center 副本安全注入完全相同的 `SERVICE_AUTH_KEY_ENCRYPTION_KEY`；该专用 KEK 不发布到 Nacos，也不能与 `JWT_SECRET_KEY` 或 `X_TOKEN_ENCRYPTION_KEY` 共用。kejilion 安装前可在各节点设置相同的 `KJ_AUTO_X_SERVICE_AUTH_KEK`，或把同一值预置到各节点的 `.env`。`SERVICE_AUTH_URL` 默认优先访问本机 `auth-center:9100`；跨主机认证流量必须位于受保护的 VPC/加密 overlay 中，或使用受信任的 TLS 入口。除前端外，8200–8203、8006、9100–9102 只应对集群内可信地址开放。
+多节点并不等于每台主机各启一套默认数据容器。部署第二个 auth-center 前，必须让所有节点同时指向同一个跨主机可达的 PostgreSQL 和 Redis；安装器会把 `SERVICE_AUTH_KEY_ENCRYPTION_KEY` 发布到 Nacos，所有副本自动复用同一个值，且该值不能与 `JWT_SECRET_KEY` 或 `X_TOKEN_ENCRYPTION_KEY` 共用。`SERVICE_AUTH_URL` 为空时由 Nacos 服务发现解析认证中心；跨主机认证流量必须位于受保护的 VPC/加密 overlay 中，或使用受信任的 TLS 入口。除前端外，8200–8203、8006、9100–9102 只应对集群内可信地址开放。
 
 ## AI 草稿生成
 

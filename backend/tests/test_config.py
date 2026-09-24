@@ -156,20 +156,20 @@ def test_nacos_config_overrides_dotenv_and_environment(monkeypatch, tmp_path) ->
     assert settings.redis_url == "redis://remote-cache:6381/0"
     assert settings.worker_max_concurrency == 17
     assert settings.cors_origins == ["https://remote.example"]
-    assert settings.codex_bridge_api_key == "local-bridge-token"
+    assert settings.codex_bridge_api_key == "must-stay-local"
     assert settings.jwt_secret_key == "remote-jwt-secret-over-32-characters-long"
     assert settings.x_token_encryption_key == "remote-x-token-key-over-32-characters-long"
     assert settings.app_timezone == "UTC"
-    assert settings.admin_password == "local-admin-password"
-    assert settings.environment == "staging"
-    assert settings.debug is False
-    assert settings.startup_strict is True
-    assert settings.auto_create_tables is True
+    assert settings.admin_password == "must-stay-local"
+    assert settings.environment == "production"
+    assert settings.debug is True
+    assert settings.startup_strict is False
+    assert settings.auto_create_tables is False
     assert settings.xhs_transport == "redis"
     assert settings.xhs_service_name == "local-xhs"
     assert settings.xhs_service_port == 8006
-    assert settings.service_auth_url == "http://local-auth:9100"
-    assert settings.monitor_center_url == "http://local-monitor:9102"
+    assert settings.service_auth_url == "http://remote-auth:9100"
+    assert settings.monitor_center_url == "http://remote-monitor:9102"
     assert settings.service_client_secret_file == "/local/backend.secret"
     assert settings.service_auth_public_key_file == "/local/public.pem"
     assert settings.nacos_service_name == "local-api"

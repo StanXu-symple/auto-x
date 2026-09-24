@@ -43,12 +43,6 @@ _NACOS_BOOTSTRAP_FIELDS = {
 # another host's mounted secret file. Runtime tuning and shared data-service
 # coordinates remain eligible for Nacos Config.
 _NACOS_LOCAL_ONLY_FIELDS = {
-    "environment",
-    "debug",
-    "startup_strict",
-    "auto_create_tables",
-    "service_auth_url",
-    "monitor_center_url",
     "service_client_secret_file",
     "service_auth_public_key_file",
     "nacos_service_name",
@@ -64,16 +58,6 @@ _NACOS_LOCAL_ONLY_FIELDS = {
     "xhs_service_port",
     "xhs_service_advertise_ip",
     "xhs_service_advertise_port",
-    # Provider credentials are stored encrypted in PostgreSQL by the data
-    # source UI.  Keep legacy environment fallbacks local instead of allowing
-    # a shared config document to become a second plaintext credential store.
-    "openai_api_key",
-    "codex_bridge_api_key",
-    # The administrator credential seeds a database row and must not be
-    # rotated implicitly by a shared remote document.  JWT/X-token keys are
-    # intentionally *not* listed here because replicas need the same values.
-    "admin_username",
-    "admin_password",
 }
 
 _POSTGRES_DSN_COMPONENT_FIELDS = {
@@ -368,6 +352,7 @@ class Settings(BaseSettings):
     redis_socket_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
 
     # Distributed control plane. Empty values retain the single-host collector.
+    service_auth_key_encryption_key: str = ""
     service_auth_url: str = ""
     service_client_secret_file: str = "/etc/xsentinel/secrets/backend.secret"
     monitor_center_url: str = ""

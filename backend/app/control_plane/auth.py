@@ -245,7 +245,8 @@ def create_app() -> FastAPI:
 
             master_secret = resolve_key_encryption_secret(
                 settings.environment,
-                os.environ.get("SERVICE_AUTH_KEY_ENCRYPTION_KEY"),
+                settings.service_auth_key_encryption_key
+                or os.environ.get("SERVICE_AUTH_KEY_ENCRYPTION_KEY"),
                 legacy_x_token_secret=settings.x_token_encryption_key,
                 legacy_jwt_secret=settings.jwt_secret_key,
             )

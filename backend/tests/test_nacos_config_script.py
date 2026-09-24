@@ -16,7 +16,7 @@ def load_script() -> ModuleType:
     return module
 
 
-def test_write_bootstrap_cache_updates_only_compose_data_coordinates(tmp_path: Path) -> None:
+def test_write_bootstrap_cache_updates_complete_effective_runtime_config(tmp_path: Path) -> None:
     module = load_script()
     env_file = tmp_path / ".env"
     env_file.write_text(
@@ -41,15 +41,17 @@ def test_write_bootstrap_cache_updates_only_compose_data_coordinates(tmp_path: P
         },
     )
 
-    assert count == 3
+    assert count == 6
     assert env_file.stat().st_mode & 0o777 == 0o600
     assert env_file.read_text(encoding="utf-8") == (
         "# deployment identity\n"
         "NACOS_SERVER_ADDR=http://nacos:8848\n"
         "POSTGRES_PASSWORD=remote-password\n"
         "REDIS_HOST=remote-cache\n"
-        "POSTGRES_DSN=postgresql+asyncpg://old/db\n"
+        "POSTGRES_DSN=postgresql+asyncpg://must-not-be-cached/db\n"
+        "ADMIN_PASSWORD=must-not-be-cached\n"
         "POSTGRES_HOST=remote-db\n"
+        "REDIS_URL=redis://must-not-be-cached/0\n"
     )
 
 
@@ -62,6 +64,25 @@ def test_write_bootstrap_cache_quotes_unsafe_remote_values(tmp_path: Path) -> No
 
     assert env_file.read_text(encoding="utf-8") == "REDIS_PASSWORD='has space#and$dollar'\n"
     assert module.parse_env(env_file)["REDIS_PASSWORD"] == "has space#and$dollar"
+
+
+def test_control_plane_values_round_trip_without_dotenv_cache(tmp_path: Path) -> None:
+    module = load_script()
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    (source / "private.pem").write_text(
+        "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n"
+    )
+    (source / "clients.json").write_text('{"backend": {"secret_sha256": "abc"}}\n')
+    (source / "backend.secret").write_text("backend-secret\n")
+
+    values = module.read_control_plane_values(source)
+    assert values["SERVICE_AUTH_PRIVATE_KEY_PEM"].startswith("-----BEGIN")
+    assert values["SERVICE_CLIENT_BACKEND_SECRET"] == "backend-secret"
+    assert module.write_control_plane_values(target, values) == 3
+    assert (target / "private.pem").read_text().startswith("-----BEGIN")
+    assert (target / "clients.json").read_text().startswith("{\"backend\"")
 
 
 def test_flatten_normalizes_nested_postgresql_alias() -> None:
@@ -230,7 +251,7 @@ def test_check_with_explicit_override_never_publishes_or_rewrites_env(
 def test_deployment_network_group_is_not_published() -> None:
     module = load_script()
     assert "NETWORK_GROUPS" in module.EXCLUDED_KEYS
-    assert "SERVICE_AUTH_KEY_ENCRYPTION_KEY" in module.EXCLUDED_KEYS
+    assert "SERVICE_AUTH_KEY_ENCRYPTION_KEY" not in module.EXCLUDED_KEYS
 
 
 def test_runtime_allow_list_drops_legacy_mysql_and_unknown_keys(tmp_path: Path) -> None:

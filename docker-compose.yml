@@ -326,7 +326,7 @@ services:
     environment:
       <<: *backend-environment
       SERVICE_NAME: backend
-      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
       NACOS_SERVICE_NAME: xsentinel-backend
       NACOS_SERVICE_PORT: "${BACKEND_HOST_PORT:-8200}"
     volumes:

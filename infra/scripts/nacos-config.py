@@ -35,15 +35,8 @@ EXCLUDED_KEYS = {
     "NACOS_CONFIG_REQUIRED",
     # Per-process/deployment identity stays local; these values differ between
     # backend, workers and control-plane instances and cannot be shared safely.
-    "ENVIRONMENT",
-    "DEBUG",
-    "STARTUP_STRICT",
-    "AUTO_CREATE_TABLES",
-    "SERVICE_AUTH_URL",
-    "MONITOR_CENTER_URL",
     "SERVICE_AUTH_PRIVATE_KEY_FILE",
     "SERVICE_AUTH_CLIENTS_FILE",
-    "SERVICE_AUTH_KEY_ENCRYPTION_KEY",
     "SERVICE_TOPOLOGY_FILE",
     "SERVICE_CLIENT_SECRET_FILE",
     "SERVICE_AUTH_PUBLIC_KEY_FILE",
@@ -104,31 +97,22 @@ EXCLUDED_KEYS = {
     "GRAFANA_BIND_IP",
     "GRAFANA_PORT",
     "GRAFANA_ROOT_URL",
-    "GRAFANA_ADMIN_PASSWORD",
     "BACKUP_DIR",
     "SERVICE_NAME",
     "LOG_DIR",
     "HOME",
     "ARTICLE_UPLOAD_DIR",
-    # Credentials used by the application itself are intentionally kept local,
-    # except JWT/X-token keys which are shared runtime settings requested for
-    # central management. Database and Redis credentials are also shared.
-    "ADMIN_USERNAME",
-    "ADMIN_PASSWORD",
-    "POSTGRES_EXPORTER_PASSWORD",
-    "OPENAI_API_KEY",
-    "CODEX_BRIDGE_API_KEY",
-    "CODEX_BRIDGE_TOKEN",
 }
 
 # Publish only settings that the application or control plane actually knows
-# how to consume.  An allow-list is safer than relying solely on
-# ``EXCLUDED_KEYS``: old installations may still have MYSQL_* values or
-# operator-specific secrets in their dotenv file, and those must never be
-# copied into a shared Nacos document just because they are unknown to the
-# current release.
+# how to consume.  Bootstrap values needed to reach Nacos remain local; every
+# other application setting, including credentials, is a Nacos-managed value.
 RUNTIME_CONFIG_KEYS = {
+    "ADMIN_USERNAME", "ADMIN_PASSWORD", "GRAFANA_ADMIN_USER", "GRAFANA_ADMIN_PASSWORD",
+    "POSTGRES_EXPORTER_PASSWORD", "OPENAI_API_KEY", "CODEX_BRIDGE_API_KEY", "CODEX_BRIDGE_TOKEN",
+    "SERVICE_AUTH_KEY_ENCRYPTION_KEY",
     "APP_NAME",
+    "ENVIRONMENT", "DEBUG", "STARTUP_STRICT", "AUTO_CREATE_TABLES",
     "API_PREFIX",
     "LOG_LEVEL",
     "APP_TIMEZONE",
@@ -201,24 +185,36 @@ RUNTIME_CONFIG_KEYS = {
     "XHS_BROWSER_MAX_CONCURRENCY",
     "XHS_WORKER_HEARTBEAT_TTL_SECONDS",
     "CORS_ORIGINS",
+    "SERVICE_AUTH_URL",
+    "MONITOR_CENTER_URL",
+    "AUTO_X_DATA_ADDRESS",
 }
 
-# ``--set`` is intentionally much narrower than the runtime document allow
-# list.  It is an installer/operator escape hatch for host-specific, non-secret
-# coordinates only; shared credentials and process-local settings must still
-# come from the dotenv bootstrap or Nacos Config.
+# ``--set`` remains narrow because it is an optional operator escape hatch;
+# normal installation seeds all application values from the local generated
+# defaults and publishes them to Nacos automatically.
 EXPLICIT_OVERRIDE_KEYS = {
     "POSTGRES_HOST",
     "REDIS_HOST",
     "CORS_ORIGINS",
 }
 
-# Compose must know these values before it can create a local PostgreSQL or
-# Redis container.  When an existing Nacos document is authoritative, the
-# installer writes only these data-service coordinates back to its local dotenv
-# file as a bootstrap cache.  Application processes still read the authoritative
-# values from Nacos at startup.
-BOOTSTRAP_CACHE_KEYS = {
+CONTROL_PLANE_KEYS = {
+    "SERVICE_AUTH_PRIVATE_KEY_PEM",
+    "SERVICE_AUTH_PUBLIC_KEY_PEM",
+    "SERVICE_AUTH_CLIENTS_JSON",
+    "SERVICE_CLIENT_BACKEND_SECRET",
+    "SERVICE_CLIENT_MONITOR_SECRET",
+    "SERVICE_CLIENT_AGENT_SECRET",
+}
+RUNTIME_CONFIG_KEYS.update(CONTROL_PLANE_KEYS)
+
+# Compose must know values before it can create containers.  The installer
+# writes the complete effective Nacos document to the local dotenv bootstrap
+# cache; application Settings still load the same document from Nacos first.
+# Control-plane files are materialized separately because PEM/JSON payloads
+# are mounted as files by the services rather than interpolated by Compose.
+BOOTSTRAP_CACHE_KEYS = (RUNTIME_CONFIG_KEYS - CONTROL_PLANE_KEYS) | {
     "POSTGRES_HOST",
     "POSTGRES_PORT",
     "POSTGRES_DATABASE",
@@ -308,7 +304,7 @@ def _dotenv_key(line: str) -> str | None:
     return key or None
 
 
-def write_bootstrap_cache(path: Path, values: Mapping[str, object]) -> int:
+def write_bootstrap_cache(path: Path, values: Mapping[str, object], *, keys: set[str] | None = None) -> int:
     """Atomically update data-service values in ``path``.
 
     Only keys in :data:`BOOTSTRAP_CACHE_KEYS` are considered.  Existing
@@ -319,7 +315,7 @@ def write_bootstrap_cache(path: Path, values: Mapping[str, object]) -> int:
 
     updates = {
         key: values[key]
-        for key in BOOTSTRAP_CACHE_KEYS
+        for key in (BOOTSTRAP_CACHE_KEYS if keys is None else keys)
         if key in values and values[key] is not None
     }
     if not updates:
@@ -360,6 +356,48 @@ def write_bootstrap_cache(path: Path, values: Mapping[str, object]) -> int:
         if temporary_path.exists():
             temporary_path.unlink()
     return len(updates)
+
+
+def read_control_plane_values(path: Path) -> dict[str, str]:
+    names = {
+        "private.pem": "SERVICE_AUTH_PRIVATE_KEY_PEM",
+        "public.pem": "SERVICE_AUTH_PUBLIC_KEY_PEM",
+        "clients.json": "SERVICE_AUTH_CLIENTS_JSON",
+        "backend.secret": "SERVICE_CLIENT_BACKEND_SECRET",
+        "monitor.secret": "SERVICE_CLIENT_MONITOR_SECRET",
+        "agent.secret": "SERVICE_CLIENT_AGENT_SECRET",
+    }
+    values: dict[str, str] = {}
+    for filename, key in names.items():
+        candidate = path / filename
+        if not candidate.is_file():
+            continue
+        value = candidate.read_text(encoding="utf-8").strip()
+        if value and (filename not in {"private.pem", "public.pem"} or "BEGIN " in value):
+            values[key] = value
+    return values
+
+
+def write_control_plane_values(path: Path, values: Mapping[str, object]) -> int:
+    names = {
+        "SERVICE_AUTH_PRIVATE_KEY_PEM": "private.pem",
+        "SERVICE_AUTH_PUBLIC_KEY_PEM": "public.pem",
+        "SERVICE_AUTH_CLIENTS_JSON": "clients.json",
+        "SERVICE_CLIENT_BACKEND_SECRET": "backend.secret",
+        "SERVICE_CLIENT_MONITOR_SECRET": "monitor.secret",
+        "SERVICE_CLIENT_AGENT_SECRET": "agent.secret",
+    }
+    written = 0
+    path.mkdir(parents=True, exist_ok=True)
+    for key, filename in names.items():
+        value = values.get(key)
+        if value in (None, ""):
+            continue
+        target = path / filename
+        target.write_text(str(value).rstrip() + "\n", encoding="utf-8")
+        os.chmod(target, 0o600)
+        written += 1
+    return written
 
 
 def canonical_key(value: object) -> str:
@@ -612,6 +650,7 @@ def main() -> int:
     parser.add_argument("--namespace")
     parser.add_argument("--group")
     parser.add_argument("--data-id")
+    parser.add_argument("--control-plane-dir", type=Path)
     parser.add_argument("--username")
     parser.add_argument("--password")
     parser.add_argument("--timeout", type=float)
@@ -717,6 +756,8 @@ def main() -> int:
         for key, value in parse_env(args.env_file).items()
         if key in RUNTIME_CONFIG_KEYS and key not in EXCLUDED_KEYS
     }
+    if args.control_plane_dir:
+        local.update(read_control_plane_values(args.control_plane_dir))
     # Existing Nacos values win; local values only seed missing keys.
     merged = dict(local)
     merged.update(remote)
@@ -739,9 +780,15 @@ def main() -> int:
     # normalizes newly seeded local values and leaves the cache correct when
     # Nacos returned an empty document on first install.
     cached = write_bootstrap_cache(args.env_file, merged) if args.write_bootstrap else 0
+    control_plane = (
+        write_control_plane_values(args.control_plane_dir, merged)
+        if args.control_plane_dir
+        else 0
+    )
     seeded = len(set(local) - set(remote))
     suffix = f"，已回写 {cached} 项本地数据服务引导值" if args.write_bootstrap else ""
-    print(f"Nacos Config 已同步: {data_id}（本地补充 {seeded} 项{suffix}）")
+    control_suffix = f"，控制面文件 {control_plane} 项" if args.control_plane_dir else ""
+    print(f"Nacos Config 已同步: {data_id}（本地补充 {seeded} 项{suffix}{control_suffix}）")
     return 0
 
 
