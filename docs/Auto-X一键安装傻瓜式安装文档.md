@@ -1,10 +1,6 @@
 # Auto-X 一键安装傻瓜式文档
 
-本文用于在两台 Debian Docker 主机上重新安装 Auto-X。当前清理结果如下：
-
-- `tc-1`：已删除 Auto-X 全部容器、网络、镜像、安装目录和源码目录；保留 Nacos 容器及 `/home/docker/nacos/data`、`/home/docker/nacos/logs`。
-- `tc-2`：已删除 Auto-X 全部容器、网络、镜像、安装目录和源码目录。
-- 两台主机的 `/root/apps` 中原有 Auto-X 配置也已移除，下一次运行会重新拉取应用配置。
+本文用于在两台 Debian Docker 主机上安装 Auto-X。`tc-1` 保留现有 Nacos 容器及 `/home/docker/nacos/data`、`/home/docker/nacos/logs`。安装前先检查两台主机的 Auto-X 目录和容器状态；已有安装时不要把本流程当作清理命令执行。
 
 ## 一、先记住正确命令
 
@@ -15,6 +11,15 @@ bash kejilion.sh app auto-x
 ```
 
 `app` 是 kejilion 的应用市场入口，`auto-x` 是应用名称。不要写成 `bash kejilion.sh auto-x`，后者缺少应用市场入口参数。
+
+执行命令后，`kejilion.sh` 会先询问运行环境，之后才进入 Auto-X 应用菜单。两台服务器分别选择：
+
+| 服务器 | 输入 | 运行环境 |
+| --- | --- | --- |
+| `tc-2` | `3`（也可直接回车） | `default`，GitHub 直连 |
+| `tc-1` | `1` | `CN`，GitHub 走代理，Auto-X 镜像从 `ghcr.nju.edu.cn` 拉取 |
+
+这里的 `3` 和 `1` 是 **运行环境选项**，不是 Auto-X 服务编号。出现 `请选择 [3/default]:` 时输入对应数字并回车；随后进入应用菜单，再选择安装。
 
 安装菜单中选择：
 
@@ -70,7 +75,7 @@ cd ~
 bash kejilion.sh app auto-x
 ```
 
-在菜单中选择 `1` 安装。
+在运行环境提示处输入 `3` 并回车，然后在应用菜单中选择 `1` 安装。
 
 服务选择输入：
 
@@ -79,6 +84,8 @@ backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend
 ```
 
 如果安装器提示 `monitor-agent` 或依赖服务会自动加入，直接确认即可。
+
+出现 `输入应用对外服务端口，回车默认使用8080端口:` 时，`tc-2` 直接回车，使用默认的 `8080`。安装器会把该值写入 `APP_PORT`；若端口已占用，应先查明占用来源，再决定是否改端口。
 
 随后按提示填写 Nacos：
 
@@ -124,7 +131,7 @@ x-sentinel-redis-1
 
 ## 五、在 tc-1 安装监控和小红书服务
 
-登录 tc-1：
+登录 tc-1。`CN` 模式使用已在此节点实际拉取验证的 `ghcr.nju.edu.cn`，单次镜像拉取上限为 900 秒：
 
 ```bash
 ssh tc-1
@@ -132,7 +139,9 @@ cd ~
 bash kejilion.sh app auto-x
 ```
 
-选择 `1` 安装。
+在运行环境提示处输入 `1` 并回车，然后在应用菜单中选择 `1` 安装。这是两个不同的菜单。
+
+`tc-1` 不运行 backend，因此安装器会跳过“应用对外服务端口”提示，直接进入源码下载和 Nacos 配置。
 
 服务选择输入：
 
@@ -174,6 +183,8 @@ tc-1 的 Nacos 容器应始终存在：
 docker ps --filter name=^nacos$
 ```
 
+`tc-1` 没有部署 frontend，因此本机 `8080` 不提供管理页面。安装器完成提示不应显示 `tc-1:8080`；管理页面请访问 `tc-2` 的 `http://43.172.88.37:8080`。
+
 ## 六、安装完成后的快速验收
 
 ### 1. 容器健康状态
@@ -191,7 +202,7 @@ docker ps --format '{{.Names}}\t{{.Status}}' | grep x-sentinel
 在对应服务器执行：
 
 ```bash
-curl -fsS http://127.0.0.1:8200/health/ready
+curl -fsS http://127.0.0.1:8200/api/v1/health/ready
 curl -fsS http://127.0.0.1:9100/health/ready
 curl -fsS http://127.0.0.1:9101/health/live
 curl -fsS http://127.0.0.1:9102/health/live
@@ -246,7 +257,23 @@ curl -I http://118.25.197.211:9999/nacos
 
 ### 应用列表下载失败
 
-确认服务器可以访问 GitHub 或配置的代理。应用列表目录已在本次清理中删除，正常情况下重新执行命令会自动重新克隆，不需要手工上传 `auto-x.conf`。
+确认服务器可以访问 GitHub 或配置的代理。安装入口会自动更新应用列表；本次检查发现两台主机的 `/root/apps` 已存在，不需要手工上传 `auto-x.conf`。
+
+### tc-1 镜像拉取长时间没有进度
+
+安装器在 `tc-1` 选择运行环境 `1`（CN）后，默认从 `ghcr.nju.edu.cn` 拉取 Auto-X 镜像。`tc-1` 已实际拉取并验证 backend、xhs-worker 和 frontend 镜像；其他运行环境仍使用原来的 `ghcr.dockerproxy.net`。单次拉取超过 900 秒时会终止该镜像源的尝试，并自动切换到官方 `ghcr.io`；`timeout` 返回 124 或 Docker Compose 未及时退出时返回 137，均视为超时。普通拉取错误最多重试 3 次。
+
+此前 `tc-1` 从旧代理 `ghcr.dockerproxy.net` 下载停在 10/13；已改用上述国内源，并把默认上限设为 900 秒。中断后继续选择运行环境 `1`（CN）：
+
+```bash
+ssh tc-1
+cd ~
+bash kejilion.sh app auto-x
+```
+
+若 900 秒仍不够，可在执行安装入口前设置 `KJ_AUTO_X_PULL_TIMEOUT_SECONDS` 为更大的正整数秒数。若下载失败，先保留现场并检查镜像仓库连接和剩余磁盘空间，不要删除 Nacos 或 Auto-X 数据目录。
+
+如果安装被中断，先确认没有仍在运行的 Auto-X 安装进程，再重新执行同一个安装入口，仍选择本机原定的运行环境、服务和 Nacos 信息。已生成的 `/home/docker/auto-x/.env` 和数据目录会由安装器复用；不要因镜像拉取失败删除 Nacos 配置或数据目录。
 
 ### 提示安装目录已经存在
 
@@ -256,7 +283,7 @@ curl -I http://118.25.197.211:9999/nacos
 ls -ld /home/docker/auto-x
 ```
 
-确认确实要重新安装时，先停止并删除该目录对应的 Auto-X 容器和目录，再重新执行安装入口。不要删除 `/home/docker/nacos`，tc-1 的 Nacos 数据就在这里。
+如果这是中断后重试且 `/home/docker/auto-x` 是安装器克隆的 Git 仓库，直接重新执行安装入口。只有目录不是 Auto-X Git 仓库、安装器明确拒绝接管时，才先核对目录内容并处理；不要删除 `/home/docker/nacos`，tc-1 的 Nacos 数据就在这里。
 
 ### 服务启动后反复重启
 
@@ -282,8 +309,9 @@ docker logs --tail 200 x-sentinel-monitor-agent-1
 ssh tc-2
 cd ~
 bash kejilion.sh app auto-x
-# 选择 1
+# 运行环境选择 3（default），然后在应用菜单选择 1（安装）
 # 选择 backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend
+# 应用对外服务端口直接回车，使用 8080
 # 填写 Nacos 地址、public、nacos、Nacos 密码
 ```
 
@@ -293,12 +321,12 @@ bash kejilion.sh app auto-x
 ssh tc-1
 cd ~
 bash kejilion.sh app auto-x
-# 选择 1
-# 选择 xhs-worker,monitor-center,monitor-agent
+# 运行环境选择 1（CN），然后在应用菜单选择 1（安装）
+# 选择 xhs-worker,monitor-center,monitor-agent；此节点没有对外端口提示
 # 填写与 tc-2 相同的 Nacos 地址、命名空间、账号和密码
 ```
 
-完成后只需要在页面验证服务状态，不需要手工创建数据库、Redis、账号、密钥或复制控制面文件。
+完成后通过 `tc-2` 的 `http://43.172.88.37:8080` 访问管理页面，并按第六节分别检查两台主机的健康状态；不需要手工创建数据库、Redis、账号、密钥或复制控制面文件。
 
 
 ## 公网多节点配置自动化（源码更新说明）
@@ -309,4 +337,4 @@ bash kejilion.sh app auto-x
 
 数据节点本机使用 Docker 容器名及容器端口，跨节点使用 Nacos 中的公网端点，避免本机公网回环。新数据节点不会静默覆盖已有另一数据节点的地址。
 
-本次为源码修改及本地测试通过，尚未完成两台服务器重新部署验收。云安全组放行不能仅凭服务器脚本保证；需有云 API 凭据才能自动管理云侧规则。
+2026-09-29 实测：`tc-2` 的 backend、worker、ai-worker、qq-worker、auth-center、monitor-agent、frontend、PostgreSQL 和 Redis 容器均为 healthy；`tc-1` 的 xhs-worker、monitor-center、monitor-agent 均为 healthy，Nacos 容器仍运行。`tc-1` 的 PostgreSQL 与 Redis 配置指向 `tc-2`，跨节点连接已验证。云安全组放行仍需通过云平台管理，服务器安装器不能直接保证云侧规则。
