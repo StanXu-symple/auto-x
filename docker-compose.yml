@@ -551,7 +551,7 @@ services:
       context: ./frontend
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
-    image: ${FRONTEND_IMAGE:-x-sentinel-frontend}:${IMAGE_TAG:-latest}
+    image: ${FRONTEND_IMAGE:-x-sentinel-frontend}:${FRONTEND_IMAGE_TAG:-${IMAGE_TAG:-latest}}
     depends_on:
       backend:
         condition: service_healthy
