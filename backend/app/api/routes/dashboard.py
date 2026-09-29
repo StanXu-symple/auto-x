@@ -60,7 +60,7 @@ async def dashboard_summary(
     )
     recent_tweet_rows = (
         await db.execute(
-            select(Tweet, MonitoredUser.username)
+            select(Tweet, MonitoredUser.username, MonitoredUser.display_name)
             .join(MonitoredUser, Tweet.monitored_user_id == MonitoredUser.id)
             .order_by(Tweet.posted_at.desc())
             .limit(10)
@@ -98,7 +98,8 @@ async def dashboard_summary(
         ),
         server=server,
         recent_tweets=[
-            _tweet_out(tweet, username, include_raw=False) for tweet, username in recent_tweet_rows
+            _tweet_out(tweet, username, include_raw=False, display_name=display_name)
+            for tweet, username, display_name in recent_tweet_rows
         ],
         recent_runs=[_polling_log_out(log, username) for log, username in recent_run_rows],
     )

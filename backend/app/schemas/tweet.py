@@ -9,6 +9,7 @@ class TweetOut(APIModel):
     tweet_id: str
     monitored_user_id: int
     username: str
+    display_name: str | None = None
     author_id: str
     text: str
     lang: str | None

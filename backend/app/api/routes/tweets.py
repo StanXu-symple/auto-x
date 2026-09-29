@@ -14,12 +14,15 @@ from app.schemas.tweet import TweetOut
 router = APIRouter(tags=["Tweets"])
 
 
-def _tweet_out(tweet: Tweet, username: str, *, include_raw: bool) -> TweetOut:
+def _tweet_out(
+    tweet: Tweet, username: str, *, include_raw: bool, display_name: str | None = None
+) -> TweetOut:
     return TweetOut(
         id=tweet.id,
         tweet_id=tweet.tweet_id,
         monitored_user_id=tweet.monitored_user_id,
         username=username,
+        display_name=display_name,
         author_id=tweet.author_id,
         text=tweet.text,
         lang=tweet.lang,
@@ -72,7 +75,7 @@ async def list_tweets(
     )
     rows = (
         await db.execute(
-            select(Tweet, MonitoredUser.username)
+            select(Tweet, MonitoredUser.username, MonitoredUser.display_name)
             .select_from(joined)
             .where(*conditions)
             .order_by(Tweet.posted_at.desc(), Tweet.id.desc())
@@ -81,7 +84,10 @@ async def list_tweets(
         )
     ).all()
     return Page(
-        items=[_tweet_out(tweet, handle, include_raw=include_raw) for tweet, handle in rows],
+        items=[
+            _tweet_out(tweet, handle, include_raw=include_raw, display_name=display_name)
+            for tweet, handle, display_name in rows
+        ],
         total=total,
         page=page,
         page_size=page_size,
@@ -97,11 +103,11 @@ async def get_tweet(
 ) -> TweetOut:
     row = (
         await db.execute(
-            select(Tweet, MonitoredUser.username)
+            select(Tweet, MonitoredUser.username, MonitoredUser.display_name)
             .join(MonitoredUser, Tweet.monitored_user_id == MonitoredUser.id)
             .where(Tweet.tweet_id == tweet_id)
         )
     ).one_or_none()
     if row is None:
         raise APIError(404, "tweet_not_found", "Tweet was not found")
-    return _tweet_out(row[0], row[1], include_raw=include_raw)
+    return _tweet_out(row[0], row[1], include_raw=include_raw, display_name=row[2])

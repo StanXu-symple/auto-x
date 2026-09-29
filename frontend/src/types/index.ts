@@ -111,6 +111,7 @@ export interface TweetAuthor {
 }
 
 export interface Tweet {
+  display_name?: string | null
   id: EntityId
   tweet_id: string
   monitored_user_id: EntityId
