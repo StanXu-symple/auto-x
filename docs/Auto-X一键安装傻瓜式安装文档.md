@@ -63,7 +63,7 @@ chmod +x kejilion.sh
 1. `tc-2` 运行 backend、auth-center、Worker、frontend，并作为默认数据服务节点。
 2. `tc-1` 运行小红书 Worker、monitor-center、monitor-agent，并从 Nacos 读取共享配置。
 
-两台机器使用同一个 Nacos Data ID、namespace 和 group。第一次安装会生成数据库密码、Redis 密码、管理员密码、JWT/X 密钥、认证中心密钥和服务客户端凭据并发布到 Nacos；第二台安装时会复用 Nacos 中已有值。
+两台机器使用同一个 Nacos namespace 和 group，并共用下述三个 Data ID。第一次安装会生成数据库密码、Redis 密码、管理员密码、JWT/X 密钥、认证中心密钥和服务客户端凭据并发布到 Nacos；第二台安装时会复用 Nacos 中已有值。
 
 监控配置单独使用两个 Data ID，均在同一个 `public` namespace、`X_SENTINEL` group 中：
 
@@ -73,6 +73,19 @@ chmod +x kejilion.sh
 | `x-sentinel-monitor-nodes.json` | `{"nodes":{"tc-1":{"advertise_ip":"..."},"tc-2":{"advertise_ip":"..."}}}` | 安装器将节点 ID 和检测到的本机公网注册地址绑定；agent 按本机 `NACOS_ADVERTISE_IP` 找到自己对应的节点 ID。 |
 
 `x-sentinel-config.json` 继续保存其他应用运行配置，不再用来控制监控拓扑。`MONITOR_STALE_SECONDS` 仍用于 backend 判断监控快照是否过期；拓扑自身的 `stale_seconds` 在新的拓扑 Data ID 中。两份新配置是合法 JSON，直接在 Nacos 控制台编辑，不要写 JSON 注释。修改后重启 monitor-center 和相关 monitor-agent 才会加载新值。
+
+`x-sentinel-monitor-topology.json` 的六个顶层字段与仓库中的 `infra/microservices/services.tc-dual.json` 完全一致：`interval_seconds`、`stale_seconds`、`timeout_seconds`、`concurrency`、`nodes`、`services`。`x-sentinel-monitor-nodes.json` 的实际结构是：
+
+```json
+{
+  "nodes": {
+    "tc-1": {"advertise_ip": "118.25.197.211"},
+    "tc-2": {"advertise_ip": "43.172.88.37"}
+  }
+}
+```
+
+扩容时先在拓扑 Data ID 的 `nodes` 和 `services` 中增加新节点与服务，再用安装器在新节点首次登记地址。监控服务启动时从 Nacos 读取；节点地址必须与该机器本机 `NACOS_ADVERTISE_IP` 一致。此处使用的是可跨主机访问的注册地址，不是 Docker 容器内部地址。
 
 首次安装时命令中的 `KJ_AUTO_X_MONITOR_NODE_ID` 只用于在 Nacos 中登记这台机器；`KJ_AUTO_X_TOPOLOGY_FILE` 只在 Nacos 尚无拓扑时提供初始内容。它们不再作为本机运行配置。之后运行安装器更新时，Nacos 已有的拓扑和节点地址为准，不会被本地文件覆盖。Nacos 连接地址、命名空间和凭据仍是安装器必须保存的连接引导信息，`NACOS_ADVERTISE_IP` 仍由安装器自动探测。
 
@@ -261,6 +274,8 @@ X_SENTINEL
 
 配置中会包含数据库、Redis、管理员、JWT/X、认证中心、provider 和 Worker 运行参数。Nacos 的连接地址、账号和密码仍保留在每台主机的本地引导文件中，因为应用必须先用它们连接 Nacos。
 
+另外检查同一 Group 下的 `x-sentinel-monitor-topology.json` 和 `x-sentinel-monitor-nodes.json`：前者应有 12 个 `services`，后者应有 `tc-1`、`tc-2` 两个节点。编辑监控配置只需改这两个 Data ID；安装器后续更新会保留已有的远端内容。
+
 ## 七、常见问题处理
 
 ### Nacos 验证失败
@@ -275,7 +290,16 @@ curl -I http://118.25.197.211:9999/nacos
 
 ### 应用列表下载失败
 
-确认服务器可以访问 GitHub 或配置的代理。安装入口会自动更新应用列表；本次检查发现两台主机的 `/root/apps` 已存在，不需要手工上传 `auto-x.conf`。
+确认服务器可以访问 GitHub 或配置的代理。交互安装时，tc-1 应先选择运行环境 `1`（CN），再进入应用菜单。非交互更新会使用 `default` 环境；tc-1 曾因此在直连 GitHub 刷新应用列表时失败，Auto-X 源码、Nacos 和旧容器均未受影响。
+
+仅当 `/root/apps` 已包含目标版本且工作区干净时，才可在非交互更新命令前加 `KJ_APPS_SKIP_REFRESH=1`，跳过重复刷新。先核对：
+
+```bash
+git -C /root/apps status --short --branch
+git -C /root/apps rev-parse --short HEAD
+```
+
+本次验证的安装器提交是 `b4d7b81`。如果本地不是目标提交，先检查网络，并通过 GitHub 代理将 `/root/apps` 更新到目标版本；不要直接跳过刷新使用旧安装器。
 
 ### tc-1 镜像拉取长时间没有进度
 
@@ -353,6 +377,43 @@ bash kejilion.sh app auto-x
 ```
 
 完成后通过 `tc-2` 的 `http://43.172.88.37:8080` 访问管理页面，并按第六节分别检查两台主机的健康状态；不需要手工创建数据库、Redis、账号、密钥或复制控制面文件。
+
+### 已有安装：按已发布镜像更新监控配置
+
+先将 Auto-X 代码推到 `dev`、合并到 `main`，等待 GitHub Actions 的 `Publish Auto-X images` 成功。安装器配置需发布到 `apps` 仓库的 `stanxu` 分支；两台机器的 `/root/apps` 都应更新到该分支的目标提交。镜像标签使用 Actions 为 **main 提交完整 SHA** 发布的 `sha-<完整提交 SHA>`，不要凭 `latest` 判断版本。本次验收提交是 `76efad32ebacd601c2600eb3fb0814208223bff4`，其 [Actions 运行记录](https://github.com/StanXu-symple/auto-x/actions/runs/36555604474) 已成功。
+
+先更新 tc-2：
+
+```bash
+ssh tc-2
+KJ_AUTO_X_IMAGE_TAG=sha-76efad32ebacd601c2600eb3fb0814208223bff4 \
+KJ_AUTO_X_MONITOR_NODE_ID=tc-2 \
+KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
+KJ_APP_NONINTERACTIVE=1 KJ_APP_ACTION=update KJ_APP_PORT=8080 \
+AUTO_X_SERVICES=backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend \
+bash /root/kejilion.sh app auto-x
+```
+
+确认 tc-2 的目标服务都为 healthy，再更新 tc-1。以下命令使用已核对的 `/root/apps` 安装器，跳过 tc-1 非交互模式下失败的直连 GitHub 应用列表刷新；源码仍由安装器从 Auto-X `main` 拉取，镜像仍按精确 SHA 拉取：
+
+```bash
+ssh tc-1
+git -C /root/apps status --short --branch
+git -C /root/apps rev-parse --short HEAD
+# 确认安装器是目标提交、工作区干净后执行：
+KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.nju.edu.cn \
+KJ_AUTO_X_IMAGE_TAG=sha-76efad32ebacd601c2600eb3fb0814208223bff4 \
+KJ_AUTO_X_MONITOR_NODE_ID=tc-1 \
+KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
+KJ_APP_NONINTERACTIVE=1 KJ_APP_ACTION=update KJ_APP_PORT=8006 \
+AUTO_X_SERVICES=xhs-worker,monitor-center,monitor-agent \
+bash /root/kejilion.sh app auto-x
+```
+
+`KJ_AUTO_X_MONITOR_NODE_ID` 在本次迁移中只用于把本机检测到的公网地址首次登记到 Nacos。已有节点映射之后，更新可以省略这个参数；安装器不会让旧本地文件覆盖 Nacos 拓扑。后续发布请替换上面的完整 SHA，先确认对应 Actions 运行成功。
+
+2026-09-29 本次更新验收：两台机器源码均为 `76efad3`，目标容器均运行对应 `sha-76efad32ebacd601c2600eb3fb0814208223bff4` 镜像且 healthy；Nacos 中拓扑含 12 个服务、节点映射含 `tc-1` 和 `tc-2`；monitor-center 汇总的两台主机和 12 个实例均为 healthy。
 
 
 ## 公网多节点配置自动化（源码更新说明）
