@@ -194,6 +194,9 @@ export const monitoredUsersApi = {
 }
 
 export const tweetsApi = {
+  async detail(tweetId: string) {
+    return dataOf(await http.get<Wrapped<Tweet>>(`/tweets/${encodeURIComponent(tweetId)}`))
+  },
   async list(params: TweetQuery) {
     return pageOf(await http.get<Wrapped<PaginatedResponse<Tweet>>>('/tweets', { params }))
   },
