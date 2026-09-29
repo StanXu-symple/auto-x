@@ -19,6 +19,7 @@ class MonitoredUser(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     include_replies: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     include_retweets: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    initial_sync_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     poll_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="idle", server_default="idle")
     last_tweet_id: Mapped[str | None] = mapped_column(String(32), nullable=True)

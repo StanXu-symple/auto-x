@@ -47,6 +47,7 @@ export interface LoginResponse {
 export type MonitorStatus = 'active' | 'paused' | 'polling' | 'error' | 'pending'
 
 export interface MonitoredUser {
+  initial_sync_days?: number | null
   id: EntityId
   username: string
   x_user_id?: string | null
@@ -69,6 +70,7 @@ export interface MonitoredUser {
 }
 
 export interface CreateMonitoredUserPayload {
+  initial_sync_days: number
   username: string
   poll_interval_seconds: number | null
   include_replies?: boolean

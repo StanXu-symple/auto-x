@@ -15,6 +15,7 @@ def normalize_x_username(value: str) -> str:
 
 class MonitoredUserCreate(APIModel):
     username: str
+    initial_sync_days: int = Field(default=7, strict=True, gt=0, le=2147483647)
     poll_interval_seconds: int | None = Field(default=None, ge=15, le=86400)
     include_replies: bool = True
     include_retweets: bool = True
@@ -39,6 +40,7 @@ class MonitoredUserUpdate(APIModel):
 
 
 class MonitoredUserOut(APIModel):
+    initial_sync_days: int | None = None
     id: int
     username: str
     x_user_id: str | None

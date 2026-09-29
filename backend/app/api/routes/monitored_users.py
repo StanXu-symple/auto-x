@@ -22,6 +22,17 @@ from app.services.settings_service import effective_interval, get_polling_settin
 router = APIRouter(tags=["Monitored users"])
 
 
+def initial_sync_since_id(now: datetime, days: int) -> str:
+    """Seed the durable high-water mark at the inclusive history cutoff.
+
+    X snowflakes encode milliseconds since 2010-11-04. Subtract one so
+    tweets exactly on the boundary are included by the exclusive since_id.
+    Integer arithmetic also handles very large positive day counts safely.
+    """
+    cutoff_ms = int(now.timestamp() * 1000) - days * 86_400_000
+    return str(max(0, ((cutoff_ms - 1_288_834_974_657) << 22) - 1))
+
+
 def _clear_pagination_checkpoint(user: MonitoredUser) -> None:
     user.pagination_token = None
     user.pagination_since_id = None
@@ -36,6 +47,7 @@ def _serialize_user(
     return MonitoredUserOut(
         id=user.id,
         username=user.username,
+        initial_sync_days=user.initial_sync_days,
         x_user_id=user.x_user_id,
         display_name=user.display_name,
         is_active=user.is_active,
@@ -119,6 +131,8 @@ async def create_monitored_user(
     now = datetime.now(UTC)
     user = MonitoredUser(
         username=payload.username,
+        initial_sync_days=payload.initial_sync_days,
+        last_tweet_id=initial_sync_since_id(now, payload.initial_sync_days),
         poll_interval_seconds=payload.poll_interval_seconds,
         include_replies=payload.include_replies,
         include_retweets=payload.include_retweets,
