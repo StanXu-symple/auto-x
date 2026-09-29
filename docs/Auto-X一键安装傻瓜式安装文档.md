@@ -72,6 +72,8 @@ chmod +x kejilion.sh
 ```bash
 ssh tc-2
 cd ~
+KJ_AUTO_X_MONITOR_NODE_ID=tc-2 \
+KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
 bash kejilion.sh app auto-x
 ```
 
@@ -136,6 +138,8 @@ x-sentinel-redis-1
 ```bash
 ssh tc-1
 cd ~
+KJ_AUTO_X_MONITOR_NODE_ID=tc-1 \
+KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
 bash kejilion.sh app auto-x
 ```
 
@@ -160,7 +164,7 @@ Nacos 用户名：    nacos
 Nacos 密码：      输入实际 Nacos 密码
 ```
 
-安装器会自动探测本机注册地址，并把 tc-1 的 monitor-agent、monitor-center 和 xhs-worker 注册到 Nacos。通常不需要手工填写 `NACOS_ADVERTISE_IP`。
+安装器会自动探测本机注册地址，并把 tc-1 的 monitor-agent、monitor-center 和 xhs-worker 注册到 Nacos。通常不需要手工填写 `NACOS_ADVERTISE_IP`。以上两条启动命令中的节点 ID 和双节点拓扑必须分别照写；否则两台监控 agent 都会按单机默认值 `local` 注册，监控中心无法正确区分主机。
 
 安装结束后检查：
 
@@ -183,7 +187,7 @@ tc-1 的 Nacos 容器应始终存在：
 docker ps --filter name=^nacos$
 ```
 
-`tc-1` 没有部署 frontend，因此本机 `8080` 不提供管理页面。安装器完成提示不应显示 `tc-1:8080`；管理页面请访问 `tc-2` 的 `http://43.172.88.37:8080`。
+`tc-1` 没有部署 frontend，因此本机 `8080` 不提供管理页面。安装器完成提示和应用管理菜单都会显示“此节点未部署 frontend”，不显示 `tc-1:8080`；管理页面请访问 `tc-2` 的 `http://43.172.88.37:8080`。
 
 ## 六、安装完成后的快速验收
 
@@ -221,11 +225,14 @@ xsentinel-worker
 xsentinel-ai-worker
 xsentinel-qq-worker
 xsentinel-auth-center
-xsentinel-frontend
 xsentinel-xhs-worker
 xsentinel-monitor-center
 xsentinel-monitor-agent-<节点名>
 ```
+
+`frontend` 是由 Nginx 提供的前端页面，不注册到 Nacos；通过 `tc-2` 的 `http://43.172.88.37:8080` 验证页面可访问。
+
+后端和监控服务通过 Nacos 发现 `xsentinel-auth-center`，本部署不需要单独填写 `SERVICE_AUTH_URL`。双节点监控验收应看到 `xsentinel-monitor-agent-tc-1` 和 `xsentinel-monitor-agent-tc-2` 各有一个健康实例；监控中心的 12 个资源实例应全部为 healthy。
 
 ### 4. 配置中心内容
 
@@ -268,6 +275,8 @@ curl -I http://118.25.197.211:9999/nacos
 ```bash
 ssh tc-1
 cd ~
+KJ_AUTO_X_MONITOR_NODE_ID=tc-1 \
+KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
 bash kejilion.sh app auto-x
 ```
 
@@ -297,6 +306,8 @@ docker logs --tail 200 x-sentinel-monitor-agent-1
 
 优先检查 Nacos 是否可达、Nacos 配置是否存在、两台机器的时间是否同步，以及需要的端口是否放行。不要直接手工 `docker run` 替代安装器；修复配置后重新执行同一个安装入口。
 
+若 monitor-center 中某节点暂时显示 unknown，先从 monitor-center 所在主机检查对应 agent 的公网端口及认证中心 `9100`，再从该节点的 monitor-agent 容器检查它能否访问 Nacos 注册的认证中心地址。网络短时超时可能自行恢复，复查监控中心结果后再决定是否修改配置；`SERVICE_AUTH_URL` 保持空值，由 Nacos 服务发现定位认证中心。
+
 ### 想重新安装但不想复用旧 Nacos 配置
 
 在 Nacos 控制台删除或清空 `x-sentinel-config.json` 后，再执行安装。这样安装器会重新生成缺失配置；如果保留该 Data ID，安装器会按照“远端优先”继续复用其中已有值。
@@ -308,6 +319,8 @@ docker logs --tail 200 x-sentinel-monitor-agent-1
 ```bash
 ssh tc-2
 cd ~
+KJ_AUTO_X_MONITOR_NODE_ID=tc-2 \
+KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
 bash kejilion.sh app auto-x
 # 运行环境选择 3（default），然后在应用菜单选择 1（安装）
 # 选择 backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend
@@ -320,6 +333,8 @@ bash kejilion.sh app auto-x
 ```bash
 ssh tc-1
 cd ~
+KJ_AUTO_X_MONITOR_NODE_ID=tc-1 \
+KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
 bash kejilion.sh app auto-x
 # 运行环境选择 1（CN），然后在应用菜单选择 1（安装）
 # 选择 xhs-worker,monitor-center,monitor-agent；此节点没有对外端口提示
