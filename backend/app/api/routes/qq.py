@@ -701,6 +701,74 @@ async def update_task(
     await db.refresh(task)
     return _task_out(task, payload.bot_ids, payload.groups)
 
+@router.post(
+    "/tasks/{task_id}/push", response_model=QQBatchPushAccepted, status_code=202
+)
+async def push_task_now(
+    task_id: int, db: DbSession, redis: RedisClient, _: CurrentAdmin
+) -> QQBatchPushAccepted:
+    task = await db.get(QQScheduledTask, task_id, with_for_update=True)
+    if task is None:
+        raise APIError(404, "qq_task_not_found", "QQ 定时任务不存在")
+    bot_ids = set(
+        await db.scalars(
+            select(QQScheduledTaskBot.bot_id).where(
+                QQScheduledTaskBot.task_id == task.id
+            )
+        )
+    )
+    groups = (
+        await db.execute(
+            select(
+                QQScheduledTaskGroup.bot_id, QQScheduledTaskGroup.group_openid
+            ).where(QQScheduledTaskGroup.task_id == task.id)
+        )
+    ).tuples()
+    now = datetime.now(UTC)
+    run_id = uuid.uuid4().hex
+    rows = []
+    for bot_id, group in dict.fromkeys(groups):
+        if bot_id not in bot_ids:
+            continue
+        bot = await db.get(QQBotAccount, bot_id)
+        if bot is None or not bot.is_enabled:
+            continue
+        rows.append(
+            QQDelivery(
+                task_id=task.id,
+                target_id=None,
+                source_tweet_id=None,
+                kind="scheduled",
+                idempotency_key=f"manual-task:{run_id}:{bot_id}:{group}",
+                bot_name=bot.name,
+                bot_app_id=bot.app_id,
+                bot_version=bot.version,
+                target_name=group,
+                group_openid=group,
+                message_body=task.message,
+                status="queued",
+                attempts=0,
+                max_attempts=get_settings().qq_worker_max_attempts,
+                next_attempt_at=now,
+            )
+        )
+    if not rows:
+        raise APIError(
+            409, "qq_task_no_recipients", "任务没有可用的发送群和已启用机器人"
+        )
+    db.add_all(rows)
+    await db.flush()
+    delivery_ids = [row.id for row in rows]
+    # Persist history before waking the worker; its outbox scan recovers Redis failures.
+    await db.commit()
+    await enqueue_qq_delivery_ids(redis, delivery_ids)
+    return QQBatchPushAccepted(
+        message=f"已提交立即推送，共 {len(rows)} 条投递记录，可在任务历史中查看结果",
+        delivery_ids=delivery_ids,
+        batch_count=len(rows),
+    )
+
+
 @router.delete("/tasks/{task_id}", response_model=MessageResponse)
 async def delete_task(task_id: int, db: DbSession, _: CurrentAdmin):
     task = await db.get(QQScheduledTask, task_id)
