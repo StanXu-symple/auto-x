@@ -361,6 +361,7 @@ export interface QQJoinedGroup {
 }
 
 export interface QQNotificationTarget {
+  initial_sync_days?: number | null
   id: number
   bot_id: number
   bot_name: string
@@ -376,6 +377,7 @@ export interface QQNotificationTarget {
 }
 
 export interface QQTargetPayload {
+  initial_sync_days?: number
   bot_id: number
   name: string
   group_openid: string

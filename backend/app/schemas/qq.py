@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
 import re
+from datetime import datetime
 from string import Formatter
 from typing import Literal
 
@@ -81,6 +81,7 @@ class QQJoinedGroupOut(APIModel):
 
 
 class QQTargetCreate(APIModel):
+    initial_sync_days: int = Field(default=7, strict=True, gt=0, le=2147483647)
     bot_id: int = Field(gt=0)
     name: str = Field(min_length=1, max_length=100)
     group_openid: str = Field(min_length=3, max_length=128)
@@ -159,6 +160,7 @@ class QQTargetUpdate(APIModel):
 
 
 class QQTargetOut(APIModel):
+    initial_sync_days: int | None = None
     id: int
     bot_id: int
     bot_name: str

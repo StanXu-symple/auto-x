@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.core.time import as_utc
 from app.models.monitored_user import MonitoredUser
 from app.models.qq import QQBotAccount, QQDelivery, QQNotificationTarget, QQTargetSubscription
 from app.models.tweet import Tweet
@@ -166,11 +167,60 @@ async def enqueue_qq_delivery_ids(redis: Redis, delivery_ids: list[int]) -> None
         )
 
 
+def target_history_cutoff(target: QQNotificationTarget) -> datetime | None:
+    if target.initial_sync_days is None:
+        return None
+    created_at = as_utc(target.created_at)
+    # Clamp huge valid day counts without overflowing Python datetime.
+    if target.initial_sync_days > (created_at - datetime.min.replace(tzinfo=UTC)).days:
+        return datetime.min.replace(tzinfo=UTC)
+    return created_at - timedelta(days=target.initial_sync_days)
+
+
+async def create_target_history_deliveries(
+    session: AsyncSession, target: QQNotificationTarget, *, max_attempts: int
+) -> list[int]:
+    """Backfill only this new target, in bounded query batches."""
+    cutoff = target_history_cutoff(target)
+    if not target.is_enabled or cutoff is None:
+        return []
+    conditions = [Tweet.posted_at >= cutoff]
+    if not target.all_monitored_users:
+        conditions.append(
+            Tweet.monitored_user_id.in_(
+                select(QQTargetSubscription.monitored_user_id).where(
+                    QQTargetSubscription.target_id == target.id
+                )
+            )
+        )
+    delivery_ids: list[int] = []
+    last_id = 0
+    while True:
+        tweets = list(
+            await session.scalars(
+                select(Tweet).where(*conditions, Tweet.id > last_id).order_by(Tweet.id).limit(200)
+            )
+        )
+        if not tweets:
+            break
+        delivery_ids.extend(
+            await create_tweet_deliveries(
+                session,
+                [tweet.tweet_id for tweet in tweets],
+                max_attempts=max_attempts,
+                only_target_id=target.id,
+            )
+        )
+        last_id = tweets[-1].id
+    return delivery_ids
+
+
 async def create_tweet_deliveries(
     session: AsyncSession,
     tweet_x_ids: list[str],
     *,
     max_attempts: int,
+    only_target_id: int | None = None,
 ) -> list[int]:
     if not tweet_x_ids:
         return []
@@ -196,6 +246,11 @@ async def create_tweet_deliveries(
             .where(
                 QQNotificationTarget.is_enabled.is_(True),
                 QQBotAccount.is_enabled.is_(True),
+                *(
+                    [QQNotificationTarget.id == only_target_id]
+                    if only_target_id is not None
+                    else []
+                ),
             )
         )
     ).all()
@@ -219,11 +274,15 @@ async def create_tweet_deliveries(
     )
     now = datetime.now(UTC)
     rows: list[QQDelivery] = []
+    cutoffs = {target.id: target_history_cutoff(target) for target, _ in target_rows}
     for tweet in tweets:
         user = users.get(tweet.monitored_user_id)
         if user is None:
             continue
         for target, bot in target_rows:
+            cutoff = cutoffs[target.id]
+            if cutoff is not None and as_utc(tweet.posted_at) < cutoff:
+                continue
             if not target.all_monitored_users and (target.id, user.id) not in bindings:
                 continue
             key = f"tweet:{tweet.id}:target:{target.id}"

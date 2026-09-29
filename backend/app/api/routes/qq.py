@@ -47,6 +47,7 @@ from app.services.qq_notifications import (
     QQ_WORKER_HEARTBEAT,
     QQCredentialValidationError,
     chunk_qq_messages,
+    create_target_history_deliveries,
     create_test_delivery,
     decrypt_app_secret,
     encrypt_app_secret,
@@ -89,6 +90,7 @@ async def _target_out(db: DbSession, row: QQNotificationTarget) -> QQTargetOut:
     )
     return QQTargetOut(
         id=row.id,
+        initial_sync_days=row.initial_sync_days,
         bot_id=row.bot_id,
         bot_name=bot.name if bot else "已删除机器人",
         name=row.name,
@@ -367,11 +369,14 @@ async def list_targets(db: DbSession, _: CurrentAdmin) -> list[QQTargetOut]:
 
 
 @router.post("/targets", response_model=QQTargetOut, status_code=status.HTTP_201_CREATED)
-async def create_target(payload: QQTargetCreate, db: DbSession, _: CurrentAdmin) -> QQTargetOut:
+async def create_target(
+    payload: QQTargetCreate, db: DbSession, redis: RedisClient, _: CurrentAdmin
+) -> QQTargetOut:
     await _get_bot(db, payload.bot_id)
     now = datetime.now(UTC)
     row = QQNotificationTarget(
         bot_id=payload.bot_id,
+        initial_sync_days=payload.initial_sync_days,
         name=payload.name.strip(),
         group_openid=payload.group_openid.strip(),
         is_enabled=payload.is_enabled,
@@ -390,10 +395,15 @@ async def create_target(payload: QQTargetCreate, db: DbSession, _: CurrentAdmin)
             all_monitored_users=payload.all_monitored_users,
             monitored_user_ids=payload.monitored_user_ids,
         )
+        await db.flush()
+        delivery_ids = await create_target_history_deliveries(
+            db, row, max_attempts=get_settings().qq_worker_max_attempts
+        )
         await db.commit()
     except IntegrityError:
         await db.rollback()
         raise APIError(409, "qq_target_exists", "该机器人已经配置了相同群 OpenID") from None
+    await enqueue_qq_delivery_ids(redis, delivery_ids)
     await db.refresh(row)
     return await _target_out(db, row)
 
