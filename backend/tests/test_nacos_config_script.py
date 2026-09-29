@@ -123,6 +123,39 @@ def test_positive_timeout_rejects_invalid_values() -> None:
             raise AssertionError(f"timeout {value!r} should be rejected")
 
 
+def test_monitor_documents_seed_once_and_merge_node_addresses(monkeypatch, tmp_path: Path) -> None:
+    module = load_script()
+    remote: dict[str, dict] = {}
+    published: list[str] = []
+
+    def fake_load(_server, *, data_id, **_kwargs):
+        return remote.get(data_id)
+
+    def fake_publish(_server, *, data_id, content, **_kwargs):
+        import copy
+        remote[data_id] = copy.deepcopy(content)
+        published.append(data_id)
+
+    monkeypatch.setattr(module, "load_json_document", fake_load)
+    monkeypatch.setattr(module, "publish", fake_publish)
+    common = dict(server="http://nacos", namespace="public", group="X_SENTINEL",
+                  token="", timeout=3, control_dir=tmp_path)
+    module.sync_monitor_documents(**common, local_env={"NACOS_ADVERTISE_IP": "203.0.113.10"},
+                                  seed_node_id="tc-2")
+    assert remote["x-sentinel-monitor-topology.json"]["services"][0]["node"] == "tc-1"
+    assert remote["x-sentinel-monitor-nodes.json"]["nodes"] == {
+        "tc-2": {"advertise_ip": "203.0.113.10"}
+    }
+    module.sync_monitor_documents(**common, local_env={"NACOS_ADVERTISE_IP": "203.0.113.11"},
+                                  seed_node_id="tc-1")
+    assert set(remote["x-sentinel-monitor-nodes.json"]["nodes"]) == {"tc-1", "tc-2"}
+    assert published == ["x-sentinel-monitor-topology.json", "x-sentinel-monitor-nodes.json",
+                         "x-sentinel-monitor-nodes.json"]
+    module.sync_monitor_documents(**common, local_env={"NACOS_ADVERTISE_IP": "203.0.113.11"},
+                                  seed_node_id="")
+    assert len(published) == 3
+
+
 def test_parse_explicit_overrides_accepts_only_non_secret_runtime_keys() -> None:
     module = load_script()
 

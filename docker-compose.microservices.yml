@@ -130,15 +130,12 @@ services:
       NACOS_CONFIG_TIMEOUT_SECONDS: ${NACOS_CONFIG_TIMEOUT_SECONDS:-3}
       NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
       NACOS_SERVICE_NAME: xsentinel-monitor-center
+      NACOS_MONITOR_TOPOLOGY_DATA_ID: ${NACOS_MONITOR_TOPOLOGY_DATA_ID:-x-sentinel-monitor-topology.json}
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
       NACOS_SERVICE_PORT: ${MONITOR_CENTER_PORT:-9102}
       SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
       SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/monitor.secret
       SERVICE_TOPOLOGY_FILE: /run/xsentinel/services.json
-      MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-10}
-      MONITOR_STALE_SECONDS: ${MONITOR_STALE_SECONDS:-45}
-      MONITOR_TIMEOUT_SECONDS: ${MONITOR_TIMEOUT_SECONDS:-3}
-      MONITOR_CONCURRENCY: ${MONITOR_CONCURRENCY:-8}
     volumes:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}/monitor.secret:/run/xsentinel/monitor.secret:ro
       - ${CONTROL_PLANE_DIR:-./data/control-plane}/services.json:/run/xsentinel/services.json:ro
@@ -162,19 +159,15 @@ services:
       NACOS_CONFIG_GROUP: ${NACOS_CONFIG_GROUP:-}
       NACOS_CONFIG_TIMEOUT_SECONDS: ${NACOS_CONFIG_TIMEOUT_SECONDS:-3}
       NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
-      NACOS_SERVICE_NAME: xsentinel-monitor-agent-${MONITOR_NODE_ID:-local}
+      NACOS_MONITOR_TOPOLOGY_DATA_ID: ${NACOS_MONITOR_TOPOLOGY_DATA_ID:-x-sentinel-monitor-topology.json}
+      NACOS_MONITOR_NODES_DATA_ID: ${NACOS_MONITOR_NODES_DATA_ID:-x-sentinel-monitor-nodes.json}
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
       NACOS_SERVICE_PORT: ${MONITOR_AGENT_PORT:-9101}
       SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
-      MONITOR_NODE_ID: ${MONITOR_NODE_ID:-local}
       SERVICE_TOPOLOGY_FILE: /run/xsentinel/services.json
       DOCKER_SOCKET: /var/run/docker.sock
       HOST_PROC: /host/proc
       HOST_ROOT: /host/root
-      MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-10}
-      MONITOR_STALE_SECONDS: ${MONITOR_STALE_SECONDS:-45}
-      MONITOR_TIMEOUT_SECONDS: ${MONITOR_TIMEOUT_SECONDS:-3}
-      MONITOR_CONCURRENCY: ${MONITOR_CONCURRENCY:-8}
     volumes:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}/services.json:/run/xsentinel/services.json:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro

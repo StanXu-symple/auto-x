@@ -9,9 +9,7 @@ from fastapi import Depends, FastAPI, Request
 from app import __version__
 from app.control_plane.config import (
     Topology,
-    apply_runtime_topology,
-    load_runtime_config,
-    load_topology,
+    load_monitor_topology,
     runtime_float,
 )
 from app.control_plane.contracts import ResourceSnapshot
@@ -123,7 +121,6 @@ class MonitorCollector:
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        local_topology = load_topology()
         bootstrap_timeout = runtime_float(
             {},
             "nacos_config_timeout_seconds",
@@ -141,8 +138,7 @@ def create_app() -> FastAPI:
                 os.environ.get("NACOS_USERNAME", ""),
                 os.environ.get("NACOS_PASSWORD", ""),
             )
-            runtime = await load_runtime_config(bootstrap_nacos)
-        topology = apply_runtime_topology(local_topology, runtime)
+            topology = await load_monitor_topology(bootstrap_nacos)
         app.state.snapshot = {
             "sampled_at": datetime.now(UTC).isoformat(),
             "mode": "microservices",

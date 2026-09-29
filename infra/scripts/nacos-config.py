@@ -139,9 +139,6 @@ RUNTIME_CONFIG_KEYS = {
     "SERVICE_AUTH_TOKEN_LIFETIME_SECONDS",
     "SERVICE_AUTH_KEY_ROTATION_DAYS",
     "SERVICE_AUTH_KEY_OVERLAP_DAYS",
-    "MONITOR_INTERVAL_SECONDS",
-    "MONITOR_TIMEOUT_SECONDS",
-    "MONITOR_CONCURRENCY",
     "JWT_SECRET_KEY",
     "JWT_ALGORITHM",
     "JWT_EXPIRE_MINUTES",
@@ -616,6 +613,115 @@ def load_remote(
     }, token
 
 
+def load_json_document(
+    server: str, *, namespace: str, group: str, data_id: str, token: str, timeout: float
+) -> dict | None:
+    params = {"dataId": data_id, "group": group}
+    if namespace and namespace.lower() != "public":
+        params["tenant"] = namespace
+    if token:
+        params["accessToken"] = token
+    status, body = request_json(
+        "GET", f"{server}/nacos/v1/cs/configs", params=params, timeout=timeout
+    )
+    if status == 404 or not body.strip():
+        return None
+    if status >= 400:
+        raise RuntimeError(f"读取 Nacos Config {data_id} 失败（HTTP {status}）")
+    try:
+        document = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Nacos Config {data_id} 不是有效 JSON") from exc
+    if not isinstance(document, dict):
+        raise RuntimeError(f"Nacos Config {data_id} 必须是 JSON 对象")
+    return document
+
+
+def validate_monitor_topology(document: dict) -> None:
+    nodes = document.get("nodes")
+    services = document.get("services")
+    if not isinstance(nodes, dict) or not nodes or not isinstance(services, list):
+        raise RuntimeError("监控拓扑必须包含非空 nodes 对象和 services 数组")
+    ids = set()
+    selectors = set()
+    for service in services:
+        if not isinstance(service, dict) or not all(
+            isinstance(service.get(key), str) and service[key]
+            for key in ("id", "name", "component", "node", "project", "container_service")
+        ):
+            raise RuntimeError("监控拓扑中的服务字段不完整")
+        if service["node"] not in nodes or service["id"] in ids:
+            raise RuntimeError("监控拓扑服务节点不存在或 id 重复")
+        selector = (service["node"], service["project"], service["container_service"])
+        if selector in selectors:
+            raise RuntimeError("监控拓扑容器选择器重复")
+        ids.add(service["id"])
+        selectors.add(selector)
+
+
+def monitor_seed_topology(node_id: str, control_dir: Path, seed_path: Path | None = None) -> dict:
+    root = Path(__file__).resolve().parents[1] / "microservices"
+    topology_path = seed_path or (
+        root / "services.tc-dual.json"
+        if node_id in {"tc-1", "tc-2"}
+        else control_dir / "services.json"
+    )
+    topology = json.loads(topology_path.read_text(encoding="utf-8"))
+    validate_monitor_topology(topology)
+    return topology
+
+
+def sync_monitor_documents(
+    server: str, *, namespace: str, group: str, token: str, timeout: float,
+    local_env: Mapping[str, str], control_dir: Path, seed_node_id: str,
+    seed_topology_path: Path | None = None,
+) -> None:
+    topology_id = str(local_env.get("NACOS_MONITOR_TOPOLOGY_DATA_ID") or "x-sentinel-monitor-topology.json")
+    nodes_id = str(local_env.get("NACOS_MONITOR_NODES_DATA_ID") or "x-sentinel-monitor-nodes.json")
+    address = str(local_env.get("NACOS_ADVERTISE_IP", "")).strip()
+    if not address:
+        raise RuntimeError("无法管理监控节点映射：NACOS_ADVERTISE_IP 为空")
+    topology = load_json_document(server, namespace=namespace, group=group,
+                                  data_id=topology_id, token=token, timeout=timeout)
+    if topology is None:
+        seed_node_id = seed_node_id or "local"
+        topology = monitor_seed_topology(seed_node_id, control_dir, seed_topology_path)
+        if seed_node_id not in topology["nodes"]:
+            raise RuntimeError(
+                f"节点 {seed_node_id} 不在初始监控拓扑中；请用 KJ_AUTO_X_TOPOLOGY_FILE 指定包含该节点的文件"
+            )
+        publish(server, namespace=namespace, group=group, data_id=topology_id,
+                content=topology, token=token, timeout=timeout)
+    validate_monitor_topology(topology)
+    nodes = load_json_document(server, namespace=namespace, group=group,
+                               data_id=nodes_id, token=token, timeout=timeout)
+    if nodes is None:
+        nodes = {"nodes": {}}
+    entries = nodes.get("nodes")
+    if not isinstance(entries, dict):
+        raise RuntimeError(f"Nacos Config {nodes_id} 缺少 nodes 对象")
+    if seed_node_id:
+        if seed_node_id not in topology["nodes"]:
+            raise RuntimeError(f"节点 {seed_node_id} 不在 Nacos 监控拓扑中")
+        occupied = [name for name, item in entries.items() if name != seed_node_id
+                    and isinstance(item, dict) and item.get("advertise_ip") == address]
+        if occupied:
+            raise RuntimeError(f"地址 {address} 已绑定监控节点 {occupied[0]}")
+        if seed_node_id in entries and entries[seed_node_id] != {"advertise_ip": address}:
+            raise RuntimeError(
+                f"Nacos 节点 {seed_node_id} 已绑定其他地址；请先在 {nodes_id} 中更新"
+            )
+        if seed_node_id not in entries:
+            entries[seed_node_id] = {"advertise_ip": address}
+            publish(server, namespace=namespace, group=group, data_id=nodes_id,
+                    content=nodes, token=token, timeout=timeout)
+    matches = [name for name, item in entries.items() if isinstance(item, dict)
+               and item.get("advertise_ip") == address]
+    if len(matches) != 1 or matches[0] not in topology["nodes"]:
+        raise RuntimeError(f"Nacos 监控节点映射未将 {address!r} 唯一绑定到拓扑节点；首次安装需指定 KJ_AUTO_X_MONITOR_NODE_ID")
+    print(f"Nacos 监控配置已同步: {topology_id}, {nodes_id}（本机节点 {matches[0]}）")
+
+
 def publish(
     server: str,
     *,
@@ -675,6 +781,9 @@ def main() -> int:
     parser.add_argument("--group")
     parser.add_argument("--data-id")
     parser.add_argument("--control-plane-dir", type=Path)
+    parser.add_argument("--sync-monitor", action="store_true")
+    parser.add_argument("--monitor-node-id", default="")
+    parser.add_argument("--monitor-topology-file", type=Path)
     parser.add_argument("--username")
     parser.add_argument("--password")
     parser.add_argument("--timeout", type=float)
@@ -792,6 +901,15 @@ def main() -> int:
     resolve_data_endpoints(merged, local_env)
     if args.production or str(local_env.get("ENVIRONMENT", "")).strip().lower() == "production":
         validate_production_config(merged)
+    if args.sync_monitor:
+        if not args.control_plane_dir:
+            raise RuntimeError("同步监控配置需要 --control-plane-dir")
+        sync_monitor_documents(
+            server, namespace=namespace, group=group, token=token, timeout=timeout,
+            local_env=local_env, control_dir=args.control_plane_dir,
+            seed_node_id=args.monitor_node_id,
+            seed_topology_path=args.monitor_topology_file,
+        )
     publish(
         server,
         namespace=namespace,

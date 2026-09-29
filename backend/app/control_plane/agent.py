@@ -12,9 +12,8 @@ from app import __version__
 from app.control_plane.config import (
     Service,
     Topology,
-    apply_runtime_topology,
-    load_runtime_config,
-    load_topology,
+    load_monitor_node_id,
+    load_monitor_topology,
     runtime_float,
 )
 from app.control_plane.contracts import ResourceSnapshot
@@ -144,7 +143,6 @@ class DockerCollector:
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        local_topology = load_topology()
         bootstrap_timeout = runtime_float(
             {},
             "nacos_config_timeout_seconds",
@@ -162,11 +160,8 @@ def create_app() -> FastAPI:
                 os.environ.get("NACOS_USERNAME", ""),
                 os.environ.get("NACOS_PASSWORD", ""),
             )
-            runtime = await load_runtime_config(bootstrap_nacos)
-        topology = apply_runtime_topology(local_topology, runtime)
-        node = os.environ.get("MONITOR_NODE_ID", "local")
-        if node not in topology.nodes:
-            raise ValueError("MONITOR_NODE_ID is not in the static topology")
+            topology = await load_monitor_topology(bootstrap_nacos)
+            node = await load_monitor_node_id(bootstrap_nacos, topology)
         async with httpx.AsyncClient(
             timeout=topology.timeout_seconds, trust_env=False
         ) as http_nacos:
@@ -187,9 +182,7 @@ def create_app() -> FastAPI:
                 nacos=nacos,
             )
             ip, port = advertise_identity()
-            service_name = os.environ.get(
-                "NACOS_SERVICE_NAME", f"xsentinel-monitor-agent-{node}"
-            )
+            service_name = os.environ.get("NACOS_SERVICE_NAME") or topology.nodes[node].agent_service_name
             registration = NacosServiceRegistration(
                 http_nacos,
                 nacos,

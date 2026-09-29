@@ -24,9 +24,9 @@ _NACOS_BOOTSTRAP_KEYS = {
     "nacos_config_required",
 }
 
-# A control-plane process has a host-specific identity and local key/socket
-# paths.  Keep those values in its environment; only shared tuning is read
-# from the Nacos document.
+# This filter applies to the shared application document. Monitor topology and
+# the node-to-address mapping have their own Nacos Data IDs below. Key/socket
+# paths and Nacos bootstrap coordinates remain local to the process.
 _NACOS_CONTROL_LOCAL_KEYS = {
     "environment",
     "debug",
@@ -239,50 +239,63 @@ def load_topology() -> Topology:
     return Topology.model_validate(json.loads(path.read_text()))
 
 
-def apply_runtime_topology(topology: Topology, runtime: Mapping[str, Any]) -> Topology:
-    """Apply bounded Nacos tuning without changing service/node selectors."""
+async def load_monitor_topology(nacos: Any | None) -> Topology:
+    """Read the complete monitoring topology from its own Nacos Data ID."""
 
-    updates = {
-        "interval_seconds": runtime_float(
-            runtime,
-            "monitor_interval_seconds",
-            "MONITOR_INTERVAL_SECONDS",
-            topology.interval_seconds,
-            minimum=3,
-            maximum=60,
-        ),
-        "stale_seconds": runtime_float(
-            runtime,
-            "monitor_stale_seconds",
-            "MONITOR_STALE_SECONDS",
-            topology.stale_seconds,
-            minimum=10,
-            maximum=300,
-        ),
-        "timeout_seconds": runtime_float(
-            runtime,
-            "monitor_timeout_seconds",
-            "MONITOR_TIMEOUT_SECONDS",
-            topology.timeout_seconds,
-            minimum=0.1,
-            maximum=10,
-        ),
-        "concurrency": runtime_int(
-            runtime,
-            "monitor_concurrency",
-            "MONITOR_CONCURRENCY",
-            topology.concurrency,
-            minimum=1,
-            maximum=32,
-        ),
-    }
+    enabled = _as_bool(os.environ.get("NACOS_CONFIG_ENABLED"), default=True)
+    required = _as_bool(os.environ.get("NACOS_CONFIG_REQUIRED"), default=False)
+    if not enabled:
+        return load_topology()
+    if nacos is None:
+        if required:
+            raise RuntimeError("NACOS_SERVER_ADDR is required for monitor topology")
+        return load_topology()
+    data_id = os.environ.get("NACOS_MONITOR_TOPOLOGY_DATA_ID", "x-sentinel-monitor-topology.json").strip()
+    group = (os.environ.get("NACOS_CONFIG_GROUP") or os.environ.get("NACOS_GROUP") or "X_SENTINEL").strip()
     try:
-        return Topology.model_validate(topology.model_dump(mode="python") | updates)
-    except ValueError as exc:
-        # A bad combination (for example stale <= interval) must not prevent
-        # the monitor from starting with its last known-good local topology.
-        logger.warning("Invalid remote monitor tuning: %s; using local topology", exc)
-        return topology
+        payload = await nacos.get_json_config(data_id, group=group)
+        if payload is None:
+            raise ValueError(f"Nacos Config {data_id!r} is absent")
+        return Topology.model_validate(payload)
+    except Exception as exc:
+        if required:
+            raise RuntimeError(f"Unable to load monitor topology {data_id!r}: {exc}") from exc
+        logger.warning("Unable to load monitor topology %s: %s; using local file", data_id, exc)
+        return load_topology()
+
+
+async def load_monitor_node_id(nacos: Any | None, topology: Topology) -> str:
+    """Resolve local identity from a separate Nacos node-address document."""
+
+    enabled = _as_bool(os.environ.get("NACOS_CONFIG_ENABLED"), default=True)
+    required = _as_bool(os.environ.get("NACOS_CONFIG_REQUIRED"), default=False)
+    address = os.environ.get("NACOS_ADVERTISE_IP", "").strip()
+    if enabled and nacos is not None and address:
+        data_id = os.environ.get("NACOS_MONITOR_NODES_DATA_ID", "x-sentinel-monitor-nodes.json").strip()
+        group = (os.environ.get("NACOS_CONFIG_GROUP") or os.environ.get("NACOS_GROUP") or "X_SENTINEL").strip()
+        try:
+            payload = await nacos.get_json_config(data_id, group=group)
+            if not isinstance(payload, Mapping) or not isinstance(payload.get("nodes"), Mapping):
+                raise ValueError("nodes mapping is absent")
+            matches = [
+                node_id for node_id, entry in payload["nodes"].items()
+                if isinstance(entry, Mapping) and entry.get("advertise_ip") == address
+            ]
+            if len(matches) != 1 or matches[0] not in topology.nodes:
+                raise ValueError(f"address {address!r} must map to exactly one topology node")
+            return matches[0]
+        except Exception as exc:
+            if required:
+                raise RuntimeError(f"Unable to resolve monitor node from {data_id!r}: {exc}") from exc
+            logger.warning("Unable to resolve monitor node from %s: %s; using local identity", data_id, exc)
+    elif enabled and required:
+        raise RuntimeError("NACOS_ADVERTISE_IP is required for Nacos monitor node mapping")
+    node_id = os.environ.get("MONITOR_NODE_ID", "local").strip()
+    if node_id not in topology.nodes:
+        raise ValueError("MONITOR_NODE_ID is not in monitor topology")
+    return node_id
+
+
 
 
 def read_secret(env: str) -> str:

@@ -4,13 +4,14 @@ import pytest
 
 from app.control_plane.config import (
     Topology,
-    apply_runtime_topology,
     load_runtime_config,
+    load_monitor_topology,
+    load_monitor_node_id,
 )
 
 
 @pytest.mark.asyncio
-async def test_control_plane_reads_shared_tuning_and_filters_local_identity(monkeypatch) -> None:
+async def test_control_plane_reads_shared_auth_tuning_and_filters_local_identity(monkeypatch) -> None:
     class FakeNacos:
         async def get_json_config(self, data_id: str, *, group: str):
             assert data_id == "runtime.json"
@@ -32,8 +33,6 @@ async def test_control_plane_reads_shared_tuning_and_filters_local_identity(monk
     monkeypatch.setenv("NACOS_CONFIG_GROUP", "CONFIG_GROUP")
     runtime = await load_runtime_config(FakeNacos())
 
-    assert runtime["monitor_interval_seconds"] == 7
-    assert runtime["monitor_concurrency"] == 12
     assert runtime["service_auth_rate_limit"] == 240
     assert runtime["service_auth_token_lifetime_seconds"] == 180
     assert "nacos_password" not in runtime
@@ -57,37 +56,48 @@ async def test_control_plane_config_required_controls_failure(monkeypatch) -> No
         await load_runtime_config(None)
 
 
-def test_remote_monitor_tuning_preserves_static_topology() -> None:
-    topology = Topology(
-        nodes={"local": {}},
-        services=[],
-        interval_seconds=10,
-        stale_seconds=45,
-        timeout_seconds=3,
-        concurrency=8,
-    )
-    updated = apply_runtime_topology(
-        topology,
-        {
-            "monitor_interval_seconds": "6",
-            "monitor_stale_seconds": "24",
-            "monitor_timeout_seconds": "1.5",
-            "monitor_concurrency": "16",
+@pytest.mark.asyncio
+async def test_monitor_uses_separate_nacos_topology_and_address_mapping(monkeypatch) -> None:
+    documents = {
+        "x-sentinel-monitor-topology.json": {
+            "interval_seconds": 10, "stale_seconds": 45,
+            "timeout_seconds": 3, "concurrency": 8,
+            "nodes": {"tc-1": {"agent_service_name": "xsentinel-monitor-agent-tc-1"}},
+            "services": [{
+                "id": "tc1-agent", "name": "Agent", "component": "monitor",
+                "node": "tc-1", "project": "x-sentinel",
+                "container_service": "monitor-agent", "port": 9101,
+            }],
         },
-    )
+        "x-sentinel-monitor-nodes.json": {
+            "nodes": {"tc-1": {"advertise_ip": "203.0.113.10"}}
+        },
+    }
 
-    assert updated.nodes == topology.nodes
-    assert updated.services == topology.services
-    assert updated.interval_seconds == 6
-    assert updated.stale_seconds == 24
-    assert updated.timeout_seconds == 1.5
-    assert updated.concurrency == 16
+    class FakeNacos:
+        async def get_json_config(self, data_id: str, *, group: str):
+            assert group == "X_SENTINEL"
+            return documents.get(data_id)
+
+    monkeypatch.setenv("NACOS_CONFIG_ENABLED", "true")
+    monkeypatch.setenv("NACOS_CONFIG_REQUIRED", "true")
+    monkeypatch.setenv("NACOS_ADVERTISE_IP", "203.0.113.10")
+    topology = await load_monitor_topology(FakeNacos())
+    assert topology.services[0].id == "tc1-agent"
+    assert await load_monitor_node_id(FakeNacos(), topology) == "tc-1"
+
+    documents["x-sentinel-monitor-nodes.json"]["nodes"]["tc-1"]["advertise_ip"] = "203.0.113.11"
+    with pytest.raises(RuntimeError, match="Unable to resolve monitor node"):
+        await load_monitor_node_id(FakeNacos(), topology)
 
 
-def test_invalid_remote_monitor_combination_uses_local_topology() -> None:
-    topology = Topology(nodes={"local": {}}, services=[])
-    updated = apply_runtime_topology(
-        topology,
-        {"monitor_interval_seconds": 30, "monitor_stale_seconds": 20},
-    )
-    assert updated == topology
+@pytest.mark.asyncio
+async def test_required_monitor_topology_has_no_silent_local_fallback(monkeypatch) -> None:
+    class MissingNacos:
+        async def get_json_config(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setenv("NACOS_CONFIG_ENABLED", "true")
+    monkeypatch.setenv("NACOS_CONFIG_REQUIRED", "true")
+    with pytest.raises(RuntimeError, match="Unable to load monitor topology"):
+        await load_monitor_topology(MissingNacos())

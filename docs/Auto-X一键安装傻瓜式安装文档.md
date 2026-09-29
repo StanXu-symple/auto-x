@@ -65,6 +65,17 @@ chmod +x kejilion.sh
 
 两台机器使用同一个 Nacos Data ID、namespace 和 group。第一次安装会生成数据库密码、Redis 密码、管理员密码、JWT/X 密钥、认证中心密钥和服务客户端凭据并发布到 Nacos；第二台安装时会复用 Nacos 中已有值。
 
+监控配置单独使用两个 Data ID，均在同一个 `public` namespace、`X_SENTINEL` group 中：
+
+| Data ID | 内容 | 来源与作用 |
+| --- | --- | --- |
+| `x-sentinel-monitor-topology.json` | 完整的 `services.tc-dual.json` JSON：采集周期、超时、节点、12 个服务 | 首台安装时初始化；之后由 Nacos 管理，monitor-center 和 monitor-agent 启动时直接读取。 |
+| `x-sentinel-monitor-nodes.json` | `{"nodes":{"tc-1":{"advertise_ip":"..."},"tc-2":{"advertise_ip":"..."}}}` | 安装器将节点 ID 和检测到的本机公网注册地址绑定；agent 按本机 `NACOS_ADVERTISE_IP` 找到自己对应的节点 ID。 |
+
+`x-sentinel-config.json` 继续保存其他应用运行配置，不再用来控制监控拓扑。`MONITOR_STALE_SECONDS` 仍用于 backend 判断监控快照是否过期；拓扑自身的 `stale_seconds` 在新的拓扑 Data ID 中。两份新配置是合法 JSON，直接在 Nacos 控制台编辑，不要写 JSON 注释。修改后重启 monitor-center 和相关 monitor-agent 才会加载新值。
+
+首次安装时命令中的 `KJ_AUTO_X_MONITOR_NODE_ID` 只用于在 Nacos 中登记这台机器；`KJ_AUTO_X_TOPOLOGY_FILE` 只在 Nacos 尚无拓扑时提供初始内容。它们不再作为本机运行配置。之后运行安装器更新时，Nacos 已有的拓扑和节点地址为准，不会被本地文件覆盖。Nacos 连接地址、命名空间和凭据仍是安装器必须保存的连接引导信息，`NACOS_ADVERTISE_IP` 仍由安装器自动探测。
+
 ## 四、在 tc-2 安装核心服务
 
 登录 tc-2：
@@ -164,7 +175,7 @@ Nacos 用户名：    nacos
 Nacos 密码：      输入实际 Nacos 密码
 ```
 
-安装器会自动探测本机注册地址，并把 tc-1 的 monitor-agent、monitor-center 和 xhs-worker 注册到 Nacos。通常不需要手工填写 `NACOS_ADVERTISE_IP`。以上两条启动命令中的节点 ID 和双节点拓扑必须分别照写；否则两台监控 agent 都会按单机默认值 `local` 注册，监控中心无法正确区分主机。
+安装器会自动探测本机注册地址，并把 tc-1 的 monitor-agent、monitor-center 和 xhs-worker 注册到 Nacos。通常不需要手工填写 `NACOS_ADVERTISE_IP`。首次建立这套双节点配置时，上述启动命令中的节点 ID 和双节点拓扑必须分别照写；安装器先写入两份独立的 Nacos 配置，再启动监控服务。以后更新时从 Nacos 读取，节点 ID 不再保存在本机 `.env` 中。
 
 安装结束后检查：
 
@@ -310,7 +321,7 @@ docker logs --tail 200 x-sentinel-monitor-agent-1
 
 ### 想重新安装但不想复用旧 Nacos 配置
 
-在 Nacos 控制台删除或清空 `x-sentinel-config.json` 后，再执行安装。这样安装器会重新生成缺失配置；如果保留该 Data ID，安装器会按照“远端优先”继续复用其中已有值。
+在 Nacos 控制台删除或清空 `x-sentinel-config.json` 后，再执行安装。这样安装器会重新生成缺失的应用配置；如果保留该 Data ID，安装器会按照“远端优先”继续复用其中已有值。监控拓扑和节点映射分别保存在另外两个 Data ID 中；重置应用配置不会自动重置它们。
 
 ## 八、最短操作清单
 
