@@ -15,6 +15,7 @@ from app.core.time import as_utc
 from app.models.monitored_user import MonitoredUser
 from app.models.qq import QQBotAccount, QQDelivery, QQNotificationTarget, QQTargetSubscription
 from app.models.tweet import Tweet
+from app.schemas.qq import normalize_message_template
 from app.services.x_credentials import (
     XCredentialUnavailableError,
     decrypt_token,
@@ -77,7 +78,7 @@ def render_qq_message(
     }
     if template_variables:
         values.update(template_variables)
-    message = template.format_map(values).strip()
+    message = normalize_message_template(template, template_variables).format_map(values).strip()
     if len(message) <= QQ_MESSAGE_MAX_CHARS:
         return message
     return message[: QQ_MESSAGE_MAX_CHARS - 3].rstrip() + "..."

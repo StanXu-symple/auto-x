@@ -14,6 +14,16 @@ ALLOWED_TEMPLATE_FIELDS = {"title", "author", "username", "text", "url", "posted
 RESERVED_TEMPLATE_FIELDS = ALLOWED_TEMPLATE_FIELDS
 
 
+def normalize_message_template(value: str, variables: dict[str, str] | None = None) -> str:
+    """Accept legacy UI double braces for known placeholders only."""
+    allowed = ALLOWED_TEMPLATE_FIELDS | set(variables or {})
+    return re.sub(
+        r"(?<!\{)\{\{([a-z][a-z0-9_]*)\}\}(?!\})",
+        lambda match: "{" + match[1] + "}" if match[1] in allowed else match[0],
+        value,
+    )
+
+
 def validate_template_variables(value: dict[str, str]) -> dict[str, str]:
     cleaned: dict[str, str] = {}
     for key, item in value.items():
@@ -24,7 +34,7 @@ def validate_template_variables(value: dict[str, str]) -> dict[str, str]:
 
 
 def validate_message_template(value: str) -> str:
-    value = value.strip()
+    value = normalize_message_template(value.strip())
     if not value:
         raise ValueError("Message template cannot be empty")
     fields = {field for _, field, _, _ in Formatter().parse(value) if field}
@@ -114,6 +124,9 @@ class QQTargetCreate(APIModel):
         if not self.message_template:
             raise ValueError("Message template cannot be empty")
         self.template_variables = validate_template_variables(self.template_variables)
+        self.message_template = normalize_message_template(
+            self.message_template, self.template_variables
+        )
         fields = {field for _, field, _, _ in Formatter().parse(self.message_template) if field}
         unknown = fields - ALLOWED_TEMPLATE_FIELDS - set(self.template_variables)
         if unknown:
@@ -150,6 +163,9 @@ class QQTargetUpdate(APIModel):
         if self.template_variables is not None:
             self.template_variables = validate_template_variables(self.template_variables)
         if self.message_template is not None:
+            self.message_template = normalize_message_template(
+                self.message_template, self.template_variables
+            )
             if not self.message_template:
                 raise ValueError("Message template cannot be empty")
             fields = {field for _, field, _, _ in Formatter().parse(self.message_template) if field}
