@@ -267,6 +267,8 @@ ctr -n moby content active
 
 用户确认后改用官方 `ghcr.io` 拉取同一 SHA；首次尝试在连接 `pkg-containers.githubusercontent.com` 时遇到 `TLS handshake timeout`，尚未传输镜像层。后续探测该域名各 IPv4 的 TCP 与 TLS 总建连耗时约 0.4～11.4 秒，TLS 阶段约 0.2～8.1 秒；这些后续成功探测未复现超时，只说明连接时延存在波动。Docker 未配置出站代理。遇到此错误先报告，保留临时层，确认是否重试；不要改动业务容器、Nacos 或数据库来处理镜像下载问题。下载成功后再检查镜像 ID、重新标记为安装器使用的镜像地址，并使用 `KJ_AUTO_X_SKIP_PULL=1` 通过原菜单更新。
 
+官方源的下一次无超时拉取于 2026-09-30 19:16 因 `read: connection reset by peer` 退出，临时层留在约 577.9 MB。该退出来自传输连接重置，不是安装器 900 秒上限；完整镜像尚不存在。用户确认后保留该层重试同一官方 SHA。重试前只归档原后台任务的 `.log`、`.exit`、`.pid` 记录，不删除 containerd 临时层；新任务使用 `nohup docker pull` 的监护 shell，不加 `timeout`。检查当前 `.exit` 是否存在、进程是否活跃及日志错误，不能把残留 SIZE 当成下载仍在运行。无超时不能避免网络错误，出现新的失败仍先报告确认。
+
 ### Nacos 缺失配置的升级补齐
 
 旧部署的 Nacos 文档不会随源码模板自动增加字段。本次检查发现共享运行配置缺少 5 项 Camoufox 配置，独立监控拓扑仍只有 12 项，缺少浏览器实例。更新前保存 Nacos 的原共享配置和监控拓扑作为受限备份；安装器通过 `infra/scripts/nacos-config.py` 补齐以下默认值，已有 Nacos 配置值保留：
@@ -282,3 +284,5 @@ ctr -n moby content active
 安装器将本次所选服务传入 `--monitor-services`；只有选中 `camoufox-worker` 且 Nacos 拓扑缺少本节点相应容器选择器时，才向 `x-sentinel-monitor-topology.json` 增加浏览器监控记录。tc-1 使用 `tc1-camoufox-worker`，默认端口 8007，若设置了节点映射端口则使用 `CAMOUFOX_WORKER_HOST_PORT`。已有监控记录、采集周期、节点映射与自定义端口保留；重复更新不会新增重复记录。已有服务 ID 被其他记录占用时先报错，不覆盖配置。
 
 先发布并刷新应用定义和 Auto-X `main` 源码，再运行本节中的同一更新入口。配置由安装器同步到 Nacos；应用启动时读取 Nacos 的生效值。升级修复只修改配置同步程序、安装器和文档，仍使用已发布且正在下载的 `sha-936774a32ec78c7a73987d65b5ea8968f032c80f` 运行镜像。验收共享配置包含上述 5 项，监控拓扑包含 13 项且浏览器实例健康。
+
+2026-09-30 已发布配置同步修复 `495970e`（Auto-X dev/main）和应用定义 `d9ac418`（apps stanxu），针对配置默认值保留、拓扑追加、重复执行和 ID 冲突的 29 项测试通过。两台均已刷新安装器；从安装器执行源码刷新与配置同步阶段，下载继续在后台运行。原三个 Nacos Data ID 备份位于 tc-1 的 `/home/docker/auto-x/backups/pre-camoufox-nacos-20260930/`，文件权限 600。写入后逐项比较：原运行配置值、12 项监控记录、采集设置和两节点映射保留，新增 5 项运行默认值及 `tc1-camoufox-worker`（8007）记录。浏览器容器及监控健康仍须在镜像下载、安装器更新完成后验收。
