@@ -1,0 +1,21 @@
+services:
+  camoufox-worker:
+    extends:
+      file: docker-compose.microservices.yml
+      service: camoufox-worker
+    ports: !override
+      - "${CAMOUFOX_WORKER_BIND_IP:-0.0.0.0}:${CAMOUFOX_WORKER_HOST_PORT:-8007}:8007"
+
+networks:
+  control:
+    name: ${CONTROL_NETWORK_NAME:-x-sentinel-control}
+    external: ${CONTROL_NETWORK_EXTERNAL:-true}
+  app:
+    name: ${APP_NETWORK_NAME:-x-sentinel_app}
+    external: ${APP_NETWORK_EXTERNAL:-true}
+  data:
+    name: ${DATA_NETWORK_NAME:-x-sentinel_data}
+    external: ${DATA_NETWORK_EXTERNAL:-true}
+  monitoring:
+    name: ${MONITORING_NETWORK_NAME:-x-sentinel_monitoring}
+    external: ${MONITORING_NETWORK_EXTERNAL:-true}

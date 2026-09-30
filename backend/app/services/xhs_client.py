@@ -44,8 +44,14 @@ def validated_source(value: str, admin_id: int) -> Path:
 
 
 class XHSServiceClient:
+    client_id = "backend"
+    audience = "xhs-worker"
+    namespace = "xhs"
+    request_model = XHSJobRequest
+
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.service_name = settings.xhs_service_name
         self.http = httpx.AsyncClient(timeout=10, trust_env=False)
         self.nacos = NacosClient(
             self.http,
@@ -58,20 +64,20 @@ class XHSServiceClient:
         self.tokens = TokenClient(
             self.http,
             settings.service_auth_url,
-            "backend",
+            self.client_id,
             settings.service_client_secret_file,
             nacos=self.nacos,
         )
 
     async def endpoint(self, admin_id: int) -> Instance:
-        instances = await self.nacos.discover_all(self.settings.xhs_service_name)
+        instances = await self.nacos.discover_all(self.service_name)
         # Deterministic account affinity across API replicas; each submitted job is pinned.
         return max(
             instances, key=lambda i: hashlib.sha256(f"{admin_id}:{i.ip}:{i.port}".encode()).digest()
         )
 
     async def headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {await self.tokens.token('xhs-worker')}"}
+        return {"Authorization": f"Bearer {await self.tokens.token(self.audience)}"}
 
     async def status(self) -> dict:
         try:
@@ -86,11 +92,11 @@ class XHSServiceClient:
         try:
             # Routing is shared in Redis, so polling through another API replica still
             # reaches the original browser even if Nacos membership has changed.
-            raw = await redis.get(f"xsentinel:xhs:http:active:{admin_id}")
+            raw = await redis.get(f"xsentinel:{self.namespace}:http:active:{admin_id}")
             if not raw:
                 return {"required": False}
             route = json.loads(raw)
-            target = Instance(route["ip"], int(route["port"]), self.settings.xhs_service_name)
+            target = Instance(route["ip"], int(route["port"]), self.service_name)
             response = await self.http.get(
                 f"{target.url}/v1/verification/{admin_id}",
                 params={"version": version} if version else {},
@@ -102,7 +108,13 @@ class XHSServiceClient:
             raise XHSWorkerUnavailableError("小红书验证码服务暂不可用") from exc
 
     async def submit(
-        self, *, operation: str, admin_id: int, payload: dict, timeout_seconds: float
+        self,
+        *,
+        operation: str,
+        admin_id: int,
+        payload: dict,
+        timeout_seconds: float,
+        job_id: str | None = None,
     ) -> dict:
         try:
             async with asyncio.timeout(timeout_seconds):
@@ -115,7 +127,9 @@ class XHSServiceClient:
                         for image in body.pop("images", [])
                     ]
                     body["image_count"] = len(paths)
-                job = XHSJobRequest(job_id=uuid.uuid4().hex, admin_id=admin_id, payload=body)
+                job = self.request_model(
+                    job_id=job_id or uuid.uuid4().hex, admin_id=admin_id, payload=body
+                )
                 with ExitStack() as files:
                     response = await self.http.post(
                         f"{target.url}/v1/jobs",
@@ -138,7 +152,10 @@ class XHSServiceClient:
                     raise XHSJobFailedError("该小红书账号已有任务执行中，请等待完成")
                 response.raise_for_status()
                 state = XHSJobState.model_validate(response.json())
+                if state.job_id != job.job_id:
+                    raise ValueError("Unexpected job response")
                 while state.state == "running":
+                    await self.poll_verification(target, admin_id)
                     await asyncio.sleep(1)
                     response = await self.http.get(
                         f"{target.url}/v1/jobs/{job.job_id}",
@@ -161,6 +178,9 @@ class XHSServiceClient:
             raise XHSWorkerUnavailableError(
                 "小红书微服务不可用或响应无效，请检查 Nacos 和服务日志"
             ) from exc
+
+    async def poll_verification(self, target, admin_id):
+        pass
 
     async def aclose(self):
         await self.http.aclose()

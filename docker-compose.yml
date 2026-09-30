@@ -87,6 +87,11 @@ x-backend: &backend-common
     QQ_WORKER_METRICS_PORT: "8004"
     XHS_JOB_TIMEOUT_SECONDS: ${XHS_JOB_TIMEOUT_SECONDS:-300}
     XHS_JOB_RESULT_TTL_SECONDS: ${XHS_JOB_RESULT_TTL_SECONDS:-300}
+    CAMOUFOX_SERVICE_NAME: ${CAMOUFOX_SERVICE_NAME:-xsentinel-camoufox-worker}
+    CAMOUFOX_BROWSER_POOL_SIZE: ${CAMOUFOX_BROWSER_POOL_SIZE:-1}
+    CAMOUFOX_MAX_CONCURRENCY: ${CAMOUFOX_MAX_CONCURRENCY:-1}
+    CAMOUFOX_JOB_TIMEOUT_SECONDS: ${CAMOUFOX_JOB_TIMEOUT_SECONDS:-290}
+    CAMOUFOX_JOB_RESULT_TTL_SECONDS: ${CAMOUFOX_JOB_RESULT_TTL_SECONDS:-600}
     XHS_BROWSER_POOL_SIZE: ${XHS_BROWSER_POOL_SIZE:-1}
     XHS_BROWSER_MAX_CONCURRENCY: ${XHS_BROWSER_MAX_CONCURRENCY:-1}
     XHS_WORKER_HEARTBEAT_TTL_SECONDS: ${XHS_WORKER_HEARTBEAT_TTL_SECONDS:-30}
@@ -505,19 +510,19 @@ services:
     image: ${XHS_WORKER_IMAGE:-x-sentinel-xhs-worker}:${IMAGE_TAG:-latest}
     environment:
       <<: *backend-environment
-      HOME: /var/lib/xsentinel/xhs-home
       SERVICE_NAME: xhs-worker
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
+      SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/xhs-worker.secret
     command:
       - python
       - -m
       - app.xhs_worker
-    shm_size: 512m
     tmpfs:
       - /tmp:size=256m,mode=1777
     volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/xhs-worker.secret:/run/xsentinel/xhs-worker.secret:ro
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
       - article_uploads:/var/lib/xsentinel/article-uploads:ro
-      - xhs_home:/var/lib/xsentinel/xhs-home
       - runtime_logs:/var/log/xsentinel
     expose:
       - "8005"
@@ -537,6 +542,53 @@ services:
       retries: 5
       start_period: 60s
     stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512m
+        reservations:
+          memory: 128m
+
+
+  camoufox-worker:
+    <<: *backend-common
+    build:
+      context: ./backend
+      target: camoufox-worker
+    image: ${CAMOUFOX_WORKER_IMAGE:-x-sentinel-camoufox-worker}:${IMAGE_TAG:-latest}
+    command: ["uvicorn", "app.camoufox_service:app", "--host", "0.0.0.0", "--port", "8007"]
+    environment:
+      <<: *backend-environment
+      SERVICE_NAME: camoufox-worker
+      HOME: /var/lib/xsentinel/xhs-home
+      CAMOUFOX_HOME: /var/lib/xsentinel/xhs-home
+      XHS_UPLOAD_DIR: /var/lib/xsentinel/camoufox-uploads
+      CAMOUFOX_SERVICE_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
+      CAMOUFOX_SERVICE_ADVERTISE_PORT: ${CAMOUFOX_WORKER_HOST_PORT:-8007}
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
+    shm_size: 512m
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    volumes:
+      # Transfer exclusive ownership of the existing persistent profiles.
+      - xhs_home:/var/lib/xsentinel/xhs-home
+      - camoufox_uploads:/var/lib/xsentinel/camoufox-uploads
+      - runtime_logs:/var/log/xsentinel
+    expose: ["8007"]
+    ports: ["${CAMOUFOX_WORKER_BIND_IP:-0.0.0.0}:${CAMOUFOX_WORKER_HOST_PORT:-8007}:8007"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      log-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8007/health/live', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 45s
     deploy:
       resources:
         limits:
@@ -775,6 +827,7 @@ volumes:
   xhs_uploads:
   article_uploads:
   xhs_home:
+  camoufox_uploads:
   postgres_data:
   redis_data:
   prometheus_data:

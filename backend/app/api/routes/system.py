@@ -27,7 +27,7 @@ async def log_systems(_: CurrentAdmin) -> list[dict[str, str]]:
 @router.get("/logs/stream", response_class=StreamingResponse)
 async def system_log_stream(
     _: StreamCurrentAdmin,
-    system: str = Query(pattern="^(backend|worker|ai-worker|qq-worker|xhs-worker)$"),
+    system: str = Query(pattern="^(backend|worker|ai-worker|qq-worker|xhs-worker|camoufox-worker)$"),
     tail: int = Query(default=200, ge=0, le=1000),
 ) -> StreamingResponse:
     return StreamingResponse(

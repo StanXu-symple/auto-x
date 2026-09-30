@@ -39,6 +39,9 @@ class XHSServiceStatus(BaseModel):
     installed: bool
     worker_id: str
     active_tasks: int = 0
+    browser_pool_size: int = 0
+    browser_pool_busy: int = 0
+    browser_pool_limit: int = 0
 
 
 class XHSVerification(BaseModel):

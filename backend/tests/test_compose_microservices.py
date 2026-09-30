@@ -151,3 +151,27 @@ def test_compose_config_resolves_control_plane_healthchecks() -> None:
     services = json.loads(result.stdout)["services"]
     for service, url in HEALTHCHECKS.items():
         assert services[service]["healthcheck"]["test"] == _expected_test(url)
+
+
+def test_camoufox_owns_browser_image_profiles_and_two_gib_limit():
+    base = (REPOSITORY_ROOT / 'docker-compose.yml').read_text()
+    browser = _service_block(base, 'camoufox-worker')
+    xhs = _service_block(base, 'xhs-worker')
+    assert 'memory: 2g' in browser
+    assert 'shm_size: 512m' in browser
+    assert 'target: camoufox-worker' in browser
+    assert 'xhs_home:/var/lib/xsentinel/xhs-home' in browser
+    assert 'xhs_home:' not in xhs
+    assert 'xhs-worker.secret:/run/xsentinel/xhs-worker.secret:ro' in xhs
+    assert 'private.pem' not in browser
+    assert '.secret:' not in browser
+    dockerfile = (REPOSITORY_ROOT / 'backend/Dockerfile').read_text()
+    browser_stage = dockerfile.split('FROM base AS camoufox-worker')[1].split('FROM base AS core')[0]
+    xhs_stage = dockerfile.split('FROM core AS xhs-worker')[1]
+    assert 'python -m camoufox fetch' in browser_stage
+    assert 'camoufox fetch' not in xhs_stage
+    micro = (REPOSITORY_ROOT / 'docker-compose.microservices.yml').read_text()
+    browser_micro = _service_block(micro, 'camoufox-worker')
+    assert 'NACOS_SERVICE_NAME: xsentinel-camoufox-worker' in browser_micro
+    assert 'NACOS_SERVICE_PORT: ${CAMOUFOX_WORKER_HOST_PORT:-8007}' in browser_micro
+    assert 'SERVICE_AUTH_URL:' in browser_micro

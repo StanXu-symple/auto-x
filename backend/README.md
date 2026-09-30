@@ -17,25 +17,24 @@ python -m app.ai_worker
 python -m app.xhs_worker
 ```
 
-All Xiaohongshu CLI and Camoufox operations run in the dedicated `xhs-worker`.
-In HTTP mode the API obtains an audience-scoped service Token from auth-center,
-discovers `xsentinel-xhs-worker` through Nacos, and sends authenticated publishing jobs to it.
-Worker diagnostics are available with:
+Xiaohongshu orchestration runs in `xhs-worker`. All local SDK calls, CLI
+subprocesses and persistent Camoufox/Firefox profiles now run in
+`camoufox-worker` (`uvicorn app.camoufox_service:app --port 8007`). XHS discovers
+`xsentinel-camoufox-worker` through Nacos and authenticates as `xhs-worker`,
+with audience `camoufox-worker` and scope `browser:execute`.
+
+The browser image alone downloads the Camoufox binary. Configure
+`CAMOUFOX_BROWSER_POOL_SIZE` and `CAMOUFOX_MAX_CONCURRENCY` in Nacos Config
+(default 1 each). Profiles use `CAMOUFOX_HOME`; Compose transfers exclusive
+ownership of the existing `xhs_home` volume to the browser container. Images
+and verification screenshots cross the service boundary via authenticated HTTP.
 
 ```bash
-docker logs --since 15m --timestamps x-sentinel-xhs-worker-1
-docker exec x-sentinel-xhs-worker-1 cat /sys/fs/cgroup/memory.events
+docker logs --since 15m --timestamps x-sentinel-camoufox-worker-1
+docker exec x-sentinel-camoufox-worker-1 cat /sys/fs/cgroup/memory.events
 ```
 
-Prometheus scrapes the worker on port `8005` inside the Compose network.
-
-The Xiaohongshu worker keeps browser profiles alive between jobs. Configure
-`XHS_BROWSER_POOL_SIZE` to cap the number of persistent Camoufox/Firefox
-instances (default `1`), and `XHS_BROWSER_MAX_CONCURRENCY` to cap concurrent
-publishing operations (default `1`). The limits are independent: increasing
-the pool allows more warm sessions, while the concurrency limit controls
-simultaneous business work. Profiles are stored below the worker's
-`XHS_CLI_HOME` directory and should be included in the persistent volume.
+See [browser API and upgrade instructions](../docs/camoufox-worker.md).
 
 Copy `.env.example` to `.env` and set the database, Redis, administrator, credential-encryption and
 service-auth values. `AUTO_CREATE_TABLES=true` offers an idempotent development path; production

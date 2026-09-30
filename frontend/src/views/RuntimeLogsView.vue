@@ -12,6 +12,7 @@ const fallback: RuntimeLogSystem[] = [
   { value: 'ai-worker', label: 'AI Worker' },
   { value: 'qq-worker', label: 'QQ Worker' },
   { value: 'xhs-worker', label: '小红书 Worker' },
+  { value: 'camoufox-worker', label: '浏览器 Worker' },
 ]
 const systems = ref(fallback)
 const selected = ref('worker')

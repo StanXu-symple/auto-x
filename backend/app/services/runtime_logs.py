@@ -13,6 +13,7 @@ LOG_SYSTEMS = {
     "ai-worker": "AI Worker",
     "qq-worker": "QQ Worker",
     "xhs-worker": "小红书 Worker",
+    "camoufox-worker": "浏览器 Worker",
 }
 LOG_DIR = Path(os.getenv("LOG_DIR", "/var/log/xsentinel"))
 

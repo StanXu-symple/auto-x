@@ -186,6 +186,7 @@ class Service(BaseModel):
         "ai_worker",
         "qq_worker",
         "xhs_worker",
+        "camoufox_worker",
         "auth",
         "monitor",
         "frontend",

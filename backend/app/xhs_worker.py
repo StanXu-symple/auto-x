@@ -4,10 +4,8 @@ import asyncio
 import json
 import logging
 import os
-import shutil
 import signal
 import socket
-import sys
 import time
 import uuid
 from contextlib import suppress
@@ -24,27 +22,23 @@ from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
 from app.db.session import AsyncSessionFactory, engine
 from app.services.article_media import article_delivery_media_path
+from app.services.camoufox_client import CamoufoxServiceClient
 from app.services.metrics import (
     XHS_JOB_DURATION,
     XHS_JOBS,
     XHS_QUEUE_DEPTH,
     XHS_WORKER_HEARTBEAT_METRIC,
 )
-from app.services.x_credentials import decrypt_token
-from app.services.xhs_browser_pool import XiaohongshuBrowserPool
+from app.services.x_credentials import encrypt_token
 from app.services.xhs_credentials import get_xhs_credentials
 from app.services.xhs_jobs import (
     XHS_JOB_QUEUE,
     XHS_WORKER_HEARTBEAT,
-    publish_error,
     xhs_response_key,
 )
 
 logger = logging.getLogger(__name__)
-XHS_STAGE_LOG_PREFIX = "XHS_STAGE "
-CLI_HOME_ROOT = Path(os.getenv("XHS_CLI_HOME") or os.getenv("HOME", "/tmp/xsentinel-xhs"))
 UPLOAD_DIR = Path(os.getenv("XHS_UPLOAD_DIR", "/var/lib/xsentinel/xhs-uploads"))
-CGROUP_MEMORY_ROOT = Path("/sys/fs/cgroup")
 RELEASE_HEARTBEAT_SCRIPT = """
 local raw = redis.call('get', KEYS[1])
 if not raw then
@@ -65,99 +59,6 @@ def _validated_image_path(image: object) -> Path | None:
     return article_delivery_media_path(str(image))
 
 
-def _cgroup_memory_snapshot(root: Path = CGROUP_MEMORY_ROOT) -> dict[str, Any]:
-    snapshot: dict[str, Any] = {}
-    for filename, key in (
-        ("memory.current", "current_bytes"),
-        ("memory.peak", "peak_bytes"),
-        ("memory.max", "limit_bytes"),
-    ):
-        try:
-            raw = (root / filename).read_text(encoding="ascii").strip()
-            snapshot[key] = None if raw == "max" else int(raw)
-        except (OSError, ValueError):
-            continue
-    try:
-        events: dict[str, int] = {}
-        for line in (root / "memory.events").read_text(encoding="ascii").splitlines():
-            name, value = line.split(maxsplit=1)
-            events[name] = int(value)
-        snapshot["events"] = events
-    except (OSError, ValueError):
-        pass
-    return snapshot
-
-
-def _oom_kill_count(snapshot: dict[str, Any]) -> int:
-    events = snapshot.get("events")
-    if not isinstance(events, dict):
-        return 0
-    try:
-        return int(events.get("oom_kill", 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _cli_executable(args: tuple[str, ...]) -> tuple[str, ...]:
-    if args and args[0] == "post":
-        return sys.executable, "-m", "app.xhs_cli_compat"
-    return ("xhs",)
-
-
-def _parse_cli_stage_line(line: str) -> dict[str, Any] | None:
-    if not line.startswith(XHS_STAGE_LOG_PREFIX):
-        return None
-    try:
-        payload = json.loads(line.removeprefix(XHS_STAGE_LOG_PREFIX))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict) or not payload.get("message"):
-        return None
-    return payload
-
-
-def _strip_cli_stage_lines(output: str) -> str:
-    return "\n".join(
-        line for line in output.splitlines() if not line.startswith(XHS_STAGE_LOG_PREFIX)
-    )
-
-
-async def _capture_cli_stream(
-    stream: asyncio.StreamReader,
-    chunks: list[bytes],
-    *,
-    command: str,
-    stream_name: str,
-    admin_id: int,
-) -> None:
-    while line := await stream.readline():
-        chunks.append(line)
-        decoded = line.decode(errors="replace").rstrip("\r\n")
-        stage = _parse_cli_stage_line(decoded)
-        if stage is not None:
-            details = {
-                key: value for key, value in stage.items() if key not in {"level", "message"}
-            }
-            logger.info(
-                str(stage["message"]),
-                extra={
-                    "command": command,
-                    "admin_id": admin_id,
-                    **details,
-                },
-            )
-        elif decoded:
-            logger.info(
-                "Xiaohongshu CLI output",
-                extra={
-                    "command": command,
-                    "admin_id": admin_id,
-                    "stream": stream_name,
-                    "output": decoded[:4000],
-                },
-            )
-
-
 class XiaohongshuWorker:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -170,11 +71,22 @@ class XiaohongshuWorker:
         self.stop_event = asyncio.Event()
         self.active_tasks = 0
         self.process_stats = ProcessStatsSampler(include_children=True)
-        self.browser_pool = XiaohongshuBrowserPool(
-            root=CLI_HOME_ROOT,
-            max_browsers=settings.xhs_browser_pool_size,
-            max_concurrency=settings.xhs_browser_max_concurrency,
-        )
+        self.browser_client = CamoufoxServiceClient(settings)
+        self._browser_status_cache = {}
+        self._browser_status_at = 0.0
+
+    async def close(self):
+        await self.browser_client.aclose()
+
+    async def browser_status(self):
+        if time.monotonic() - self._browser_status_at > 10:
+            try:
+                async with asyncio.timeout(3):
+                    self._browser_status_cache = await self.browser_client.status()
+            except TimeoutError:
+                self._browser_status_cache = {"installed": False, "status": "offline"}
+            self._browser_status_at = time.monotonic()
+        return self._browser_status_cache
 
     def request_stop(self) -> None:
         self.stop_event.set()
@@ -217,9 +129,9 @@ class XiaohongshuWorker:
             if job_tasks:
                 await asyncio.gather(*job_tasks, return_exceptions=True)
             try:
-                await asyncio.wait_for(self.browser_pool.close(), timeout=10)
+                await asyncio.wait_for(self.close(), timeout=10)
             except TimeoutError:
-                logger.warning("Timed out closing Xiaohongshu browser pool")
+                logger.warning("Timed out closing Camoufox HTTP client")
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
@@ -314,20 +226,18 @@ class XiaohongshuWorker:
         admin_id = int(job["admin_id"])
         payload = job.get("payload") or {}
         if operation == "login":
-            a1 = decrypt_token(str(payload["encrypted_a1"]), self.settings)
-            web_session = decrypt_token(str(payload["encrypted_web_session"]), self.settings)
-            code, out, err = await self._run_cli(
-                admin_id, "login", "--cookie", f"a1={a1}; web_session={web_session}"
+            return await self.browser_client.submit(
+                operation="login",
+                admin_id=admin_id,
+                payload=payload,
+                timeout_seconds=self.settings.xhs_job_timeout_seconds,
+                job_id=job["job_id"],
             )
-            if code:
-                raise RuntimeError(err.strip() or out.strip() or "小红书登录失败")
-            await self.browser_pool.invalidate(admin_id)
-            return {"message": "小红书登录态验证成功"}
         if operation == "post":
-            return await self._post(admin_id, payload)
+            return await self._post(admin_id, payload, job["job_id"])
         raise ValueError(f"Unsupported Xiaohongshu operation: {operation}")
 
-    async def _post(self, admin_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post(self, admin_id: int, payload: dict[str, Any], job_id: str) -> dict[str, Any]:
         async with AsyncSessionFactory() as session:
             credentials = await get_xhs_credentials(session, self.settings, admin_id=admin_id)
         if credentials is None:
@@ -338,99 +248,20 @@ class XiaohongshuWorker:
             if path is None:
                 raise RuntimeError("图片路径无效")
             image_paths.append(str(path))
-        try:
-            cli_result = await self.browser_pool.publish(
-                admin_id=admin_id,
-                cookie_version=credentials.version,
-                cookie_dict={
-                    "a1": credentials.a1,
-                    "web_session": credentials.web_session,
-                },
-                title=str(payload["title"]),
-                content=str(payload["content"]),
-                image_paths=image_paths,
-            )
-        except Exception as exc:
-            raise RuntimeError(publish_error("", str(exc))) from exc
-        return {"message": "笔记发布成功", "result": cli_result}
-
-    async def _run_cli(self, admin_id: int, *args: str) -> tuple[int, str, str]:
-        if shutil.which("xhs") is None:
-            return 127, "", "xhs-cli 未安装"
-        home = CLI_HOME_ROOT / "users" / str(admin_id)
-        home.mkdir(parents=True, exist_ok=True)
-        home.chmod(0o700)
-        memory_before = _cgroup_memory_snapshot()
-        executable = _cli_executable(args)
-        process = await asyncio.create_subprocess_exec(
-            *executable,
-            *args,
-            env={**os.environ, "HOME": str(home)},
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-        )
-        command = args[0] if args else "unknown"
-        stdout_chunks: list[bytes] = []
-        stderr_chunks: list[bytes] = []
-        stdout_task = asyncio.create_task(
-            _capture_cli_stream(
-                process.stdout,
-                stdout_chunks,
-                command=command,
-                stream_name="stdout",
-                admin_id=admin_id,
-            )
-        )
-        stderr_task = asyncio.create_task(
-            _capture_cli_stream(
-                process.stderr,
-                stderr_chunks,
-                command=command,
-                stream_name="stderr",
-                admin_id=admin_id,
-            )
-        )
-        try:
-            await process.wait()
-            await asyncio.gather(stdout_task, stderr_task)
-        except asyncio.CancelledError:
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGTERM)
-            try:
-                await asyncio.wait_for(process.wait(), timeout=5)
-            except TimeoutError:
-                with suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                await process.wait()
-            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
-            raise
-        stdout = b"".join(stdout_chunks)
-        stderr = b"".join(stderr_chunks)
-        out = stdout.decode(errors="replace")
-        err = _strip_cli_stage_lines(stderr.decode(errors="replace"))
-        memory_after = _cgroup_memory_snapshot()
-        oom_kill_delta = max(
-            0,
-            _oom_kill_count(memory_after) - _oom_kill_count(memory_before),
-        )
-        if process.returncode and oom_kill_delta:
-            err = (
-                f"{err.rstrip()}\nXHS_WORKER_CGROUP_OOM: oom_kill increased by {oom_kill_delta}"
-            ).lstrip()
-        logger.info(
-            "Xiaohongshu CLI finished",
-            extra={
-                "command": args[0] if args else "unknown",
-                "return_code": process.returncode,
-                "stdout": out[-4000:],
-                "stderr": err[-4000:],
-                "cgroup_memory_before": memory_before,
-                "cgroup_memory_after": memory_after,
-                "cgroup_oom_kill_delta": oom_kill_delta,
+        return await self.browser_client.submit(
+            operation="post",
+            admin_id=admin_id,
+            payload={
+                "encrypted_a1": encrypt_token(credentials.a1, self.settings),
+                "encrypted_web_session": encrypt_token(credentials.web_session, self.settings),
+                "cookie_version": credentials.version,
+                "title": str(payload["title"]),
+                "content": str(payload["content"]),
+                "images": image_paths,
             },
+            timeout_seconds=self.settings.xhs_job_timeout_seconds,
+            job_id=job_id,
         )
-        return process.returncode or 0, out, err
 
     async def _heartbeat(self) -> None:
         now = datetime.now(UTC)
@@ -442,11 +273,9 @@ class XiaohongshuWorker:
             "last_heartbeat": now.isoformat().replace("+00:00", "Z"),
             "active_tasks": self.active_tasks,
             "queue_depth": queue_depth,
-            "browser_pool_size": self.browser_pool.size,
-            "browser_pool_busy": self.browser_pool.busy_count,
-            "browser_pool_limit": self.settings.xhs_browser_pool_size,
+            "browser_service": self.settings.camoufox_service_name,
             "browser_max_concurrency": self.settings.xhs_browser_max_concurrency,
-            "installed": shutil.which("xhs") is not None,
+            "installed": bool((await self.browser_status()).get("installed")),
             **self.process_stats.snapshot(),
         }
         await self.redis.set(

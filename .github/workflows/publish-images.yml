@@ -24,6 +24,7 @@ env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE: ghcr.io/stanxu-symple/auto-x-backend
   XHS_WORKER_IMAGE: ghcr.io/stanxu-symple/auto-x-xhs-worker
+  CAMOUFOX_WORKER_IMAGE: ghcr.io/stanxu-symple/auto-x-camoufox-worker
   FRONTEND_IMAGE: ghcr.io/stanxu-symple/auto-x-frontend
 
 jobs:
@@ -89,6 +90,31 @@ jobs:
             type=gha,scope=backend
             type=gha,scope=xhs-worker
           cache-to: type=gha,mode=max,scope=xhs-worker
+          provenance: false
+          sbom: false
+
+      - name: Generate camoufox-worker image metadata
+        id: camoufox_worker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.CAMOUFOX_WORKER_IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=sha-${{ github.sha }}
+
+      - name: Build and push camoufox-worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          target: camoufox-worker
+          push: true
+          tags: ${{ steps.camoufox_worker_meta.outputs.tags }}
+          labels: ${{ steps.camoufox_worker_meta.outputs.labels }}
+          cache-from: |
+            type=gha,scope=backend
+            type=gha,scope=camoufox-worker
+          cache-to: type=gha,mode=max,scope=camoufox-worker
           provenance: false
           sbom: false
 

@@ -57,6 +57,11 @@ EXCLUDED_KEYS = {
     "IMAGE_TAG",
     "BACKEND_IMAGE",
     "XHS_WORKER_IMAGE",
+    "CAMOUFOX_WORKER_IMAGE",
+    "CAMOUFOX_WORKER_BIND_IP",
+    "CAMOUFOX_WORKER_HOST_PORT",
+    "CAMOUFOX_SERVICE_ADVERTISE_IP",
+    "CAMOUFOX_SERVICE_ADVERTISE_PORT",
     "FRONTEND_IMAGE",
     "APP_BIND_IP",
     "APP_PORT",
@@ -179,6 +184,11 @@ RUNTIME_CONFIG_KEYS = {
     "XHS_JOB_TIMEOUT_SECONDS",
     "XHS_JOB_RESULT_TTL_SECONDS",
     "XHS_BROWSER_POOL_SIZE",
+    "CAMOUFOX_SERVICE_NAME",
+    "CAMOUFOX_BROWSER_POOL_SIZE",
+    "CAMOUFOX_MAX_CONCURRENCY",
+    "CAMOUFOX_JOB_TIMEOUT_SECONDS",
+    "CAMOUFOX_JOB_RESULT_TTL_SECONDS",
     "XHS_BROWSER_MAX_CONCURRENCY",
     "XHS_WORKER_HEARTBEAT_TTL_SECONDS",
     "CORS_ORIGINS",
@@ -203,6 +213,7 @@ CONTROL_PLANE_KEYS = {
     "SERVICE_CLIENT_BACKEND_SECRET",
     "SERVICE_CLIENT_MONITOR_SECRET",
     "SERVICE_CLIENT_AGENT_SECRET",
+    "SERVICE_CLIENT_XHS_WORKER_SECRET",
 }
 RUNTIME_CONFIG_KEYS.update(CONTROL_PLANE_KEYS)
 
@@ -355,6 +366,28 @@ def write_bootstrap_cache(path: Path, values: Mapping[str, object], *, keys: set
     return len(updates)
 
 
+def ensure_camoufox_caller(values: dict) -> None:
+    """Seed only the new XHS identity; preserve existing authority/grant choices."""
+    import hashlib
+    import secrets
+
+    raw = values.get("SERVICE_AUTH_CLIENTS_JSON")
+    if not raw:
+        return
+    clients = json.loads(str(raw))
+    secret = str(values.get("SERVICE_CLIENT_XHS_WORKER_SECRET") or "")
+    if "xhs-worker" not in clients:
+        secret = secret or secrets.token_hex(32)
+        clients["xhs-worker"] = {
+            "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+            "grants": {"camoufox-worker": "browser:execute"},
+        }
+        values["SERVICE_AUTH_CLIENTS_JSON"] = json.dumps(clients, ensure_ascii=False)
+        values["SERVICE_CLIENT_XHS_WORKER_SECRET"] = secret
+    elif not secret or clients["xhs-worker"]["secret_sha256"] != hashlib.sha256(secret.encode()).hexdigest():
+        raise RuntimeError("Nacos 中 xhs-worker 服务凭据缺失或不匹配，请恢复原服务密钥")
+
+
 def read_control_plane_values(path: Path) -> dict[str, str]:
     names = {
         "private.pem": "SERVICE_AUTH_PRIVATE_KEY_PEM",
@@ -363,6 +396,7 @@ def read_control_plane_values(path: Path) -> dict[str, str]:
         "backend.secret": "SERVICE_CLIENT_BACKEND_SECRET",
         "monitor.secret": "SERVICE_CLIENT_MONITOR_SECRET",
         "agent.secret": "SERVICE_CLIENT_AGENT_SECRET",
+        "xhs-worker.secret": "SERVICE_CLIENT_XHS_WORKER_SECRET",
     }
     values: dict[str, str] = {}
     for filename, key in names.items():
@@ -383,6 +417,7 @@ def write_control_plane_values(path: Path, values: Mapping[str, object]) -> int:
         "SERVICE_CLIENT_BACKEND_SECRET": "backend.secret",
         "SERVICE_CLIENT_MONITOR_SECRET": "monitor.secret",
         "SERVICE_CLIENT_AGENT_SECRET": "agent.secret",
+        "SERVICE_CLIENT_XHS_WORKER_SECRET": "xhs-worker.secret",
     }
     written = 0
     path.mkdir(parents=True, exist_ok=True)
@@ -894,6 +929,7 @@ def main() -> int:
     # Existing Nacos values win; local values only seed missing keys.
     merged = dict(local)
     merged.update(remote)
+    ensure_camoufox_caller(merged)
     # Nacos remains authoritative by default.  An explicit command-line
     # override is the only supported way to supersede an existing remote value,
     # and it is applied before production validation and publication.

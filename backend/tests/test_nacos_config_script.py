@@ -550,3 +550,37 @@ def test_consumer_preserves_remote_data_owner():
     values = {"POSTGRES_HOST": "43.172.88.37", "REDIS_HOST": "43.172.88.37"}
     module.resolve_data_endpoints(values, {"AUTO_X_MANAGE_DATA": "false", "NACOS_ADVERTISE_IP": "118.25.197.211"})
     assert values["POSTGRES_HOST"] == "43.172.88.37"
+
+
+def test_camoufox_caller_upgrade_preserves_remote_clients_and_secret(tmp_path):
+    import hashlib
+    import json
+    module = load_script()
+    remote = {'backend': {'secret_sha256': 'b' * 64, 'grants': {'xhs-worker': 'xhs:execute'}}}
+    values = {'SERVICE_AUTH_CLIENTS_JSON': json.dumps(remote)}
+    module.ensure_camoufox_caller(values)
+    first = dict(values)
+    module.ensure_camoufox_caller(values)
+    assert values == first
+    clients = json.loads(values['SERVICE_AUTH_CLIENTS_JSON'])
+    assert clients['backend'] == remote['backend']
+    assert clients['xhs-worker']['grants'] == {'camoufox-worker': 'browser:execute'}
+    secret = values['SERVICE_CLIENT_XHS_WORKER_SECRET']
+    assert clients['xhs-worker']['secret_sha256'] == hashlib.sha256(secret.encode()).hexdigest()
+    module.write_control_plane_values(tmp_path, values)
+    assert (tmp_path / 'xhs-worker.secret').read_text().strip() == secret
+    assert (tmp_path / 'xhs-worker.secret').stat().st_mode & 0o777 == 0o600
+    assert module.read_control_plane_values(tmp_path)['SERVICE_CLIENT_XHS_WORKER_SECRET'] == secret
+    # Never restore a grant deliberately removed from an existing identity.
+    clients['xhs-worker']['grants'] = {}
+    values['SERVICE_AUTH_CLIENTS_JSON'] = json.dumps(clients)
+    module.ensure_camoufox_caller(values)
+    assert json.loads(values['SERVICE_AUTH_CLIENTS_JSON'])['xhs-worker']['grants'] == {}
+
+
+def test_camoufox_runtime_config_is_remote_but_port_and_image_are_local():
+    module = load_script()
+    assert 'CAMOUFOX_MAX_CONCURRENCY' in module.RUNTIME_CONFIG_KEYS
+    assert 'CAMOUFOX_BROWSER_POOL_SIZE' in module.RUNTIME_CONFIG_KEYS
+    assert 'CAMOUFOX_WORKER_IMAGE' in module.EXCLUDED_KEYS
+    assert 'CAMOUFOX_SERVICE_ADVERTISE_PORT' in module.EXCLUDED_KEYS

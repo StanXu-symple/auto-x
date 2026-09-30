@@ -2,15 +2,17 @@ import asyncio
 import logging
 from pathlib import Path
 
-from app.xhs_worker import (
-    RELEASE_HEARTBEAT_SCRIPT,
-    XiaohongshuWorker,
+from app.camoufox_executor import (
     _capture_cli_stream,
     _cgroup_memory_snapshot,
     _cli_executable,
     _oom_kill_count,
     _parse_cli_stage_line,
     _strip_cli_stage_lines,
+)
+from app.xhs_worker import (
+    RELEASE_HEARTBEAT_SCRIPT,
+    XiaohongshuWorker,
 )
 
 
@@ -76,10 +78,7 @@ def test_post_uses_compatibility_cli_only() -> None:
 
 
 def test_parse_and_strip_cli_stage_lines() -> None:
-    stage_line = (
-        'XHS_STAGE {"level":"INFO","stage":"browser_ready",'
-        '"message":"虚拟浏览器启动成功"}'
-    )
+    stage_line = 'XHS_STAGE {"level":"INFO","stage":"browser_ready","message":"虚拟浏览器启动成功"}'
 
     assert _parse_cli_stage_line(stage_line) == {
         "level": "INFO",
@@ -108,9 +107,7 @@ async def test_capture_cli_stream_relays_stage_immediately(caplog) -> None:
             admin_id=7,
         )
 
-    record = next(
-        item for item in caplog.records if item.message == "小红书图文发布页面进入成功"
-    )
+    record = next(item for item in caplog.records if item.message == "小红书图文发布页面进入成功")
     assert record.stage == "page_ready"
     assert record.admin_id == 7
     assert b"XHS_STAGE" in b"".join(chunks)

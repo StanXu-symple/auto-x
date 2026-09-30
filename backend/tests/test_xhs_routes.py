@@ -39,7 +39,7 @@ def test_publish_error_explains_browser_resource_failure_from_stdout() -> None:
     )
 
     assert "浏览器意外退出" in message
-    assert "xhs-worker" in message
+    assert "camoufox-worker" in message
     assert "Target page, context or browser has been closed" in message
 
 

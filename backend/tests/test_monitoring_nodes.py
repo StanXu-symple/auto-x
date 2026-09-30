@@ -96,7 +96,7 @@ async def test_http_xhs_service_publishes_and_stops_redis_heartbeat(monkeypatch,
             stopped.set()
     worker = SimpleNamespace(
         _wait_for_dependencies=AsyncMock(), _heartbeat_loop=heartbeat,
-        stop_event=asyncio.Event(), browser_pool=SimpleNamespace(close=AsyncMock()),
+        stop_event=asyncio.Event(), close=AsyncMock(),
         redis=SimpleNamespace(aclose=AsyncMock()),
     )
     monkeypatch.setattr(worker_module, 'UPLOAD_DIR', tmp_path)

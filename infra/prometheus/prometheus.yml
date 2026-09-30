@@ -87,3 +87,9 @@ scrape_configs:
           - node-exporter:9100
         labels:
           component: host
+
+  - job_name: xsentinel-camoufox-worker
+    static_configs:
+      - targets: ["camoufox-worker:8007"]
+        labels:
+          component: camoufox-worker

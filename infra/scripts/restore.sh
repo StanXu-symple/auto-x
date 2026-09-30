@@ -56,7 +56,7 @@ if [[ "${SKIP_PRE_RESTORE_BACKUP:-0}" != "1" ]]; then
 fi
 
 echo "Stopping application writers..."
-"${compose[@]}" stop worker ai-worker qq-worker xhs-worker backend
+"${compose[@]}" stop worker ai-worker qq-worker xhs-worker camoufox-worker backend
 
 echo "Replacing and restoring PostgreSQL database..."
 postgres_database="$(awk -F'"' '/"postgres_database"/ {print $4; exit}' "${backup_dir}/metadata.json")"
@@ -116,5 +116,5 @@ echo "Applying current database migrations..."
 "${compose[@]}" run --rm migrate
 
 echo "Starting application services..."
-"${compose[@]}" up -d backend worker ai-worker qq-worker xhs-worker frontend
+"${compose[@]}" up -d backend worker ai-worker qq-worker xhs-worker camoufox-worker frontend
 echo "Restore completed from ${backup_dir}"

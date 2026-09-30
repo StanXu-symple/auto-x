@@ -39,8 +39,8 @@ def publish_error(out: str, err: str) -> str:
     if CGROUP_OOM_MARKER in combined:
         oom_detail = err.strip() if CGROUP_OOM_MARKER in err else out.strip()
         return (
-            "已确认小红书浏览器被 xhs-worker 的内存上限终止。"
-            "请使用 2GB 内存配置重新创建 xhs-worker。原始错误：" + oom_detail
+            "已确认小红书浏览器被 camoufox-worker 的内存上限终止。"
+            "请使用 2GB 内存配置重新创建 camoufox-worker。原始错误：" + oom_detail
         )
     if BROWSER_CLOSED_ERROR in combined or BROWSER_PAGE_CRASHED_ERROR in combined:
         browser_detail = (
@@ -49,7 +49,7 @@ def publish_error(out: str, err: str) -> str:
             else out.strip()
         )
         return (
-            "小红书发布浏览器意外退出（页面崩溃）。请确认 xhs-worker 使用 2GB 内存和 "
+            "小红书发布浏览器意外退出（页面崩溃）。请确认 camoufox-worker 使用 2GB 内存和 "
             "512MB /dev/shm，并在生产日志中检查 cgroup_memory 与 "
             "cgroup_oom_kill_delta。原始错误：" + browser_detail
         )

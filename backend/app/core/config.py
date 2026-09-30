@@ -59,6 +59,8 @@ _NACOS_LOCAL_ONLY_FIELDS = {
     "xhs_service_port",
     "xhs_service_advertise_ip",
     "xhs_service_advertise_port",
+    "camoufox_service_advertise_ip",
+    "camoufox_service_advertise_port",
 }
 
 _POSTGRES_DSN_COMPONENT_FIELDS = {
@@ -438,6 +440,14 @@ class Settings(BaseSettings):
     qq_worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
     qq_worker_port: int = Field(default=8203, ge=0, le=65535)
     qq_worker_metrics_port: int = Field(default=8004, ge=0, le=65535)
+
+    camoufox_service_name: str = "xsentinel-camoufox-worker"
+    camoufox_service_advertise_ip: str = ""
+    camoufox_service_advertise_port: int = Field(default=8007, ge=1, le=65535)
+    camoufox_browser_pool_size: int = Field(default=1, ge=1, le=32)
+    camoufox_max_concurrency: int = Field(default=1, ge=1, le=32)
+    camoufox_job_timeout_seconds: float = Field(default=290.0, ge=30, le=600)
+    camoufox_job_result_ttl_seconds: int = Field(default=600, ge=60, le=3600)
 
     xhs_job_timeout_seconds: float = Field(default=300.0, ge=30, le=600)
     xhs_job_result_ttl_seconds: int = Field(default=300, ge=60, le=3600)

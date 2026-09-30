@@ -16,10 +16,10 @@ RUN pip install --upgrade pip \
     && pip install -r requirements.txt
 
 RUN mkdir -p /var/lib/xsentinel/xhs-home /var/lib/xsentinel/xhs-uploads \
-        /var/lib/xsentinel/article-uploads /var/log/xsentinel \
+        /var/lib/xsentinel/article-uploads /var/lib/xsentinel/camoufox-uploads /var/log/xsentinel \
     && chown -R app:app /var/lib/xsentinel /var/log/xsentinel
 
-FROM base AS xhs-worker
+FROM base AS camoufox-worker
 
 # Keep this layer before the application source. A normal code-only release
 # can then reuse the large browser layer by digest instead of downloading it
@@ -36,11 +36,11 @@ RUN chown -R app:app /app
 
 USER app
 
-EXPOSE 8200 8201 8202 8203 8004 8005 8006
+EXPOSE 8200 8201 8202 8203 8004 8005 8006 8007
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/metrics', timeout=3).read()"]
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8007/health/live', timeout=3).read()"]
 
-CMD ["python", "-m", "app.xhs_worker"]
+CMD ["uvicorn", "app.camoufox_service:app", "--host", "0.0.0.0", "--port", "8007"]
 
 # The core target deliberately stays browser-free. It is selected by the
 # regular backend services and by the CI job for the backend image.
@@ -52,8 +52,12 @@ RUN chown -R app:app /app
 
 USER app
 
-EXPOSE 8200 8201 8202 8203 8004 8005 8006 9100 9101 9102
+EXPOSE 8200 8201 8202 8203 8004 8005 8006 8007 9100 9101 9102
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/api/v1/health/live', timeout=3).read()"]
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8200"]
+
+# Compatibility image for existing XHS_WORKER_IMAGE deployments; no browser binary.
+FROM core AS xhs-worker
+CMD ["python", "-m", "app.xhs_worker"]

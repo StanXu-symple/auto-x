@@ -22,6 +22,15 @@
       "port": 8006
     },
     {
+      "id": "tc1-camoufox-worker",
+      "name": "Camoufox Worker",
+      "component": "camoufox_worker",
+      "node": "tc-1",
+      "project": "x-sentinel",
+      "container_service": "camoufox-worker",
+      "port": 8007
+    },
+    {
       "id": "tc1-monitor-center",
       "name": "Monitor Center",
       "component": "monitor",

@@ -2,7 +2,7 @@ groups:
   - name: x-sentinel-availability
     rules:
       - alert: XSentinelTargetDown
-        expr: up{job=~"xsentinel-backend|xsentinel-worker|xsentinel-ai-worker|xsentinel-qq-worker|xsentinel-xhs-worker|xsentinel-frontend|postgres|redis|node"} == 0
+        expr: up{job=~"xsentinel-backend|xsentinel-worker|xsentinel-ai-worker|xsentinel-qq-worker|xsentinel-xhs-worker|xsentinel-camoufox-worker|xsentinel-frontend|postgres|redis|node"} == 0
         for: 2m
         labels:
           severity: critical
@@ -107,7 +107,7 @@ groups:
           severity: warning
         annotations:
           summary: "More than 20% of Xiaohongshu jobs are failing"
-          description: "Check xhs-worker logs, login cookies, memory pressure and platform availability."
+          description: "Check xhs-worker and camoufox-worker logs, login cookies, memory pressure and platform availability."
 
       - alert: XSentinelAPIErrorRateHigh
         expr: sum(rate(http_requests_total{job="xsentinel-backend",status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total{job="xsentinel-backend"}[5m])), 0.001) > 0.05

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -126,7 +127,6 @@ class XiaohongshuBrowserPool:
         self._condition = asyncio.Condition()
         self._leases: dict[int, _BrowserLease] = {}
         self._business_slots = asyncio.Semaphore(max_concurrency)
-        self._retire_tasks: set[asyncio.Task[None]] = set()
         self._closed = False
 
     @property
@@ -202,20 +202,6 @@ class XiaohongshuBrowserPool:
             lease.busy = False
             self._condition.notify_all()
 
-    def _retire_after(
-        self, lease: _BrowserLease, future: asyncio.Future[Any]
-    ) -> None:
-        async def retire() -> None:
-            try:
-                await future
-            except BaseException:
-                pass
-            await self._close_lease(lease)
-
-        task = asyncio.create_task(retire())
-        self._retire_tasks.add(task)
-        task.add_done_callback(self._retire_tasks.discard)
-
     async def invalidate(self, admin_id: int) -> None:
         async with self._condition:
             lease = self._leases.get(admin_id)
@@ -286,8 +272,11 @@ class XiaohongshuBrowserPool:
                 try:
                     result = await asyncio.shield(future)
                 except asyncio.CancelledError:
-                    await self._detach(lease)
-                    self._retire_after(lease, future)
+                    # Cancellation cannot stop Playwright's synchronous thread. Keep
+                    # its slot and upload files until it finishes, then retire it.
+                    with suppress(BaseException):
+                        await asyncio.shield(future)
+                    await self._discard(lease)
                     raise
                 if isinstance(result, dict):
                     return result
@@ -316,5 +305,3 @@ class XiaohongshuBrowserPool:
             *(self._close_lease(lease) for lease in leases),
             return_exceptions=True,
         )
-        if self._retire_tasks:
-            await asyncio.gather(*self._retire_tasks, return_exceptions=True)

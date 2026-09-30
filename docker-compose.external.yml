@@ -115,10 +115,8 @@ services:
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
       - article_uploads:/var/lib/xsentinel/article-uploads:ro
-      - xhs_home:/var/lib/xsentinel/xhs-home
       - runtime_logs:/var/log/xsentinel
     environment:
-      HOME: /var/lib/xsentinel/xhs-home
       ENVIRONMENT: production
       DEBUG: "false"
       STARTUP_STRICT: "true"
@@ -131,6 +129,17 @@ services:
       XHS_BROWSER_POOL_SIZE: ${XHS_BROWSER_POOL_SIZE:-1}
       XHS_BROWSER_MAX_CONCURRENCY: ${XHS_BROWSER_MAX_CONCURRENCY:-1}
     restart: always
+
+
+  camoufox-worker:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      AUTO_CREATE_TABLES: "false"
+    restart: always
+    depends_on: !override
+      log-init:
+        condition: service_completed_successfully
 
   frontend:
     restart: always

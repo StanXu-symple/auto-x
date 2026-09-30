@@ -114,12 +114,13 @@ Grafana 使用 `.env` 中的 `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`，�
 ```text
 docker-compose.backend.yml
 docker-compose.xhs-worker.yml
+docker-compose.camoufox-worker.yml
 docker-compose.auth-center.yml
 docker-compose.monitor-center.yml
 docker-compose.monitor-agent.yml
 ```
 
-镜像按运行时依赖拆分：`BACKEND_IMAGE` 提供 API、轮询、AI、QQ 和控制平面等不需要浏览器的服务；`XHS_WORKER_IMAGE` 仅供小红书浏览器 Worker 使用，包含 Camoufox 浏览器运行时。安装或更新单个普通服务时不会再下载约 1GB 的浏览器层；只有选择 `xhs-worker` 时才会拉取该镜像。xhs-worker 镜像还将浏览器层放在业务源码层之前，业务代码更新时 Docker 会按摘要复用浏览器层。修改 `requirements.txt`、基础镜像或浏览器安装步骤时，才需要重新构建对应的浏览器运行时层。
+镜像按运行时依赖拆分：`BACKEND_IMAGE` 提供普通服务，`XHS_WORKER_IMAGE` 提供轻量小红书业务服务，`CAMOUFOX_WORKER_IMAGE` 独占 Camoufox 浏览器运行时。xhs-worker 通过 Nacos 发现 camoufox-worker，再使用认证中心签发的服务令牌调用浏览器任务 API。浏览器容器的内存上限为 2GB，默认保留一个持久化会话。迁移与接口说明见 [Camoufox Worker](docs/camoufox-worker.md)。
 
 使用 `apps/auto-x.conf` 安装时，可选择要部署的服务，例如：
 
@@ -127,7 +128,7 @@ docker-compose.monitor-agent.yml
 backend,frontend,xhs-worker
 ```
 
-选择结果保存在 `/home/docker/auto-x/.auto-x-services`，后续更新会沿用该列表。输入 `all` 部署全部服务。`monitor-agent` 是每台 Docker 主机的必装组件，安装器会自动加入；选择 `backend`、`frontend`、`xhs-worker` 或 `monitor-center` 时也会自动加入 `auth-center`。只有选择了 `backend` 才会询问应用对外端口。PostgreSQL 和 Redis 默认作为本机基础设施按依赖启动；当 Nacos 中的 PostgreSQL 与 Redis 地址同时指向外部主机时，安装器会自动追加 `docker-compose.external.yml`，只配置其中一项会直接拒绝启动。
+选择结果保存在 `/home/docker/auto-x/.auto-x-services`，后续更新会沿用该列表。输入 `all` 部署全部服务。`monitor-agent` 是每台 Docker 主机的必装组件，安装器会自动加入；选择 `backend` 或 `frontend` 时会自动加入 `auth-center`；选择 `xhs-worker` 时默认加入 `camoufox-worker`。独立浏览器节点可设置 `KJ_AUTO_X_CAMOUFOX_REMOTE=1`，由 Nacos 发现远端浏览器服务。只有选择了 `backend` 才会询问应用对外端口。PostgreSQL 和 Redis 默认作为本机基础设施按依赖启动；当 Nacos 中的 PostgreSQL 与 Redis 地址同时指向外部主机时，安装器会自动追加 `docker-compose.external.yml`，只配置其中一项会直接拒绝启动。
 
 手动部署时也可以直接组合 Compose 文件：
 
@@ -135,7 +136,8 @@ backend,frontend,xhs-worker
 docker compose -f docker-compose.yml \
   -f docker-compose.backend.yml \
   -f docker-compose.xhs-worker.yml \
-  up -d backend frontend xhs-worker
+  -f docker-compose.camoufox-worker.yml \
+  up -d backend frontend xhs-worker camoufox-worker
 ```
 
 ## Nacos 与微服务控制平面

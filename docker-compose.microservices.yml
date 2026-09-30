@@ -46,10 +46,40 @@ services:
       NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
       NACOS_SERVICE_PORT: ${XHS_WORKER_HOST_PORT:-8006}
       SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
+      SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/xhs-worker.secret
+    volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/xhs-worker.secret:/run/xsentinel/xhs-worker.secret:ro
     expose: ["8006"]
     ports: ["${XHS_WORKER_BIND_IP:-0.0.0.0}:${XHS_WORKER_HOST_PORT:-8006}:8006"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8006/health/live', timeout=3)"]
+    networks: [control, app, data, monitoring]
+
+  camoufox-worker:
+    image: ${CAMOUFOX_WORKER_IMAGE:-x-sentinel-camoufox-worker}:${IMAGE_TAG:-latest}
+    command: ["uvicorn", "app.camoufox_service:app", "--host", "0.0.0.0", "--port", "8007"]
+    environment:
+      CAMOUFOX_SERVICE_NAME: xsentinel-camoufox-worker
+      CAMOUFOX_SERVICE_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
+      CAMOUFOX_SERVICE_ADVERTISE_PORT: ${CAMOUFOX_WORKER_HOST_PORT:-8007}
+      NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}
+      NACOS_NAMESPACE: ${NACOS_NAMESPACE:-public}
+      NACOS_GROUP: ${NACOS_GROUP:-X_SENTINEL}
+      NACOS_USERNAME: ${NACOS_USERNAME:-}
+      NACOS_PASSWORD: ${NACOS_PASSWORD:-}
+      NACOS_CONFIG_ENABLED: ${NACOS_CONFIG_ENABLED:-true}
+      NACOS_CONFIG_DATA_ID: ${NACOS_CONFIG_DATA_ID:-x-sentinel-config.json}
+      NACOS_CONFIG_GROUP: ${NACOS_CONFIG_GROUP:-}
+      NACOS_CONFIG_TIMEOUT_SECONDS: ${NACOS_CONFIG_TIMEOUT_SECONDS:-3}
+      NACOS_CONFIG_REQUIRED: ${NACOS_CONFIG_REQUIRED:-false}
+      NACOS_SERVICE_NAME: xsentinel-camoufox-worker
+      NACOS_ADVERTISE_IP: ${NACOS_ADVERTISE_IP:-}
+      NACOS_SERVICE_PORT: ${CAMOUFOX_WORKER_HOST_PORT:-8007}
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
+    expose: ["8007"]
+    ports: ["${CAMOUFOX_WORKER_BIND_IP:-0.0.0.0}:${CAMOUFOX_WORKER_HOST_PORT:-8007}:8007"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8007/health/live', timeout=3)"]
     networks: [control, app, data, monitoring]
 
   auth-center:

@@ -17,11 +17,21 @@ if [[ ! -s "$data_dir/clients.json" ]]; then
 fi
 if [[ -s "$data_dir/clients.json" ]] && command -v python3 >/dev/null 2>&1; then
   python3 - "$data_dir/clients.json" <<'PY'
-import json, os, sys
+import hashlib, json, os, secrets, sys
+from pathlib import Path
 path = sys.argv[1]
 with open(path, encoding="utf-8") as stream:
     clients = json.load(stream)
 clients.setdefault("backend", {}).setdefault("grants", {})["xhs-worker"] = "xhs:execute"
+secret_path = Path(path).with_name("xhs-worker.secret")
+if "xhs-worker" not in clients:
+    secret = secret_path.read_text().strip() if secret_path.is_file() else secrets.token_hex(32)
+    secret_path.write_text(secret + "\n")
+    clients["xhs-worker"] = {
+        "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+        "grants": {"camoufox-worker": "browser:execute"},
+    }
+
 with open(path, "w", encoding="utf-8") as stream:
     json.dump(clients, stream, ensure_ascii=False, indent=2)
     stream.write("\n")
