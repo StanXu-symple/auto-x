@@ -844,6 +844,27 @@ async def clear_task_history(task_id: int, db: DbSession, _: CurrentAdmin) -> Me
     return MessageResponse(message="该任务的推送历史已清除")
 
 
+@router.delete("/deliveries", response_model=MessageResponse)
+async def clear_deliveries(db: DbSession, _: CurrentAdmin) -> MessageResponse:
+    # Delete the database outbox too; stale Redis IDs are ignored by the worker.
+    await db.execute(delete(QQDelivery))
+    await db.commit()
+    return MessageResponse(message="全部 QQ 投递记录已清除")
+
+
+@router.delete("/deliveries/{delivery_id}", response_model=MessageResponse)
+async def delete_delivery(
+    delivery_id: int, db: DbSession, _: CurrentAdmin
+) -> MessageResponse:
+    result = await db.execute(
+        delete(QQDelivery).where(QQDelivery.id == delivery_id).returning(QQDelivery.id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise APIError(404, "qq_delivery_not_found", "QQ 投递记录不存在或已删除")
+    await db.commit()
+    return MessageResponse(message="QQ 投递记录已删除")
+
+
 @router.post("/deliveries/{delivery_id}/retry", response_model=QQDeliveryAccepted)
 async def retry_delivery(
     delivery_id: int, db: DbSession, redis: RedisClient, _: CurrentAdmin

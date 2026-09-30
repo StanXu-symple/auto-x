@@ -275,6 +275,8 @@ export const qqApi = {
   async removeTarget(id: EntityId) {
     await http.delete(`/qq/targets/${id}`)
   },
+  async removeDelivery(id: EntityId) { await http.delete(`/qq/deliveries/${id}`) },
+  async clearDeliveries() { await http.delete('/qq/deliveries') },
   async deliveries(params: { page?: number; page_size?: number; status?: string; task_id?: EntityId } = {}) {
     return pageOf(
       await http.get<Wrapped<PaginatedResponse<QQDelivery>>>('/qq/deliveries', { params }),
