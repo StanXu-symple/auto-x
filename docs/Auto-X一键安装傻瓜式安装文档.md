@@ -239,6 +239,16 @@ curl -fsS http://127.0.0.1:8006/health/live
 
 不存在的服务端口可以跳过。返回 HTTP 200 即表示对应服务已就绪。
 
+双节点部署还须从 **tc-2 的 backend 容器**检查 tc-1 注册的 xhs-worker 地址，不能只在 tc-1 本机测试 `127.0.0.1:8006`。当前 tc-1 的 Nacos 注册地址为 `118.25.197.211:8006`：
+
+```bash
+ssh tc-2
+docker exec x-sentinel-backend-1 python -c \
+  'import urllib.request; print(urllib.request.urlopen("http://118.25.197.211:8006/health/live", timeout=6).status)'
+```
+
+应输出 `200`。如果 tc-1 本机检查正常、tc-2 容器访问超时，则先核对 tc-1 云安全组与主机防火墙是否允许来自 tc-2 的 `8006/TCP`，并确认 Nacos 中 `xsentinel-xhs-worker` 注册的 IP、端口与实际映射一致。此时 `/xhs` 的“保存登录态”请求可能一直等待，前端代理日志出现 `POST /api/v1/xhs/login` 的 `499`；恢复跨节点连接后再重试，不要将本机健康检查视作完整验收。
+
 ### 3. Nacos 服务注册
 
 在 Nacos 控制台检查 `X_SENTINEL` group 下是否出现类似实例：
