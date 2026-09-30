@@ -269,6 +269,32 @@ ctr -n moby content active
 
 官方源的下一次无超时拉取于 2026-09-30 19:16 因 `read: connection reset by peer` 退出，临时层留在约 577.9 MB。该退出来自传输连接重置，不是安装器 900 秒上限；完整镜像尚不存在。用户确认后保留该层重试同一官方 SHA。重试前只归档原后台任务的 `.log`、`.exit`、`.pid` 记录，不删除 containerd 临时层；新任务使用 `nohup docker pull` 的监护 shell，不加 `timeout`。检查当前 `.exit` 是否存在、进程是否活跃及日志错误，不能把残留 SIZE 当成下载仍在运行。无超时不能避免网络错误，出现新的失败仍先报告确认。
 
+### 官方镜像下载成功后恢复菜单 2 更新
+
+先等当前后台任务退出码为 0，确认完整镜像存在。以下命令中的 SHA 必须与本次目标版本一致；重新加标签复用的是同一个本机镜像，不会再下载镜像层：
+
+```bash
+ssh tc-1
+cat /root/auto-x-camoufox-official-pull.exit
+# 必须输出 0；文件不存在表示任务尚未结束，非 0 则先检查并报告错误
+docker image inspect \
+  ghcr.io/stanxu-symple/auto-x-camoufox-worker:sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
+  --format '{{.Id}} | revision={{index .Config.Labels "org.opencontainers.image.revision"}}'
+docker tag \
+  ghcr.io/stanxu-symple/auto-x-camoufox-worker:sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
+  ghcr.nju.edu.cn/stanxu-symple/auto-x-camoufox-worker:sha-936774a32ec78c7a73987d65b5ea8968f032c80f
+
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.nju.edu.cn \
+KJ_AUTO_X_IMAGE_TAG=sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
+KJ_AUTO_X_SKIP_PULL=1 \
+AUTO_X_SERVICES=xhs-worker,camoufox-worker,monitor-center,monitor-agent \
+bash kejilion.sh app auto-x
+```
+
+`KJ_APPS_SKIP_REFRESH=1` 的前提是 `/root/apps` 已刷新到本次发布的应用定义；`KJ_AUTO_X_SKIP_PULL=1` 的前提是 backend、xhs-worker 和 camoufox-worker 三个目标 SHA 镜像全部缓存在本机。安装器会验证缺失镜像，再停止旧服务。tc-1 选全四项服务，保留 monitor-center 与 monitor-agent；更新后核对 `.auto-x-services` 仍为上述完整清单。该命令执行原安装器的菜单 2，沿用安装器的 Nacos 同步、卷挂载和启动流程。
+
 ### Nacos 缺失配置的升级补齐
 
 旧部署的 Nacos 文档不会随源码模板自动增加字段。本次检查发现共享运行配置缺少 5 项 Camoufox 配置，独立监控拓扑仍只有 12 项，缺少浏览器实例。更新前保存 Nacos 的原共享配置和监控拓扑作为受限备份；安装器通过 `infra/scripts/nacos-config.py` 补齐以下默认值，已有 Nacos 配置值保留：
