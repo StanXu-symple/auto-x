@@ -14,7 +14,13 @@ from app.qq_worker import QQDeliveryWorker
     "age,days,cancelled",
     [(4, 3, True), (3, 3, False), (1, 3, False), (4, None, False), (None, 3, True)],
 )
-async def test_claim_rechecks_history_before_sending(monkeypatch, state, age, days, cancelled):
+@pytest.mark.parametrize(
+    "listen_mode,tweet_type",
+    [("all", "reply"), ("original", "reply"), ("reply", "reply"), ("retweet", "retweet")],
+)
+async def test_claim_rechecks_history_before_sending(
+    monkeypatch, state, age, days, cancelled, listen_mode, tweet_type
+):
     created = datetime(2026, 9, 29, 12, tzinfo=UTC)
     delivery = QQDelivery(
         id=1,
@@ -33,6 +39,7 @@ async def test_claim_rechecks_history_before_sending(monkeypatch, state, age, da
         id=2,
         bot_id=4,
         initial_sync_days=days,
+        listen_mode=listen_mode,
         created_at=created,
         is_enabled=True,
         group_openid="group",
@@ -40,7 +47,11 @@ async def test_claim_rechecks_history_before_sending(monkeypatch, state, age, da
     bot = QQBotAccount(
         id=4, app_id="app", version=1, is_enabled=True, encrypted_app_secret="encrypted"
     )
-    tweet = None if age is None else Tweet(posted_at=created - timedelta(days=age))
+    tweet = (
+        None
+        if age is None
+        else Tweet(posted_at=created - timedelta(days=age), tweet_type=tweet_type)
+    )
     session = MagicMock()
     session.get = AsyncMock(
         side_effect=lambda model, *_args, **_kw: {
@@ -60,10 +71,10 @@ async def test_claim_rechecks_history_before_sending(monkeypatch, state, age, da
     worker.settings = Settings(_env_file=None, jwt_secret_key="j" * 64)
     worker.worker_id = "test"
     claim = await worker._claim(1, "token")
-    if cancelled:
+    if cancelled or (listen_mode != "all" and listen_mode != tweet_type):
         assert claim is None
         assert delivery.status == "cancelled"
-        assert "范围" in delivery.last_error
+        assert "范围" in delivery.last_error or "监听模式" in delivery.last_error
         assert delivery.attempts == 0
         decrypt.assert_not_called()
     else:

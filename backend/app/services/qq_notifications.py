@@ -17,6 +17,7 @@ from app.models.qq import QQBotAccount, QQDelivery, QQNotificationTarget, QQTarg
 from app.models.tweet import Tweet
 from app.schemas.qq import normalize_message_template
 from app.services.qq_placeholders import load_placeholder_mappings, placeholder_values
+from app.services.tweet_types import target_accepts_tweet
 from app.services.x_credentials import (
     XCredentialUnavailableError,
     decrypt_token,
@@ -181,6 +182,8 @@ async def create_target_history_deliveries(
     if not target.is_enabled or cutoff is None:
         return []
     conditions = [Tweet.posted_at >= cutoff]
+    if target.listen_mode and target.listen_mode != "all":
+        conditions.append(Tweet.tweet_type == target.listen_mode)
     if not target.all_monitored_users:
         conditions.append(
             Tweet.monitored_user_id.in_(
@@ -277,6 +280,8 @@ async def create_tweet_deliveries(
         if user is None:
             continue
         for target, bot in target_rows:
+            if not target_accepts_tweet(target, tweet):
+                continue
             cutoff = cutoffs[target.id]
             if cutoff is not None and as_utc(tweet.posted_at) < cutoff:
                 continue

@@ -9,6 +9,7 @@ from pydantic import Field, field_validator, model_validator
 
 from app.schemas.common import APIModel, Page
 from app.services.qq_placeholders import parse_template_fields
+from app.services.tweet_types import ListenMode
 
 DEFAULT_QQ_MESSAGE_TEMPLATE = "{title}\n@{username} · {posted_at}\n{text}\n{url}"
 ALLOWED_TEMPLATE_FIELDS = {"title", "author", "username", "text", "url", "posted_at"}
@@ -92,6 +93,7 @@ class QQJoinedGroupOut(APIModel):
 
 
 class QQTargetCreate(APIModel):
+    listen_mode: ListenMode = "all"
     initial_sync_days: int = Field(default=7, strict=True, gt=0, le=2147483647)
     bot_id: int = Field(gt=0)
     name: str = Field(min_length=1, max_length=100)
@@ -134,6 +136,15 @@ class QQTargetCreate(APIModel):
 
 
 class QQTargetUpdate(APIModel):
+    listen_mode: ListenMode | None = None
+
+    @field_validator("listen_mode", mode="before")
+    @classmethod
+    def reject_null_listen_mode(cls, value):
+        if value is None:
+            raise ValueError("监听模式不能为空")
+        return value
+
     bot_id: int | None = Field(default=None, gt=0)
     name: str | None = Field(default=None, min_length=1, max_length=100)
     group_openid: str | None = Field(default=None, min_length=3, max_length=128)
@@ -172,6 +183,7 @@ class QQTargetUpdate(APIModel):
 
 
 class QQTargetOut(APIModel):
+    listen_mode: ListenMode = "all"
     initial_sync_days: int | None = None
     id: int
     bot_id: int

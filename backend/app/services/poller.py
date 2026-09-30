@@ -27,6 +27,7 @@ from app.services.ai_jobs import enqueue_jobs_for_x_tweet_ids
 from app.services.metrics import POLL_DURATION, POLL_RUNS, TWEETS_INGESTED
 from app.services.qq_notifications import create_tweet_deliveries, enqueue_qq_delivery_ids
 from app.services.settings_service import effective_interval, get_polling_settings
+from app.services.tweet_types import classify_tweet
 from app.services.x_client import TweetBatch, XAPIError, XRateLimitError, XUser
 from app.services.x_source_client import XSourceClient
 
@@ -684,6 +685,7 @@ class PollingService:
             "monitored_user_id": monitored_user_id,
             "author_id": str(payload.get("author_id") or x_user_id),
             "text": str(payload.get("text") or ""),
+            "tweet_type": classify_tweet(payload),
             "lang": payload.get("lang"),
             "conversation_id": payload.get("conversation_id"),
             "posted_at": parse_x_datetime(payload.get("created_at")),

@@ -81,6 +81,7 @@ class QQNotificationTarget(Base):
     all_monitored_users: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
+    listen_mode: Mapped[str] = mapped_column(String(16), default="all", server_default="all")
     initial_sync_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     message_template: Mapped[str] = mapped_column(Text)
     template_variables: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)

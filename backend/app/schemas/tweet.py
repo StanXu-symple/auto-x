@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from app.schemas.common import APIModel
+from app.services.tweet_types import TweetType
 
 
 class TweetOut(APIModel):
@@ -12,6 +13,7 @@ class TweetOut(APIModel):
     display_name: str | None = None
     author_id: str
     text: str
+    tweet_type: TweetType = "original"
     lang: str | None
     conversation_id: str | None
     posted_at: datetime

@@ -110,7 +110,11 @@ export interface TweetAuthor {
   avatar_url?: string
 }
 
+export type TweetType = 'original' | 'reply' | 'retweet'
+export type QQListenMode = 'all' | TweetType
+
 export interface Tweet {
+  tweet_type: TweetType
   display_name?: string | null
   id: EntityId
   tweet_id: string
@@ -135,6 +139,7 @@ export interface Tweet {
 }
 
 export interface TweetQuery extends PaginationQuery {
+  tweet_type?: TweetType
   search?: string
   username?: string
   monitored_user_id?: EntityId
@@ -362,6 +367,7 @@ export interface QQJoinedGroup {
 }
 
 export interface QQNotificationTarget {
+  listen_mode: QQListenMode
   initial_sync_days?: number | null
   id: number
   bot_id: number
@@ -378,6 +384,7 @@ export interface QQNotificationTarget {
 }
 
 export interface QQTargetPayload {
+  listen_mode: QQListenMode
   initial_sync_days?: number
   bot_id: number
   name: string

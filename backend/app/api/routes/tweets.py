@@ -10,6 +10,7 @@ from app.models.monitored_user import MonitoredUser
 from app.models.tweet import Tweet
 from app.schemas.common import Page
 from app.schemas.tweet import TweetOut
+from app.services.tweet_types import TweetType
 
 router = APIRouter(tags=["Tweets"])
 
@@ -25,6 +26,7 @@ def _tweet_out(
         display_name=display_name,
         author_id=tweet.author_id,
         text=tweet.text,
+        tweet_type=tweet.tweet_type,
         lang=tweet.lang,
         conversation_id=tweet.conversation_id,
         posted_at=tweet.posted_at,
@@ -54,8 +56,11 @@ async def list_tweets(
     posted_after: datetime | None = None,
     posted_before: datetime | None = None,
     include_raw: bool = False,
+    tweet_type: TweetType | None = None,
 ) -> Page[TweetOut]:
     conditions = []
+    if tweet_type is not None:
+        conditions.append(Tweet.tweet_type == tweet_type)
     if monitored_user_id is not None:
         conditions.append(Tweet.monitored_user_id == monitored_user_id)
     if username:

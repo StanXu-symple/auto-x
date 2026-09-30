@@ -18,6 +18,9 @@ class Tweet(Base):
     )
     author_id: Mapped[str] = mapped_column(String(32), index=True)
     text: Mapped[str] = mapped_column(Text)
+    tweet_type: Mapped[str] = mapped_column(
+        String(16), default="original", server_default="original", index=True
+    )
     lang: Mapped[str | None] = mapped_column(String(16), nullable=True)
     conversation_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

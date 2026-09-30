@@ -67,6 +67,7 @@ from app.services.qq_notifications import (
     target_history_cutoff,
 )
 from app.services.qq_schedule import next_qq_task_run
+from app.services.tweet_types import target_accepts_tweet
 
 logger = logging.getLogger(__name__)
 
@@ -828,14 +829,16 @@ class QQDeliveryWorker:
                     cancel_reason = "机器人或群通知目标已删除或停用"
                 elif delivery.kind == "tweet":
                     cutoff = target_history_cutoff(target)
-                    if cutoff is not None:
+                    if cutoff is not None or (target.listen_mode and target.listen_mode != "all"):
                         tweet = (
                             await session.get(Tweet, delivery.source_tweet_id)
                             if delivery.source_tweet_id is not None else None
                         )
                         if tweet is None:
-                            cancel_reason = "原始推文不存在，无法核验历史推送范围"
-                        elif as_utc(tweet.posted_at) < cutoff:
+                            cancel_reason = "原始推文不存在，无法核验群目标推送范围"
+                        elif not target_accepts_tweet(target, tweet):
+                            cancel_reason = "消息类型不符合群目标监听模式，已取消投递"
+                        elif cutoff is not None and as_utc(tweet.posted_at) < cutoff:
                             cancel_reason = "消息发布时间早于群目标首次推送历史范围，已取消投递"
             if cancel_reason:
                 delivery.status = "cancelled"

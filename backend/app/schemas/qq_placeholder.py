@@ -12,6 +12,7 @@ FIELD_LABELS = {
     "username": "账号（不含 @）",
     "display_name": "昵称（为空时使用账号）",
     "author_id": "X 作者 ID",
+    "tweet_type": "内容类型（original/reply/retweet）",
     "text": "正文",
     "lang": "语言",
     "conversation_id": "会话 ID",

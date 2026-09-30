@@ -97,6 +97,7 @@ async def _target_out(db: DbSession, row: QQNotificationTarget) -> QQTargetOut:
     return QQTargetOut(
         id=row.id,
         initial_sync_days=row.initial_sync_days,
+        listen_mode=row.listen_mode,
         bot_id=row.bot_id,
         bot_name=bot.name if bot else "已删除机器人",
         name=row.name,
@@ -408,6 +409,7 @@ async def create_target(
     row = QQNotificationTarget(
         bot_id=payload.bot_id,
         initial_sync_days=payload.initial_sync_days,
+        listen_mode=payload.listen_mode,
         name=payload.name.strip(),
         group_openid=payload.group_openid.strip(),
         is_enabled=payload.is_enabled,
@@ -451,7 +453,9 @@ async def update_target(
     for field in ("name", "group_openid"):
         if field in updates:
             setattr(row, field, updates[field].strip())
-    for field in ("is_enabled", "all_monitored_users", "message_template", "template_variables"):
+    for field in (
+        "is_enabled", "all_monitored_users", "message_template", "template_variables", "listen_mode"
+    ):
         if field in updates:
             setattr(row, field, updates[field])
     # Always allow stopping deliveries, even if an old template needs repair.
