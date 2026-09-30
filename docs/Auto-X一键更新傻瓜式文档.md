@@ -275,6 +275,10 @@ ctr -n moby content active
 
 本次下载切换到 `ghcr.1ms.run/stanxu-symple/auto-x-camoufox-worker:sha-936774a32ec78c7a73987d65b5ea8968f032c80f`。只终止旧的官方 `docker pull` 客户端，保留 containerd 临时层，新的后台任务仍无超时限制。当前任务记录改为 `/root/auto-x-camoufox-domestic-pull.log`、`.pid` 和 `.exit`；检查当前记录，不要把被替换的官方任务退出码当作新任务结果。
 
+这次续传达到完整层大小 923,029,924 字节后，Docker 最终校验报 `unexpected commit digest`：实际 SHA-256 为 `07fc7ad09ec53e400552f23d5af266c3cabba7c64904dafb838c0a0d77dd4218`，预期为 `b3908f6608aaa186444ca36386ffc0ec2d8c7c8de84bb45fcacab50a1c8b37b7`。镜像未提交，不能升级。只读比较 0、300,000,000、524,288,131、600,000,000 和 900,000,000 偏移的 1 MiB 样本，均与新源对应内容相同；这些样本不足以定位损坏字节，也不能断言根因是旧层或新源。
+
+用户确认后，2026-09-30 21:33 将这个唯一失败 ingest 目录备份并移出内容存储，备份位于 `/home/docker/auto-x/backups/failed-camoufox-layer-20260930-213300/`。操作前核对 `ref` 恰为 `moby/1/layer-sha256:b3908f6608aaa186444ca36386ffc0ec2d8c7c8de84bb45fcacab50a1c8b37b7`、文件大小和失败摘要；操作后再次核对备份摘要，`ctr -n moby content active` 不再列出该层。备份目录权限 700、文件权限 600，其他完整层与业务卷保留。随后归档上次任务记录，从同一 `ghcr.1ms.run` 标签完整重拉该大层，仍不加 `timeout`。不要执行全局 `docker system prune` 或批量删除 containerd 目录。重拉成功必须以 Docker 校验提交完成及退出码 0 为准；若再次出现相同摘要错误，先报告确认，进一步核对代理内容与官方层摘要。
+
 下载成功后按下节校验完整镜像与 revision，再标记为安装器当前配置的 `ghcr.nju.edu.cn` 别名并通过 `KJ_AUTO_X_SKIP_PULL=1` 完成菜单 2。别名指向已缓存的同一个镜像，更新时不会再次请求南京大学源。来源：[毫秒镜像](https://1ms.run)。
 
 ### 完整镜像下载成功后恢复菜单 2 更新
