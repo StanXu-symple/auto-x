@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from app.schemas.common import APIModel
+from app.schemas.common import APIModel, Page
 from app.services.qq_placeholders import parse_template_fields
 
 DEFAULT_QQ_MESSAGE_TEMPLATE = "{title}\n@{username} · {posted_at}\n{text}\n{url}"
@@ -268,3 +268,7 @@ class QQScheduledTaskOut(QQScheduledTaskCreate):
     next_run_at: datetime
     created_at: datetime
     updated_at: datetime
+
+
+class QQScheduledTaskPage(Page[QQScheduledTaskOut]):
+    enabled_total: int

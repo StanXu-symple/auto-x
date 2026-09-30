@@ -221,6 +221,10 @@ export const systemApi = {
 }
 
 export const qqApi = {
+  async botPage(params: { page: number; page_size: number }) { return pageOf(await http.get<Wrapped<PaginatedResponse<QQBotAccount>>>('/qq/bots', { params })) },
+  async targetPage(params: { page: number; page_size: number }) { return pageOf(await http.get<Wrapped<PaginatedResponse<QQNotificationTarget>>>('/qq/targets', { params })) },
+  async placeholderPage(params: { page: number; page_size: number }) { return pageOf(await http.get<Wrapped<PaginatedResponse<import('@/types').QQPlaceholder>>>('/qq/placeholders', { params })) },
+  async taskPage(params: { page: number; page_size: number }) { return dataOf(await http.get<Wrapped<PaginatedResponse<QQScheduledTask> & { enabled_total: number }>>('/qq/tasks', { params })) },
   async removePlaceholder(id: number) { await http.delete(`/qq/placeholders/${id}`) },
   async placeholders() { return dataOf(await http.get<Wrapped<import('@/types').QQPlaceholder[]>>('/qq/placeholders')) },
   async placeholderFields() { return dataOf(await http.get<Wrapped<import('@/types').QQPlaceholderField[]>>('/qq/placeholders/fields')) },
@@ -335,6 +339,7 @@ export const xSourcesApi = {
 }
 
 export const aiApi = {
+  async skillPage(params: AiSkillQuery) { return pageOf(await http.get<Wrapped<PaginatedResponse<AiSkill>>>('/ai/skills', { params })) },
   async settings() {
     return dataOf(await http.get<Wrapped<AiSettings>>('/ai/settings'))
   },

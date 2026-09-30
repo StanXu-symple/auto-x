@@ -37,6 +37,7 @@ from app.schemas.qq import (
     QQOverview,
     QQScheduledTaskCreate,
     QQScheduledTaskOut,
+    QQScheduledTaskPage,
     QQTargetCreate,
     QQTargetOut,
     QQTargetUpdate,
@@ -204,8 +205,14 @@ async def overview(db: DbSession, redis: RedisClient, _: CurrentAdmin) -> QQOver
     )
 
 
-@router.get("/bots", response_model=list[QQBotOut])
-async def list_bots(db: DbSession, redis: RedisClient, _: CurrentAdmin) -> list[QQBotOut]:
+@router.get("/bots", response_model=Page[QQBotOut] | list[QQBotOut])
+async def list_bots(
+    db: DbSession,
+    redis: RedisClient,
+    _: CurrentAdmin,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=15, ge=1, le=100),
+):
     bot_status: dict[str, str] = {}
     try:
         raw_status = await redis.get(QQ_BOT_STATUS)
@@ -220,9 +227,12 @@ async def list_bots(db: DbSession, redis: RedisClient, _: CurrentAdmin) -> list[
         .correlate(QQBotAccount)
         .scalar_subquery()
     )
-    rows = (
-        await db.execute(select(QQBotAccount, count).order_by(QQBotAccount.created_at.desc()))
-    ).all()
+    statement = select(QQBotAccount, count).order_by(
+        QQBotAccount.created_at.desc(), QQBotAccount.id.desc()
+    )
+    if page is not None:
+        statement = statement.offset((page - 1) * page_size).limit(page_size)
+    rows = (await db.execute(statement)).all()
     result = []
     for bot, target_count in rows:
         output = _bot_out(bot, int(target_count or 0))
@@ -230,6 +240,9 @@ async def list_bots(db: DbSession, redis: RedisClient, _: CurrentAdmin) -> list[
             "disabled" if not bot.is_enabled else bot_status.get(bot.app_id, "offline")
         )
         result.append(output)
+    if page is not None:
+        total = int(await db.scalar(select(func.count(QQBotAccount.id))) or 0)
+        return Page(items=result, total=total, page=page, page_size=page_size)
     return result
 
 
@@ -363,14 +376,24 @@ async def delete_bot(bot_id: int, db: DbSession, _: CurrentAdmin) -> MessageResp
     return MessageResponse(message="QQ 机器人及其群目标已删除")
 
 
-@router.get("/targets", response_model=list[QQTargetOut])
-async def list_targets(db: DbSession, _: CurrentAdmin) -> list[QQTargetOut]:
-    rows = list(
-        await db.scalars(
-            select(QQNotificationTarget).order_by(QQNotificationTarget.created_at.desc())
-        )
+@router.get("/targets", response_model=Page[QQTargetOut] | list[QQTargetOut])
+async def list_targets(
+    db: DbSession,
+    _: CurrentAdmin,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=15, ge=1, le=100),
+):
+    statement = select(QQNotificationTarget).order_by(
+        QQNotificationTarget.created_at.desc(), QQNotificationTarget.id.desc()
     )
-    return [await _target_out(db, row) for row in rows]
+    if page is not None:
+        statement = statement.offset((page - 1) * page_size).limit(page_size)
+    rows = list(await db.scalars(statement))
+    items = [await _target_out(db, row) for row in rows]
+    if page is not None:
+        total = int(await db.scalar(select(func.count(QQNotificationTarget.id))) or 0)
+        return Page(items=items, total=total, page=page, page_size=page_size)
+    return items
 
 
 @router.post("/targets", response_model=QQTargetOut, status_code=status.HTTP_201_CREATED)
@@ -603,13 +626,19 @@ def _task_out(
         }
     )
 
-@router.get("/tasks", response_model=list[QQScheduledTaskOut])
-async def list_tasks(db: DbSession, _: CurrentAdmin):
-    tasks = list(
-        await db.scalars(
-            select(QQScheduledTask).order_by(QQScheduledTask.created_at.desc())
-        )
+@router.get("/tasks", response_model=QQScheduledTaskPage | list[QQScheduledTaskOut])
+async def list_tasks(
+    db: DbSession,
+    _: CurrentAdmin,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=15, ge=1, le=100),
+):
+    statement = select(QQScheduledTask).order_by(
+        QQScheduledTask.created_at.desc(), QQScheduledTask.id.desc()
     )
+    if page is not None:
+        statement = statement.offset((page - 1) * page_size).limit(page_size)
+    tasks = list(await db.scalars(statement))
     result = []
     for task in tasks:
         bot_ids = list(
@@ -632,6 +661,17 @@ async def list_tasks(db: DbSession, _: CurrentAdmin):
             for bot_id, group in group_rows
         ]
         result.append(_task_out(task, bot_ids, groups))
+    if page is not None:
+        total = int(await db.scalar(select(func.count(QQScheduledTask.id))) or 0)
+        enabled_total = int(
+            await db.scalar(
+                select(func.count(QQScheduledTask.id)).where(QQScheduledTask.is_enabled.is_(True))
+            )
+            or 0
+        )
+        return QQScheduledTaskPage(
+            items=result, total=total, page=page, page_size=page_size, enabled_total=enabled_total
+        )
     return result
 
 @router.post("/tasks", response_model=QQScheduledTaskOut, status_code=201)

@@ -1,12 +1,12 @@
-from fastapi import APIRouter
-from sqlalchemy import select
+from fastapi import APIRouter, Query
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentAdmin, DbSession
 from app.api.errors import APIError
 from app.models.qq import QQNotificationTarget
 from app.models.qq_placeholder import QQPlaceholder
-from app.schemas.common import MessageResponse
+from app.schemas.common import MessageResponse, Page
 from app.schemas.qq import normalize_message_template
 from app.schemas.qq_placeholder import (
     FIELD_LABELS,
@@ -32,9 +32,21 @@ async def list_fields(_: CurrentAdmin):
     ]
 
 
-@router.get("", response_model=list[QQPlaceholderOut])
-async def list_placeholders(db: DbSession, _: CurrentAdmin):
-    return list(await db.scalars(select(QQPlaceholder).order_by(QQPlaceholder.id)))
+@router.get("", response_model=Page[QQPlaceholderOut] | list[QQPlaceholderOut])
+async def list_placeholders(
+    db: DbSession,
+    _: CurrentAdmin,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=15, ge=1, le=100),
+):
+    statement = select(QQPlaceholder).order_by(QQPlaceholder.id)
+    if page is not None:
+        statement = statement.offset((page - 1) * page_size).limit(page_size)
+    rows = list(await db.scalars(statement))
+    if page is not None:
+        total = int(await db.scalar(select(func.count(QQPlaceholder.id))) or 0)
+        return Page(items=rows, total=total, page=page, page_size=page_size)
+    return rows
 
 
 async def ensure_no_variable_collision(db: DbSession, placeholder: str):

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { usePagedTable } from '@/composables/usePagedTable'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import axios from 'axios'
@@ -8,9 +9,8 @@ import { getErrorMessage } from '@/services/http'
 import type { QQPlaceholder, QQPlaceholderField } from '@/types'
 
 const emit = defineEmits<{ changed: [] }>()
-const rows = ref<QQPlaceholder[]>([])
 const fields = ref<QQPlaceholderField[]>([])
-const loading = ref(false)
+const fieldLoading = ref(false)
 const saving = ref(false)
 const open = ref(false)
 const editing = ref<QQPlaceholder | null>(null)
@@ -19,23 +19,22 @@ const form = reactive({ placeholder: '', source_field: '' })
 const defaults = new Set(['{author}', '{username}', '{text}', '{url}', '{posted_at}', '{title}'])
 const options = computed(() => fields.value.map(field => ({ value: field.value, label: `${field.category} · ${field.label} (${field.value})` })))
 function sourceLabel(value: string) { const field = fields.value.find(item => item.value === value); return field ? `${field.label} (${value})` : value }
+const { rows, loading, pagination, load: loadRows, change: changePage } = usePagedTable(qqApi.placeholderPage, '读取占位符配置失败')
 async function load() {
-  loading.value = true
   error.value = ''
-  try { [rows.value, fields.value] = await Promise.all([qqApi.placeholders(), qqApi.placeholderFields()]) }
-  catch (e) { error.value = getErrorMessage(e, '读取占位符配置失败') }
-  finally { loading.value = false }
+  try { await Promise.all([loadRows(), qqApi.placeholderFields().then(value => { fields.value = value })]) }
+  catch (e) { error.value = getErrorMessage(e, '读取原始字段失败') }
 }
 async function edit(row?: QQPlaceholder) {
   // Always request the complete backend field catalog when opening the editor.
-  loading.value = true
+  fieldLoading.value = true
   try {
     fields.value = await qqApi.placeholderFields()
     editing.value = row || null
     Object.assign(form, { placeholder: row?.placeholder || '', source_field: row?.source_field || '' })
     open.value = true
   } catch (e) { message.error(getErrorMessage(e, '无法读取可选原始字段，请重试')) }
-  finally { loading.value = false }
+  finally { fieldLoading.value = false }
 }
 async function save() {
   if (saving.value) return
@@ -85,9 +84,9 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="toolbar"><span class="toolbar__hint">配置消息模板占位符与内容流字段的对应关系</span><a-space><a-button :loading="loading" @click="load"><ReloadOutlined /> 刷新</a-button><a-button type="primary" @click="edit()"><PlusOutlined /> 新增占位符</a-button></a-space></div>
+  <div class="toolbar"><span class="toolbar__hint">配置消息模板占位符与内容流字段的对应关系</span><a-space><a-button :loading="loading || fieldLoading" @click="load"><ReloadOutlined /> 刷新</a-button><a-button type="primary" @click="edit()"><PlusOutlined /> 新增占位符</a-button></a-space></div>
   <a-alert v-if="error" type="error" show-icon :message="error" />
-  <a-table :data-source="rows" :loading="loading" row-key="id" :pagination="false">
+  <a-table :data-source="rows" :loading="loading" row-key="id" :pagination="pagination" @change="changePage">
     <a-table-column title="占位符"><template #default="{record}"><code>{{ record.placeholder }}</code></template></a-table-column>
     <a-table-column title="原始字段"><template #default="{record}">{{ sourceLabel(record.source_field) }}</template></a-table-column>
     <a-table-column title="操作" :width="170"><template #default="{record}"><a-space><a-button type="link" :disabled="deleting.has(record.id)" @click="edit(record)"><EditOutlined /> 编辑</a-button><a-tooltip title="删除占位符"><a-button type="text" danger aria-label="删除占位符" :loading="deleting.has(record.id)" :disabled="deleting.has(record.id)" @click="remove(record)"><DeleteOutlined /></a-button></a-tooltip></a-space></template></a-table-column>
