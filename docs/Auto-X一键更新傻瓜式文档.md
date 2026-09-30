@@ -148,3 +148,19 @@ cat /home/docker/auto-x/.auto-x-services
 ```
 
 本次实测：`migrate` 为 `Exited (0)`，数据库版本为 `0027_qq_placeholders`；`{author}`、`{username}`、`{text}`、`{url}`、`{posted_at}`、`{title}` 六行默认映射均已写入。tc-2 的目标容器均为 healthy，frontend 与 backend 返回 HTTP 200；原 7 项服务清单已恢复。tc-1 服务保持 healthy。
+
+## 八、占位符删除与分页更新记录
+
+2026-09-30，目标提交 `ca734f6ac3ce26adb924d1a8a4eacd05c49e77f1` 的 [GitHub Actions 镜像构建](https://github.com/StanXu-symple/auto-x/actions/runs/36661218234)成功。尽管此次主要更新 `frontend` 和 `backend`，目标提交还包含迁移 `0028_qq_placeholder_seed_once`，用于在 `app_settings` 中记录默认占位符已经初始化，避免用户删除默认占位符后被重新插入。**每次更新前都应核对当前数据库版本与目标提交中的 `backend/alembic/versions`；不能仅凭服务更新范围判断无需迁移。**
+
+按第二节先备份数据库和原服务清单。本次 tc-2 升级前数据库为 `0027_qq_placeholders`，备份为 `/home/docker/auto-x/backups/pre-update-20260930-104848.dump`，原服务清单备份为 `/home/docker/auto-x/backups/services-20260930-104848.txt`。然后在 tc-2 执行：
+
+```bash
+cd ~
+KJ_AUTO_X_IMAGE_TAG=sha-ca734f6ac3ce26adb924d1a8a4eacd05c49e77f1 \
+AUTO_X_SERVICES=backend,frontend \
+bash kejilion.sh app auto-x
+# 运行环境输入 3（default），Auto-X 应用菜单输入 2（更新）
+```
+
+安装器自动加入 `auth-center`、`monitor-agent`，并由 Compose 的 `migrate` 服务执行 `alembic upgrade head`。更新成功后按第四节恢复原有 7 项服务清单，再按第五节验收。此次实测 `migrate` 为 `Exited (0)`，数据库为 `0028_qq_placeholder_seed_once`，`app_settings.qq_placeholder_defaults_seeded` 的值为 `{"initialized": true}`。`frontend`、`backend`、`auth-center`、`monitor-agent` 使用目标 SHA 且健康；`worker`、`qq-worker`、`ai-worker` 保持原镜像且健康；frontend、backend、auth 三个 HTTP 检查均返回 200。
