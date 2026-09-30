@@ -181,3 +181,19 @@ bash kejilion.sh app auto-x
 ```
 
 安装器自动加入 `auth-center`、`monitor-agent`，Compose 的 `migrate` 服务自动执行 `alembic upgrade head`。更新成功后按第四节恢复原有 7 项服务清单，并按第五节核对健康状态。本次实测 `migrate` 为 `Exited (0)`，数据库版本为 `0030_qq_message_templates`，`qq_message_templates` 表存在；1064 条历史内容分类为原创 431、回复 478、转推 155，现有 1 个群目标的监听模式为 `all`。目标服务及自动加入的依赖服务均使用目标 SHA 且健康，`ai-worker` 保持原镜像且健康；frontend、backend、auth 三个 HTTP 检查均返回 200。
+
+## 十、轮询记录删除与 AI 创作界面更新记录
+
+2026-09-30，`dev` 的 `c6570ef`、`22f998c`、`261a237` 三项提交一并发布到 `main`，目标提交为 `261a237f54d0e57297dcdc89ff6e189921f49d6e`，[GitHub Actions 镜像构建](https://github.com/StanXu-symple/auto-x/actions/runs/36671709563)成功。`c6570ef` 修改轮询记录后端接口和 X 采集时的记录更新，因此这次选择 `backend,worker,frontend`；后两项分别更新 AI 数据源 API Key 占位符和 Skills 表格。目标提交没有新增 Alembic 迁移，但完整更新仍会运行 `migrate` 检查。
+
+更新前按第二节备份。此次 tc-2 升级前数据库为 `0030_qq_message_templates`，备份文件为 `/home/docker/auto-x/backups/pre-update-20260930-130503.dump`，原服务清单备份为 `/home/docker/auto-x/backups/services-20260930-130503.txt`。在 tc-2 执行：
+
+```bash
+cd ~
+KJ_AUTO_X_IMAGE_TAG=sha-261a237f54d0e57297dcdc89ff6e189921f49d6e \
+AUTO_X_SERVICES=backend,worker,frontend \
+bash kejilion.sh app auto-x
+# 运行环境输入 3（default），Auto-X 应用菜单输入 2（更新）
+```
+
+安装器自动加入 `auth-center`、`monitor-agent`。更新成功后按第四节恢复原有 7 项服务清单。本次实测 `migrate` 为 `Exited (0)`，数据库版本仍为 `0030_qq_message_templates`；`backend`、`worker`、`frontend`、`auth-center`、`monitor-agent` 使用目标 SHA 且健康，`qq-worker`、`ai-worker` 保持原镜像且健康；frontend、backend、auth 三个 HTTP 检查均返回 200。
