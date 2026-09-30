@@ -1,13 +1,14 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Query
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.api.deps import CurrentAdmin, DbSession
+from app.api.errors import APIError
 from app.core.time import to_database_utc
 from app.models.monitored_user import MonitoredUser
 from app.models.polling_log import PollingLog
-from app.schemas.common import Page
+from app.schemas.common import MessageResponse, Page
 from app.schemas.polling import PollingLogOut
 
 router = APIRouter(tags=["Polling logs"])
@@ -79,3 +80,21 @@ async def list_polling_logs(
         page=page,
         page_size=page_size,
     )
+
+
+@router.delete("", response_model=MessageResponse)
+async def clear_polling_logs(db: DbSession, _: CurrentAdmin) -> MessageResponse:
+    await db.execute(delete(PollingLog))
+    await db.commit()
+    return MessageResponse(message="全部轮询记录已清空")
+
+
+@router.delete("/{log_id}", response_model=MessageResponse)
+async def delete_polling_log(log_id: int, db: DbSession, _: CurrentAdmin) -> MessageResponse:
+    result = await db.execute(
+        delete(PollingLog).where(PollingLog.id == log_id).returning(PollingLog.id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise APIError(404, "polling_log_not_found", "轮询记录不存在或已删除")
+    await db.commit()
+    return MessageResponse(message="轮询记录已删除")

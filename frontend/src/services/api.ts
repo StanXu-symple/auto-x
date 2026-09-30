@@ -203,6 +203,8 @@ export const tweetsApi = {
 }
 
 export const pollingLogsApi = {
+  async remove(id: EntityId) { await http.delete(`/polling-logs/${id}`) },
+  async clear() { await http.delete('/polling-logs') },
   async list(params: PollingRunQuery) {
     return pageOf(await http.get<Wrapped<PaginatedResponse<PollingRun>>>('/polling-logs', { params }))
   },

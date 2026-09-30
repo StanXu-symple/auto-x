@@ -715,7 +715,8 @@ class PollingService:
         error_message: str | None = None,
         rate_limit_reset_at: datetime | None = None,
     ) -> None:
-        log_row = await session.get(PollingLog, log_id)
+        # Serialize with log deletion so a late log update cannot roll back collected tweets.
+        log_row = await session.get(PollingLog, log_id, with_for_update=True)
         if log_row is None:
             return
         log_row.status = status
