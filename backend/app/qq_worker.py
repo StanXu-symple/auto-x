@@ -49,6 +49,7 @@ from app.models.qq import (
     QQScheduledTaskBot,
     QQScheduledTaskGroup,
 )
+from app.models.tweet import Tweet
 from app.services.article_media import article_delivery_media_path
 from app.services.metrics import (
     QQ_DELIVERIES,
@@ -63,6 +64,7 @@ from app.services.qq_notifications import (
     QQ_WORKER_HEARTBEAT,
     decrypt_app_secret,
     delivery_message_id,
+    target_history_cutoff,
 )
 from app.services.qq_schedule import next_qq_task_run
 
@@ -824,6 +826,17 @@ class QQDeliveryWorker:
                 group_openid = target.group_openid if target else delivery.group_openid
                 if target is None or bot is None or not target.is_enabled or not bot.is_enabled:
                     cancel_reason = "机器人或群通知目标已删除或停用"
+                elif delivery.kind == "tweet":
+                    cutoff = target_history_cutoff(target)
+                    if cutoff is not None:
+                        tweet = (
+                            await session.get(Tweet, delivery.source_tweet_id)
+                            if delivery.source_tweet_id is not None else None
+                        )
+                        if tweet is None:
+                            cancel_reason = "原始推文不存在，无法核验历史推送范围"
+                        elif as_utc(tweet.posted_at) < cutoff:
+                            cancel_reason = "消息发布时间早于群目标首次推送历史范围，已取消投递"
             if cancel_reason:
                 delivery.status = "cancelled"
                 delivery.last_error = cancel_reason
