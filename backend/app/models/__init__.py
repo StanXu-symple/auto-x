@@ -22,6 +22,7 @@ from app.models.qq import (
     QQScheduledTaskGroup,
     QQTargetSubscription,
 )
+from app.models.qq_message_template import QQMessageTemplate
 from app.models.qq_placeholder import QQPlaceholder
 from app.models.service_auth import (
     ServiceAuthAudit,
@@ -53,6 +54,7 @@ __all__ = [
     "MonitoredUser",
     "PollingLog",
     "QQPlaceholder",
+    "QQMessageTemplate",
     "QQBotAccount",
     "QQDelivery",
     "QQJoinedGroup",

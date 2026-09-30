@@ -802,3 +802,15 @@ export interface QQPlaceholderField {
   label: string
   category: string
 }
+
+
+export interface QQMessageTemplatePayload {
+  name: string
+  message_template: string
+  template_variables: Record<string, string>
+}
+export interface QQMessageTemplate extends QQMessageTemplatePayload {
+  id: number
+  created_at: string
+  updated_at: string
+}

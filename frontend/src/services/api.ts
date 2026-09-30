@@ -221,6 +221,11 @@ export const systemApi = {
 }
 
 export const qqApi = {
+  async messageTemplates(params: { page: number; page_size: number; search?: string }) { return pageOf(await http.get<Wrapped<PaginatedResponse<import('@/types').QQMessageTemplate>>>('/qq/message-templates', { params })) },
+  async messageTemplate(id: number) { return dataOf(await http.get<Wrapped<import('@/types').QQMessageTemplate>>(`/qq/message-templates/${id}`)) },
+  async createMessageTemplate(payload: import('@/types').QQMessageTemplatePayload) { return dataOf(await http.post<Wrapped<import('@/types').QQMessageTemplate>>('/qq/message-templates', payload)) },
+  async updateMessageTemplate(id: number, payload: import('@/types').QQMessageTemplatePayload) { return dataOf(await http.put<Wrapped<import('@/types').QQMessageTemplate>>(`/qq/message-templates/${id}`, payload)) },
+  async removeMessageTemplate(id: number) { await http.delete(`/qq/message-templates/${id}`) },
   async botPage(params: { page: number; page_size: number }) { return pageOf(await http.get<Wrapped<PaginatedResponse<QQBotAccount>>>('/qq/bots', { params })) },
   async targetPage(params: { page: number; page_size: number }) { return pageOf(await http.get<Wrapped<PaginatedResponse<QQNotificationTarget>>>('/qq/targets', { params })) },
   async placeholderPage(params: { page: number; page_size: number }) { return pageOf(await http.get<Wrapped<PaginatedResponse<import('@/types').QQPlaceholder>>>('/qq/placeholders', { params })) },

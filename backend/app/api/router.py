@@ -10,6 +10,7 @@ from app.api.routes import (
     monitored_users,
     polling_logs,
     qq,
+    qq_message_templates,
     qq_placeholders,
     settings,
     system,
@@ -34,6 +35,7 @@ api_router.include_router(polling_logs.router, prefix="/polling-logs")
 api_router.include_router(polling_logs.router, prefix="/poll-runs", include_in_schema=False)
 api_router.include_router(qq.router)
 api_router.include_router(qq_placeholders.router)
+api_router.include_router(qq_message_templates.router)
 api_router.include_router(system.router)
 api_router.include_router(settings.router)
 api_router.include_router(x_credentials.router)
