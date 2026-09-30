@@ -366,6 +366,19 @@ def write_bootstrap_cache(path: Path, values: Mapping[str, object], *, keys: set
     return len(updates)
 
 
+def ensure_camoufox_defaults(values: dict) -> None:
+    """Add new browser settings during upgrades without replacing Nacos values."""
+    defaults = {
+        "CAMOUFOX_SERVICE_NAME": "xsentinel-camoufox-worker",
+        "CAMOUFOX_BROWSER_POOL_SIZE": 1,
+        "CAMOUFOX_MAX_CONCURRENCY": 1,
+        "CAMOUFOX_JOB_TIMEOUT_SECONDS": 290,
+        "CAMOUFOX_JOB_RESULT_TTL_SECONDS": 600,
+    }
+    for key, value in defaults.items():
+        values.setdefault(key, value)
+
+
 def ensure_camoufox_caller(values: dict) -> None:
     """Seed only the new XHS identity; preserve existing authority/grant choices."""
     import hashlib
@@ -710,6 +723,7 @@ def sync_monitor_documents(
     server: str, *, namespace: str, group: str, token: str, timeout: float,
     local_env: Mapping[str, str], control_dir: Path, seed_node_id: str,
     seed_topology_path: Path | None = None,
+    selected_services: str = "",
 ) -> None:
     topology_id = str(local_env.get("NACOS_MONITOR_TOPOLOGY_DATA_ID") or "x-sentinel-monitor-topology.json")
     nodes_id = str(local_env.get("NACOS_MONITOR_NODES_DATA_ID") or "x-sentinel-monitor-nodes.json")
@@ -754,6 +768,36 @@ def sync_monitor_documents(
                and item.get("advertise_ip") == address]
     if len(matches) != 1 or matches[0] not in topology["nodes"]:
         raise RuntimeError(f"Nacos 监控节点映射未将 {address!r} 唯一绑定到拓扑节点；首次安装需指定 KJ_AUTO_X_MONITOR_NODE_ID")
+    # Existing cluster topology is authoritative. Add only the new browser
+    # owner when this installer run actually deploys it on the resolved node.
+    node_id = matches[0]
+    browser_selected = "camoufox-worker" in {
+        service.strip() for service in selected_services.split(",")
+    }
+    browser_monitored = any(
+        service["node"] == node_id
+        and service["project"] == "x-sentinel"
+        and service["container_service"] == "camoufox-worker"
+        for service in topology["services"]
+    )
+    if browser_selected and not browser_monitored:
+        service_id = (
+            "camoufox-worker" if node_id == "local"
+            else f"{node_id.replace('-', '')}-camoufox-worker"
+        )
+        if any(service["id"] == service_id for service in topology["services"]):
+            raise RuntimeError(f"Nacos 监控拓扑服务 id {service_id} 已被其他实例占用")
+        port = int(local_env.get("CAMOUFOX_WORKER_HOST_PORT") or 8007)
+        if not 1 <= port <= 65535:
+            raise RuntimeError("CAMOUFOX_WORKER_HOST_PORT 必须是有效 TCP 端口")
+        topology["services"].append({
+            "id": service_id, "name": "Camoufox Worker", "component": "camoufox_worker",
+            "node": node_id, "project": "x-sentinel", "container_service": "camoufox-worker",
+            "port": port,
+        })
+        validate_monitor_topology(topology)
+        publish(server, namespace=namespace, group=group, data_id=topology_id,
+                content=topology, token=token, timeout=timeout)
     print(f"Nacos 监控配置已同步: {topology_id}, {nodes_id}（本机节点 {matches[0]}）")
 
 
@@ -819,6 +863,8 @@ def main() -> int:
     parser.add_argument("--sync-monitor", action="store_true")
     parser.add_argument("--monitor-node-id", default="")
     parser.add_argument("--monitor-topology-file", type=Path)
+    parser.add_argument("--monitor-services", default="",
+                        help="selected node services; add missing Camoufox monitoring on upgrade")
     parser.add_argument("--username")
     parser.add_argument("--password")
     parser.add_argument("--timeout", type=float)
@@ -929,6 +975,7 @@ def main() -> int:
     # Existing Nacos values win; local values only seed missing keys.
     merged = dict(local)
     merged.update(remote)
+    ensure_camoufox_defaults(merged)
     ensure_camoufox_caller(merged)
     # Nacos remains authoritative by default.  An explicit command-line
     # override is the only supported way to supersede an existing remote value,
@@ -945,6 +992,7 @@ def main() -> int:
             local_env=local_env, control_dir=args.control_plane_dir,
             seed_node_id=args.monitor_node_id,
             seed_topology_path=args.monitor_topology_file,
+            selected_services=args.monitor_services,
         )
     publish(
         server,

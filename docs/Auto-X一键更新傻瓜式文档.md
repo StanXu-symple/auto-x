@@ -215,3 +215,70 @@ bash kejilion.sh app auto-x
 ```
 
 本次实测 frontend 镜像为目标 SHA、状态为 healthy，页面 HTTP 200；backend 容器和 migrate 容器的 ID 均未变化，数据库仍为 `0030_qq_message_templates`，原有 7 项服务清单保持不变。
+
+## 十二、Camoufox 独立服务迁移
+
+目标 Auto-X 提交为 `936774a32ec78c7a73987d65b5ea8968f032c80f`。新服务 `camoufox-worker` 与 `xhs-worker` 一起部署在 tc-1，认证中心、backend 和 frontend 在 tc-2 更新；本次无新增 Alembic 迁移。`camoufox-worker` 监听 `8007`，Compose 内存上限为 `2g`，沿用 tc-1 的 `x-sentinel_xhs_home` 卷。跨节点调用和认证说明见 [Camoufox Worker](camoufox-worker.md)。
+
+更新前按第二节备份 tc-2 数据库，以及两台的 `.env`、`.auto-x-services`、`data/control-plane`；tc-1 另备份 `x-sentinel_xhs_home` 卷。核对两台的 `kejilion.sh`、`auto-x.sh` 和 `/root/apps/auto-x.conf` 是目标发布版本。下载 `kejilion.sh` 时不要用 `gh.kejilion.pro/raw.githubusercontent.com/...` 作为精确文件来源：该代理曾改写脚本中的 GitHub URL，使 SHA-256 与 Git 发布提交不符。应从 `https://gh.kejilion.pro/github.com/StanXu-symple/sh.git` 获取 Git 提交并校验文件哈希。
+
+先在 tc-2 执行：
+
+```bash
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_IMAGE_TAG=sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
+AUTO_X_SERVICES=backend,auth-center,frontend \
+bash kejilion.sh app auto-x
+```
+
+该入口执行应用菜单的 `2. 更新`。非交互入口跳过运行环境提问，tc-2 使用 default。确认新 auth-center 已导入 `xhs-worker` 服务身份，backend、frontend、auth-center 健康，数据库版本仍为 `0030_qq_message_templates`。将 tc-2 的 `.auto-x-services` 恢复为更新前的完整清单。
+
+tc-1 必须明确指定 CN 镜像源，包括新增的 Camoufox 镜像：
+
+```bash
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.nju.edu.cn \
+KJ_AUTO_X_IMAGE_TAG=sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
+KJ_AUTO_X_PULL_TIMEOUT_SECONDS=900 \
+AUTO_X_SERVICES=xhs-worker,camoufox-worker,monitor-center,monitor-agent \
+bash kejilion.sh app auto-x
+```
+
+使用应用定义提交 `46e0577d069b331dc563c6b8d1ee9b216fc69769` 或后续版本。它会将先前误写入 `.env` 的默认 Camoufox 代理改为 `ghcr.nju.edu.cn`，但保留自定义镜像地址。更新前检查 `.env` 中 `CAMOUFOX_WORKER_IMAGE=ghcr.nju.edu.cn/stanxu-symple/auto-x-camoufox-worker`；安装器拉完镜像后才停止旧 xhs-worker，避免同时打开浏览器配置。更新成功后恢复 tc-1 完整服务清单 `xhs-worker,camoufox-worker,monitor-center,monitor-agent`。
+
+验收检查 tc-1 的 `camoufox-worker` 和 `xhs-worker` 健康、`8007` 正常监听、Camoufox 容器 `HostConfig.Memory=2147483648`、Nacos 中 `xsentinel-camoufox-worker` 注册健康，以及 tc-2 的 `/api/v1/xhs/status`。浏览器服务的 `/v1/status` 受认证中心 JWT 保护，未带令牌返回 401 是正常结果。最后用测试账号核对保存登录态、二维码回传与发布流程；测试发布可能产生平台内容，应使用指定测试账号。
+
+2026-09-30 实测进度：tc-2 按上述版本更新成功，`auth-center` 已导入 `xhs-worker` 身份，backend、frontend、auth-center、monitor-agent 健康，数据库仍为 `0030_qq_message_templates`，原服务清单已恢复。tc-1 首次使用非交互入口时遗漏 `KJ_AUTO_X_IMAGE_REGISTRY`，Camoufox 镜像因此误用 default 代理；该次在停止旧服务前取消。修复安装器后再次确认 `.env` 和拉取日志均为 `ghcr.nju.edu.cn`。南京大学镜像源的 Camoufox 镜像约 1.10 GB，最大单层约 923 MB；第二次拉取在单层 566.2 MB 停滞，按用户要求中断。tc-1 旧 xhs-worker、monitor-center、monitor-agent 仍健康，`camoufox-worker` 尚未安装。继续时需要从本节 tc-1 命令重试，并在完成后执行上述验收；不能将 tc-2 的成功视为整个双节点迁移完成。
+
+### 下载进度长时间不变时的排查
+
+`ctr -n moby content active` 也会列出失败下载留下的临时层；必须同时检查下载进程和日志，不能仅凭 SIZE 判断任务仍在运行：
+
+```bash
+ssh tc-1
+ps -p "$(cat /root/auto-x-camoufox-background-pull.pid)" -o pid,etime,args
+tail -n 20 /root/auto-x-camoufox-background-pull.log
+ctr -n moby content active
+```
+
+2026-09-30 17:59 排查发现，取消旧的 566.2 MB 临时层并从头下载后，南京大学源的后台拉取已于 17:45 因 `short read ... unexpected EOF` 退出，遗留数据为 524,288,131 字节，完整层应为 923,029,924 字节。tc-1 磁盘剩余约 41 GB、可用内存约 1.9 GiB，内核没有 OOM 或磁盘 I/O 错误记录。针对该层发送 Range 请求时，南京大学源返回 HTTP 200，未提供分段续传；官方 GHCR 在同一节点返回 HTTP 206 与正确的 Content-Range。该结果说明此次失败发生在镜像传输链路，不能通过无限等待遗留临时层解决，也不足以断言镜像源存在固定大小限制。
+
+用户确认后改用官方 `ghcr.io` 拉取同一 SHA；首次尝试在连接 `pkg-containers.githubusercontent.com` 时遇到 `TLS handshake timeout`，尚未传输镜像层。后续探测该域名各 IPv4 的 TCP 与 TLS 总建连耗时约 0.4～11.4 秒，TLS 阶段约 0.2～8.1 秒；这些后续成功探测未复现超时，只说明连接时延存在波动。Docker 未配置出站代理。遇到此错误先报告，保留临时层，确认是否重试；不要改动业务容器、Nacos 或数据库来处理镜像下载问题。下载成功后再检查镜像 ID、重新标记为安装器使用的镜像地址，并使用 `KJ_AUTO_X_SKIP_PULL=1` 通过原菜单更新。
+
+### Nacos 缺失配置的升级补齐
+
+旧部署的 Nacos 文档不会随源码模板自动增加字段。本次检查发现共享运行配置缺少 5 项 Camoufox 配置，独立监控拓扑仍只有 12 项，缺少浏览器实例。更新前保存 Nacos 的原共享配置和监控拓扑作为受限备份；安装器通过 `infra/scripts/nacos-config.py` 补齐以下默认值，已有 Nacos 配置值保留：
+
+| 配置名 | 缺失时补入值 | 作用 |
+| --- | --- | --- |
+| `CAMOUFOX_SERVICE_NAME` | `xsentinel-camoufox-worker` | Nacos 服务发现名 |
+| `CAMOUFOX_BROWSER_POOL_SIZE` | `1` | 浏览器池保留数量上限 |
+| `CAMOUFOX_MAX_CONCURRENCY` | `1` | 浏览器任务并发上限 |
+| `CAMOUFOX_JOB_TIMEOUT_SECONDS` | `290` | 单个浏览器任务超时秒数 |
+| `CAMOUFOX_JOB_RESULT_TTL_SECONDS` | `600` | 完成结果保留秒数 |
+
+安装器将本次所选服务传入 `--monitor-services`；只有选中 `camoufox-worker` 且 Nacos 拓扑缺少本节点相应容器选择器时，才向 `x-sentinel-monitor-topology.json` 增加浏览器监控记录。tc-1 使用 `tc1-camoufox-worker`，默认端口 8007，若设置了节点映射端口则使用 `CAMOUFOX_WORKER_HOST_PORT`。已有监控记录、采集周期、节点映射与自定义端口保留；重复更新不会新增重复记录。已有服务 ID 被其他记录占用时先报错，不覆盖配置。
+
+先发布并刷新应用定义和 Auto-X `main` 源码，再运行本节中的同一更新入口。配置由安装器同步到 Nacos；应用启动时读取 Nacos 的生效值。升级修复只修改配置同步程序、安装器和文档，仍使用已发布且正在下载的 `sha-936774a32ec78c7a73987d65b5ea8968f032c80f` 运行镜像。验收共享配置包含上述 5 项，监控拓扑包含 13 项且浏览器实例健康。

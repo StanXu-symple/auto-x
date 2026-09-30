@@ -61,7 +61,7 @@ chmod +x kejilion.sh
 推荐先安装 `tc-2`，再安装 `tc-1`：
 
 1. `tc-2` 运行 backend、auth-center、Worker、frontend，并作为默认数据服务节点。
-2. `tc-1` 运行小红书 Worker、monitor-center、monitor-agent，并从 Nacos 读取共享配置。
+2. `tc-1` 运行小红书 Worker、独立 Camoufox 浏览器 Worker、monitor-center、monitor-agent，并从 Nacos 读取共享配置。
 
 两台机器使用同一个 Nacos namespace 和 group，并共用下述三个 Data ID。第一次安装会生成数据库密码、Redis 密码、管理员密码、JWT/X 密钥、认证中心密钥和服务客户端凭据并发布到 Nacos；第二台安装时会复用 Nacos 中已有值。
 
@@ -69,7 +69,7 @@ chmod +x kejilion.sh
 
 | Data ID | 内容 | 来源与作用 |
 | --- | --- | --- |
-| `x-sentinel-monitor-topology.json` | 完整的 `services.tc-dual.json` JSON：采集周期、超时、节点、12 个服务 | 首台安装时初始化；之后由 Nacos 管理，monitor-center 和 monitor-agent 启动时直接读取。 |
+| `x-sentinel-monitor-topology.json` | 完整的 `services.tc-dual.json` JSON：采集周期、超时、节点、13 个服务 | 首台安装时初始化；之后由 Nacos 管理，monitor-center 和 monitor-agent 启动时直接读取。升级旧部署并选中 camoufox-worker 时，安装器仅补入本节点缺少的浏览器监控记录。 |
 | `x-sentinel-monitor-nodes.json` | `{"nodes":{"tc-1":{"advertise_ip":"..."},"tc-2":{"advertise_ip":"..."}}}` | 安装器将节点 ID 和检测到的本机公网注册地址绑定；agent 按本机 `NACOS_ADVERTISE_IP` 找到自己对应的节点 ID。 |
 
 `x-sentinel-config.json` 继续保存其他应用运行配置，不再用来控制监控拓扑。`MONITOR_STALE_SECONDS` 仍用于 backend 判断监控快照是否过期；拓扑自身的 `stale_seconds` 在新的拓扑 Data ID 中。两份新配置是合法 JSON，直接在 Nacos 控制台编辑，不要写 JSON 注释。修改后重启 monitor-center 和相关 monitor-agent 才会加载新值。
@@ -174,7 +174,7 @@ bash kejilion.sh app auto-x
 服务选择输入：
 
 ```text
-xhs-worker,monitor-center,monitor-agent
+xhs-worker,camoufox-worker,monitor-center,monitor-agent
 ```
 
 不要在 tc-1 手工添加 `auth-center`。认证中心由 tc-2 提供，tc-1 会通过 Nacos 服务发现和共享服务凭据访问它。
@@ -201,6 +201,7 @@ docker compose ls
 
 ```text
 x-sentinel-xhs-worker-1
+x-sentinel-camoufox-worker-1
 x-sentinel-monitor-center-1
 x-sentinel-monitor-agent-1
 ```
@@ -235,6 +236,7 @@ curl -fsS http://127.0.0.1:9100/health/ready
 curl -fsS http://127.0.0.1:9101/health/live
 curl -fsS http://127.0.0.1:9102/health/live
 curl -fsS http://127.0.0.1:8006/health/live
+curl -fsS http://127.0.0.1:8007/health/live
 ```
 
 不存在的服务端口可以跳过。返回 HTTP 200 即表示对应服务已就绪。
@@ -260,13 +262,14 @@ xsentinel-ai-worker
 xsentinel-qq-worker
 xsentinel-auth-center
 xsentinel-xhs-worker
+xsentinel-camoufox-worker
 xsentinel-monitor-center
 xsentinel-monitor-agent-<节点名>
 ```
 
 `frontend` 是由 Nginx 提供的前端页面，不注册到 Nacos；通过 `tc-2` 的 `http://43.172.88.37:8080` 验证页面可访问。
 
-后端和监控服务通过 Nacos 发现 `xsentinel-auth-center`，本部署不需要单独填写 `SERVICE_AUTH_URL`。双节点监控验收应看到 `xsentinel-monitor-agent-tc-1` 和 `xsentinel-monitor-agent-tc-2` 各有一个健康实例；监控中心的 12 个资源实例应全部为 healthy。
+后端和监控服务通过 Nacos 发现 `xsentinel-auth-center`，本部署不需要单独填写 `SERVICE_AUTH_URL`。双节点监控验收应看到 `xsentinel-monitor-agent-tc-1` 和 `xsentinel-monitor-agent-tc-2` 各有一个健康实例；监控中心的 13 个资源实例应全部为 healthy。xhs-worker 通过 Nacos 发现 `xsentinel-camoufox-worker`，用认证中心签发的服务 JWT 调用其 API；浏览器服务 `/v1/status` 未带令牌返回 401 属于正常鉴权结果。8007/TCP 应允许调用节点访问其 Nacos 公网注册地址。
 
 ### 4. 配置中心内容
 
@@ -284,7 +287,7 @@ X_SENTINEL
 
 配置中会包含数据库、Redis、管理员、JWT/X、认证中心、provider 和 Worker 运行参数。Nacos 的连接地址、账号和密码仍保留在每台主机的本地引导文件中，因为应用必须先用它们连接 Nacos。
 
-另外检查同一 Group 下的 `x-sentinel-monitor-topology.json` 和 `x-sentinel-monitor-nodes.json`：前者应有 12 个 `services`，后者应有 `tc-1`、`tc-2` 两个节点。编辑监控配置只需改这两个 Data ID；安装器后续更新会保留已有的远端内容。
+另外检查同一 Group 下的 `x-sentinel-monitor-topology.json` 和 `x-sentinel-monitor-nodes.json`：前者应有 13 个 `services`，后者应有 `tc-1`、`tc-2` 两个节点。编辑监控配置只需改这两个 Data ID；安装器后续更新会保留已有的远端内容，并在部署 camoufox-worker 时补入缺少的浏览器监控记录。浏览器的 5 项运行配置由安装器补充到 `x-sentinel-config.json`，已有值优先，详见[更新文档](Auto-X一键更新傻瓜式文档.md#nacos-缺失配置的升级补齐)。
 
 ## 七、常见问题处理
 
@@ -314,6 +317,8 @@ git -C /root/apps rev-parse --short HEAD
 ### tc-1 镜像拉取长时间没有进度
 
 安装器在 `tc-1` 选择运行环境 `1`（CN）后，默认从 `ghcr.nju.edu.cn` 拉取 Auto-X 镜像。`tc-1` 已实际拉取并验证 backend、xhs-worker 和 frontend 镜像；其他运行环境仍使用原来的 `ghcr.dockerproxy.net`。单次拉取超过 900 秒时会终止该镜像源的尝试，并自动切换到官方 `ghcr.io`；`timeout` 返回 124 或 Docker Compose 未及时退出时返回 137，均视为超时。普通拉取错误最多重试 3 次。
+
+新增独立 `camoufox-worker` 后，tc-1 也应从 `ghcr.nju.edu.cn/stanxu-symple/auto-x-camoufox-worker` 拉取。`KJ_APP_INTERACTIVE=1` 等非交互入口不会出现运行环境菜单；此时必须显式设置 `KJ_AUTO_X_IMAGE_REGISTRY=ghcr.nju.edu.cn`。应用定义从提交 `46e0577` 起，会把此前误写入 `.env` 的 Camoufox 默认代理迁移到 CN 源，保留自定义镜像地址。更新步骤和验收见[更新文档的 Camoufox 迁移章节](Auto-X一键更新傻瓜式文档.md#十二camoufox-独立服务迁移)。
 
 此前 `tc-1` 从旧代理 `ghcr.dockerproxy.net` 下载停在 10/13；已改用上述国内源，并把默认上限设为 900 秒。中断后继续选择运行环境 `1`（CN）：
 

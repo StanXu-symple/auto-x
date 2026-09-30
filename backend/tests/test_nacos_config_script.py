@@ -584,3 +584,96 @@ def test_camoufox_runtime_config_is_remote_but_port_and_image_are_local():
     assert 'CAMOUFOX_BROWSER_POOL_SIZE' in module.RUNTIME_CONFIG_KEYS
     assert 'CAMOUFOX_WORKER_IMAGE' in module.EXCLUDED_KEYS
     assert 'CAMOUFOX_SERVICE_ADVERTISE_PORT' in module.EXCLUDED_KEYS
+
+
+def test_camoufox_defaults_upgrade_preserves_config_and_is_idempotent():
+    module = load_script()
+    values = {"CAMOUFOX_MAX_CONCURRENCY": 2, "XHS_JOB_TIMEOUT_SECONDS": 450}
+    module.ensure_camoufox_defaults(values)
+    assert values == {
+        "CAMOUFOX_SERVICE_NAME": "xsentinel-camoufox-worker",
+        "CAMOUFOX_BROWSER_POOL_SIZE": 1,
+        "CAMOUFOX_MAX_CONCURRENCY": 2,
+        "CAMOUFOX_JOB_TIMEOUT_SECONDS": 290,
+        "CAMOUFOX_JOB_RESULT_TTL_SECONDS": 600,
+        "XHS_JOB_TIMEOUT_SECONDS": 450,
+    }
+    first = dict(values)
+    module.ensure_camoufox_defaults(values)
+    assert values == first
+
+
+def test_monitor_upgrade_adds_only_selected_browser_and_preserves_remote(monkeypatch, tmp_path):
+    import copy
+    module = load_script()
+    topology = module.monitor_seed_topology("tc-1", tmp_path)
+    topology["services"] = [s for s in topology["services"]
+                            if s["container_service"] != "camoufox-worker"]
+    topology["interval_seconds"] = 17
+    remote = {
+        "x-sentinel-monitor-topology.json": copy.deepcopy(topology),
+        "x-sentinel-monitor-nodes.json": {
+            "nodes": {"tc-1": {"advertise_ip": "203.0.113.11"}}
+        },
+    }
+    published = []
+
+    def fake_load(_server, *, data_id, **_kwargs):
+        return copy.deepcopy(remote.get(data_id))
+
+    def fake_publish(_server, *, data_id, content, **_kwargs):
+        remote[data_id] = copy.deepcopy(content)
+        published.append(data_id)
+
+    monkeypatch.setattr(module, "load_json_document", fake_load)
+    monkeypatch.setattr(module, "publish", fake_publish)
+    common = dict(server="http://nacos", namespace="public", group="X_SENTINEL",
+                  token="", timeout=3, control_dir=tmp_path, seed_node_id="",
+                  local_env={"NACOS_ADVERTISE_IP": "203.0.113.11",
+                             "CAMOUFOX_WORKER_HOST_PORT": "18007"})
+    module.sync_monitor_documents(**common, selected_services="xhs-worker,monitor-agent")
+    assert published == []
+    assert remote["x-sentinel-monitor-topology.json"] == topology
+
+    module.sync_monitor_documents(**common, selected_services="camoufox-worker,monitor-agent")
+    updated = remote["x-sentinel-monitor-topology.json"]
+    assert updated["services"][:-1] == topology["services"]
+    assert updated["interval_seconds"] == 17
+    assert updated["nodes"] == topology["nodes"]
+    assert updated["services"][-1] == {
+        "id": "tc1-camoufox-worker", "name": "Camoufox Worker",
+        "component": "camoufox_worker", "node": "tc-1", "project": "x-sentinel",
+        "container_service": "camoufox-worker", "port": 18007,
+    }
+    assert published == ["x-sentinel-monitor-topology.json"]
+
+    updated["services"][-1].update(id="custom-browser", name="Custom Browser", port=28007)
+    before = copy.deepcopy(updated)
+    module.sync_monitor_documents(**common, selected_services="camoufox-worker")
+    assert remote["x-sentinel-monitor-topology.json"] == before
+    assert published == ["x-sentinel-monitor-topology.json"]
+
+
+def test_monitor_browser_upgrade_rejects_id_collision(monkeypatch, tmp_path):
+    import copy
+    import pytest
+    module = load_script()
+    topology = module.monitor_seed_topology("tc-1", tmp_path)
+    topology["services"] = [s for s in topology["services"]
+                            if s["container_service"] != "camoufox-worker"]
+    topology["services"][0]["id"] = "tc1-camoufox-worker"
+    remote = {
+        "x-sentinel-monitor-topology.json": topology,
+        "x-sentinel-monitor-nodes.json": {
+            "nodes": {"tc-1": {"advertise_ip": "203.0.113.11"}}
+        },
+    }
+    monkeypatch.setattr(module, "load_json_document",
+                        lambda _server, *, data_id, **_kwargs: copy.deepcopy(remote[data_id]))
+    monkeypatch.setattr(module, "publish", lambda *_args, **_kwargs: pytest.fail("must not publish"))
+    with pytest.raises(RuntimeError, match="已被其他实例占用"):
+        module.sync_monitor_documents(
+            "http://nacos", namespace="public", group="X_SENTINEL", token="", timeout=3,
+            control_dir=tmp_path, seed_node_id="", selected_services="camoufox-worker",
+            local_env={"NACOS_ADVERTISE_IP": "203.0.113.11"},
+        )
