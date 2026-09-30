@@ -22,6 +22,7 @@ from app.models.qq import (
     QQScheduledTaskGroup,
     QQTargetSubscription,
 )
+from app.models.qq_placeholder import QQPlaceholder
 from app.models.service_auth import (
     ServiceAuthAudit,
     ServiceAuthBootstrapState,
@@ -51,6 +52,7 @@ __all__ = [
     "AppSetting",
     "MonitoredUser",
     "PollingLog",
+    "QQPlaceholder",
     "QQBotAccount",
     "QQDelivery",
     "QQJoinedGroup",

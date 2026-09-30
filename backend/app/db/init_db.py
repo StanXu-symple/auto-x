@@ -14,7 +14,9 @@ from app.models import (  # imports all model metadata
     AISetting,
     AISkill,
     AppSetting,
+    QQPlaceholder,
 )
+from app.schemas.qq_placeholder import DEFAULT_PLACEHOLDERS
 from app.services.ai_defaults import DEFAULT_AI_FEATURES, DEFAULT_AI_MODEL, DEFAULT_AI_SKILLS
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,11 @@ async def seed_runtime_defaults(settings: Settings, *, seed_admin: bool = True) 
                 "Initial administrator seed ensured",
                 extra={"username": settings.admin_username},
             )
+
+        statement = postgres_insert(QQPlaceholder).values(DEFAULT_PLACEHOLDERS)
+        await session.execute(
+            statement.on_conflict_do_nothing(index_elements=[QQPlaceholder.placeholder])
+        )
 
         polling = await session.get(AppSetting, "polling")
         if polling is None:

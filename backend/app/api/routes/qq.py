@@ -41,6 +41,7 @@ from app.schemas.qq import (
     QQTargetCreate,
     QQTargetOut,
     QQTargetUpdate,
+    normalize_message_template,
 )
 from app.services.qq_notifications import (
     QQ_BOT_STATUS,
@@ -57,6 +58,7 @@ from app.services.qq_notifications import (
     secret_hint,
     validate_qq_credentials,
 )
+from app.services.qq_placeholders import load_placeholder_mappings, validate_target_template
 from app.services.qq_schedule import next_qq_task_run
 
 router = APIRouter(prefix="/qq", tags=["QQ Notifications"])
@@ -373,6 +375,9 @@ async def create_target(
     payload: QQTargetCreate, db: DbSession, redis: RedisClient, _: CurrentAdmin
 ) -> QQTargetOut:
     await _get_bot(db, payload.bot_id)
+    payload.message_template = await validate_target_template(
+        db, payload.message_template, payload.template_variables
+    )
     now = datetime.now(UTC)
     row = QQNotificationTarget(
         bot_id=payload.bot_id,
@@ -423,6 +428,9 @@ async def update_target(
     for field in ("is_enabled", "all_monitored_users", "message_template", "template_variables"):
         if field in updates:
             setattr(row, field, updates[field])
+    row.message_template = await validate_target_template(
+        db, row.message_template, row.template_variables
+    )
     final_all = row.all_monitored_users
     if "monitored_user_ids" in updates or "all_monitored_users" in updates:
         if "monitored_user_ids" in updates:
@@ -511,26 +519,32 @@ async def batch_push(
             )
         )
     }
+    mappings = await load_placeholder_mappings(db)
     messages_by_group = {}
     for group in sorted(joined):
         target = targets.get(group)
-        template = target.message_template if target else DEFAULT_QQ_MESSAGE_TEMPLATE
+        template = normalize_message_template(
+            target.message_template if target else DEFAULT_QQ_MESSAGE_TEMPLATE,
+            {**mappings, **(target.template_variables or {} if target else {})},
+        )
         # {title} is a batch header and must only be emitted once per QQ message.
-        body_template = template.replace("{title}", "").strip()
+        body_template = template
+        if mappings.get("title") == "title":
+            body_template = template.replace("{title}", "").strip()
         entries = [
             render_qq_message(
                 body_template,
                 tweet=tweet,
                 user=users[tweet.monitored_user_id],
-                title="",
                 template_variables=target.template_variables if target else None,
+                placeholder_mappings=mappings,
             )
             for tweet in rows
             if tweet.monitored_user_id in users
         ]
         header = ""
-        if "{title}" in template:
-            header = (target.template_variables.get("title") if target else None) or "【X Sentinel】内容推送"
+        if "{title}" in template and mappings.get("title") == "title":
+            header = "【X Sentinel】内容推送"
         messages_by_group[group] = ([header] if header else []) + entries
     if not any(messages_by_group.values()):
         raise APIError(404, "tweets_not_found", "所选内容缺少来源账号，无法推送")

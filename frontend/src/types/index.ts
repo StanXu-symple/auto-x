@@ -782,3 +782,16 @@ export interface ApiErrorBody {
     request_id?: string
   }
 }
+
+export interface QQPlaceholder {
+  id: number
+  placeholder: string
+  source_field: string
+  created_at: string
+  updated_at: string
+}
+export interface QQPlaceholderField {
+  value: string
+  label: string
+  category: string
+}

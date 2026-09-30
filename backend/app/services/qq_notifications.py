@@ -16,6 +16,7 @@ from app.models.monitored_user import MonitoredUser
 from app.models.qq import QQBotAccount, QQDelivery, QQNotificationTarget, QQTargetSubscription
 from app.models.tweet import Tweet
 from app.schemas.qq import normalize_message_template
+from app.services.qq_placeholders import load_placeholder_mappings, placeholder_values
 from app.services.x_credentials import (
     XCredentialUnavailableError,
     decrypt_token,
@@ -67,18 +68,12 @@ def render_qq_message(
     user: MonitoredUser,
     title: str = "【X Sentinel】内容推送",
     template_variables: dict[str, str] | None = None,
+    placeholder_mappings: dict[str, str] | None = None,
 ) -> str:
-    values = {
-        "author": user.display_name or user.username,
-        "username": user.username,
-        "text": tweet.text.strip(),
-        "url": f"https://x.com/{user.username}/status/{tweet.tweet_id}",
-        "posted_at": tweet.posted_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-        "title": title,
-    }
+    values = placeholder_values(placeholder_mappings, tweet, user, title)
     if template_variables:
         values.update(template_variables)
-    message = normalize_message_template(template, template_variables).format_map(values).strip()
+    message = normalize_message_template(template, values).format_map(values).strip()
     if len(message) <= QQ_MESSAGE_MAX_CHARS:
         return message
     return message[: QQ_MESSAGE_MAX_CHARS - 3].rstrip() + "..."
@@ -275,6 +270,7 @@ async def create_tweet_deliveries(
     )
     now = datetime.now(UTC)
     rows: list[QQDelivery] = []
+    mappings = await load_placeholder_mappings(session)
     cutoffs = {target.id: target_history_cutoff(target) for target, _ in target_rows}
     for tweet in tweets:
         user = users.get(tweet.monitored_user_id)
@@ -305,6 +301,7 @@ async def create_tweet_deliveries(
                         tweet=tweet,
                         user=user,
                         template_variables=target.template_variables,
+                        placeholder_mappings=mappings,
                     ),
                     status="queued",
                     attempts=0,

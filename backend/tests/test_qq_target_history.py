@@ -6,7 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.qq import QQNotificationTarget
+from app.models.qq_placeholder import QQPlaceholder
 from app.schemas.qq import QQTargetCreate
+from app.schemas.qq_placeholder import DEFAULT_PLACEHOLDERS
 from app.services.qq_notifications import (
     create_target_history_deliveries,
     create_tweet_deliveries,
@@ -58,7 +60,12 @@ async def test_late_ingestion_filters_by_publication_time_and_includes_boundary(
         for i, age in [(1, 8), (2, 7), (3, 0)]
     ]
     db = AsyncMock()
-    db.scalars.side_effect = [tweets, [SimpleNamespace(id=1)], []]
+    db.scalars.side_effect = [
+        tweets,
+        [SimpleNamespace(id=1)],
+        [],
+        [QQPlaceholder(**row) for row in DEFAULT_PLACEHOLDERS],
+    ]
     db.execute.side_effect = [
         SimpleNamespace(all=lambda: [(target, bot)]),
         SimpleNamespace(tuples=lambda: []),
@@ -96,6 +103,7 @@ async def test_create_target_persists_history_before_enqueue():
 
     db = AsyncMock()
     rows = []
+    db.scalars.return_value = [QQPlaceholder(**row) for row in DEFAULT_PLACEHOLDERS]
     db.add = rows.append
     payload = QQTargetCreate(
         bot_id=1, name="group", group_openid="abc", all_monitored_users=True, initial_sync_days=3

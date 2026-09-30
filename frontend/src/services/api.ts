@@ -221,6 +221,10 @@ export const systemApi = {
 }
 
 export const qqApi = {
+  async placeholders() { return dataOf(await http.get<Wrapped<import('@/types').QQPlaceholder[]>>('/qq/placeholders')) },
+  async placeholderFields() { return dataOf(await http.get<Wrapped<import('@/types').QQPlaceholderField[]>>('/qq/placeholders/fields')) },
+  async createPlaceholder(payload: Pick<import('@/types').QQPlaceholder, 'placeholder' | 'source_field'>) { return dataOf(await http.post<Wrapped<import('@/types').QQPlaceholder>>('/qq/placeholders', payload)) },
+  async updatePlaceholder(id: number, payload: Pick<import('@/types').QQPlaceholder, 'placeholder' | 'source_field'>) { return dataOf(await http.patch<Wrapped<import('@/types').QQPlaceholder>>(`/qq/placeholders/${id}`, payload)) },
   async tasks() { return dataOf(await http.get<Wrapped<QQScheduledTask[]>>('/qq/tasks')) },
   async createTask(payload: Omit<QQScheduledTask,'id'|'last_run_at'|'next_run_at'|'created_at'|'updated_at'>) { return dataOf(await http.post<Wrapped<QQScheduledTask>>('/qq/tasks', payload)) },
   async updateTask(id: EntityId, payload: Omit<QQScheduledTask,'id'|'last_run_at'|'next_run_at'|'created_at'|'updated_at'>) { return dataOf(await http.patch<Wrapped<QQScheduledTask>>(`/qq/tasks/${id}`, payload)) },

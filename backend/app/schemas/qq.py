@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from app.schemas.common import APIModel
+from app.services.qq_placeholders import parse_template_fields
 
 DEFAULT_QQ_MESSAGE_TEMPLATE = "{title}\n@{username} · {posted_at}\n{text}\n{url}"
 ALLOWED_TEMPLATE_FIELDS = {"title", "author", "username", "text", "url", "posted_at"}
@@ -127,10 +128,8 @@ class QQTargetCreate(APIModel):
         self.message_template = normalize_message_template(
             self.message_template, self.template_variables
         )
-        fields = {field for _, field, _, _ in Formatter().parse(self.message_template) if field}
-        unknown = fields - ALLOWED_TEMPLATE_FIELDS - set(self.template_variables)
-        if unknown:
-            raise ValueError(f"Unsupported template fields: {', '.join(sorted(unknown))}")
+        # Field availability is validated against database mappings in the route.
+        parse_template_fields(self.message_template)
         return self
 
 
@@ -168,10 +167,7 @@ class QQTargetUpdate(APIModel):
             )
             if not self.message_template:
                 raise ValueError("Message template cannot be empty")
-            fields = {field for _, field, _, _ in Formatter().parse(self.message_template) if field}
-            unknown = fields - ALLOWED_TEMPLATE_FIELDS - set(self.template_variables or {})
-            if unknown:
-                raise ValueError(f"Unsupported template fields: {', '.join(sorted(unknown))}")
+            parse_template_fields(self.message_template)
         return self
 
 
