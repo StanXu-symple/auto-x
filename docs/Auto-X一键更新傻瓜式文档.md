@@ -197,3 +197,21 @@ bash kejilion.sh app auto-x
 ```
 
 安装器自动加入 `auth-center`、`monitor-agent`。更新成功后按第四节恢复原有 7 项服务清单。本次实测 `migrate` 为 `Exited (0)`，数据库版本仍为 `0030_qq_message_templates`；`backend`、`worker`、`frontend`、`auth-center`、`monitor-agent` 使用目标 SHA 且健康，`qq-worker`、`ai-worker` 保持原镜像且健康；frontend、backend、auth 三个 HTTP 检查均返回 200。
+
+## 十一、账号状态与小红书 Cookie 提示更新记录
+
+2026-09-30，`dev` 中尚未合并的 `4f40a66`、`90560ba`、`e655917`、`352a58b` 已快进合并到 `main`。其中三项仅改前端：监听账号状态中文显示、小红书已保存 Cookie 的密码占位提示，以及 Vue 文件格式整理；`90560ba` 只补充安装文档的跨节点 8006 端口检查。目标提交 `352a58bf9c596c252efb0d2b6d04bec47195654d` 的 [GitHub Actions 镜像构建](https://github.com/StanXu-symple/auto-x/actions/runs/36674957707)成功。无后端改动和数据库迁移，因此仅更新 tc-2 的 `frontend`。
+
+更新前先保存 `/home/docker/auto-x/.env` 与 `.auto-x-services`；此次备份分别为 `/home/docker/auto-x/backups/env-pre-frontend-20260930-135122` 和 `/home/docker/auto-x/backups/services-pre-frontend-20260930-135122.txt`。然后按第六节的 frontend 专项模式执行：
+
+```bash
+ssh tc-2
+cd ~
+KJ_AUTO_X_UPDATE_FRONTEND_ONLY=1 \
+KJ_AUTO_X_IMAGE_TAG=sha-352a58bf9c596c252efb0d2b6d04bec47195654d \
+AUTO_X_SERVICES=frontend \
+bash kejilion.sh app auto-x
+# 运行环境输入 3（default），Auto-X 应用菜单输入 2（更新）
+```
+
+本次实测 frontend 镜像为目标 SHA、状态为 healthy，页面 HTTP 200；backend 容器和 migrate 容器的 ID 均未变化，数据库仍为 `0030_qq_message_templates`，原有 7 项服务清单保持不变。
