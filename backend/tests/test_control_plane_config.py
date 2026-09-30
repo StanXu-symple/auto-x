@@ -62,15 +62,15 @@ async def test_monitor_uses_separate_nacos_topology_and_address_mapping(monkeypa
         "x-sentinel-monitor-topology.json": {
             "interval_seconds": 10, "stale_seconds": 45,
             "timeout_seconds": 3, "concurrency": 8,
-            "nodes": {"tc-1": {"agent_service_name": "xsentinel-monitor-agent-tc-1"}},
+            "nodes": {"hn-1": {"agent_service_name": "xsentinel-monitor-agent-hn-1"}},
             "services": [{
-                "id": "tc1-agent", "name": "Agent", "component": "monitor",
-                "node": "tc-1", "project": "x-sentinel",
+                "id": "hn1-agent", "name": "Agent", "component": "monitor",
+                "node": "hn-1", "project": "x-sentinel",
                 "container_service": "monitor-agent", "port": 9101,
             }],
         },
         "x-sentinel-monitor-nodes.json": {
-            "nodes": {"tc-1": {"advertise_ip": "203.0.113.10"}}
+            "nodes": {"hn-1": {"advertise_ip": "203.0.113.10"}}
         },
     }
 
@@ -83,10 +83,10 @@ async def test_monitor_uses_separate_nacos_topology_and_address_mapping(monkeypa
     monkeypatch.setenv("NACOS_CONFIG_REQUIRED", "true")
     monkeypatch.setenv("NACOS_ADVERTISE_IP", "203.0.113.10")
     topology = await load_monitor_topology(FakeNacos())
-    assert topology.services[0].id == "tc1-agent"
-    assert await load_monitor_node_id(FakeNacos(), topology) == "tc-1"
+    assert topology.services[0].id == "hn1-agent"
+    assert await load_monitor_node_id(FakeNacos(), topology) == "hn-1"
 
-    documents["x-sentinel-monitor-nodes.json"]["nodes"]["tc-1"]["advertise_ip"] = "203.0.113.11"
+    documents["x-sentinel-monitor-nodes.json"]["nodes"]["hn-1"]["advertise_ip"] = "203.0.113.11"
     with pytest.raises(RuntimeError, match="Unable to resolve monitor node"):
         await load_monitor_node_id(FakeNacos(), topology)
 

@@ -1,5 +1,7 @@
 # Auto-X 一键更新傻瓜式文档
 
+当前 Auto-X 服务节点为 hn-1/tc-2，Nacos 暂留 tc-1。从 tc-1 迁移请直接阅读第十三节；下文带日期的 tc-1 命令是历史记录。
+
 本文用于更新已经按[安装文档](Auto-X一键安装傻瓜式安装文档.md)部署的 Auto-X。先确认本次改动涉及哪些服务，再只在对应节点执行 `kejilion.sh` 的“更新”。以下是 2026-09-29 在 tc-2 更新 frontend、backend、worker 的实测流程。
 
 ## 一、确认发布版本和更新范围
@@ -218,6 +220,8 @@ bash kejilion.sh app auto-x
 
 ## 十二、Camoufox 独立服务迁移
 
+> 历史计划与下载排查记录。用户后续决定迁往 hn-1，当前安装按第十三节执行，不再在 tc-1 重试。
+
 目标 Auto-X 提交为 `936774a32ec78c7a73987d65b5ea8968f032c80f`。新服务 `camoufox-worker` 与 `xhs-worker` 一起部署在 tc-1，认证中心、backend 和 frontend 在 tc-2 更新；本次无新增 Alembic 迁移。`camoufox-worker` 监听 `8007`，Compose 内存上限为 `2g`，沿用 tc-1 的 `x-sentinel_xhs_home` 卷。跨节点调用和认证说明见 [Camoufox Worker](camoufox-worker.md)。
 
 更新前按第二节备份 tc-2 数据库，以及两台的 `.env`、`.auto-x-services`、`data/control-plane`；tc-1 另备份 `x-sentinel_xhs_home` 卷。核对两台的 `kejilion.sh`、`auto-x.sh` 和 `/root/apps/auto-x.conf` 是目标发布版本。下载 `kejilion.sh` 时不要用 `gh.kejilion.pro/raw.githubusercontent.com/...` 作为精确文件来源：该代理曾改写脚本中的 GitHub URL，使 SHA-256 与 Git 发布提交不符。应从 `https://gh.kejilion.pro/github.com/StanXu-symple/sh.git` 获取 Git 提交并校验文件哈希。
@@ -324,3 +328,103 @@ bash kejilion.sh app auto-x
 先发布并刷新应用定义和 Auto-X `main` 源码，再运行本节中的同一更新入口。配置由安装器同步到 Nacos；应用启动时读取 Nacos 的生效值。升级修复只修改配置同步程序、安装器和文档，仍使用已发布且正在下载的 `sha-936774a32ec78c7a73987d65b5ea8968f032c80f` 运行镜像。验收共享配置包含上述 5 项，监控拓扑包含 13 项且浏览器实例健康。
 
 2026-09-30 已发布配置同步修复 `495970e`（Auto-X dev/main）和应用定义 `d9ac418`（apps stanxu），针对配置默认值保留、拓扑追加、重复执行和 ID 冲突的 29 项测试通过。两台均已刷新安装器；从安装器执行源码刷新与配置同步阶段，下载继续在后台运行。原三个 Nacos Data ID 备份位于 tc-1 的 `/home/docker/auto-x/backups/pre-camoufox-nacos-20260930/`，文件权限 600。写入后逐项比较：原运行配置值、12 项监控记录、采集设置和两节点映射保留，新增 5 项运行默认值及 `tc1-camoufox-worker`（8007）记录。浏览器容器及监控健康仍须在镜像下载、安装器更新完成后验收。
+
+## 十三、tc-1 Auto-X 服务迁移到 hn-1
+
+### 当前节点与准备条件
+
+| 节点 | 当前用途 | 公网地址 |
+| --- | --- | --- |
+| hn-1 | xhs-worker、camoufox-worker、monitor-center、monitor-agent | 177.2.18.14 |
+| tc-2 | 核心应用、认证中心、PostgreSQL、Redis、frontend | 43.172.88.37 |
+| tc-1 | 暂留 Nacos；验收后原 Auto-X 三项服务保持停止，原卷和备份保留 | 118.25.197.211 |
+
+本次复用已构建的 `sha-936774a32ec78c7a73987d65b5ea8968f032c80f`，数据库为 `0030_qq_message_templates`。迁移脚本和模板先 push dev、合入 main；它们在宿主机执行，运行镜像无需为这些配置修改重新下载。默认拓扑文件保留名称 `infra/microservices/services.tc-dual.json` 以兼容既有安装命令，内容已改成 hn-1/tc-2。
+
+hn-1 必须能访问 tc-1 Nacos 9999，以及 tc-2 的 TCP 5432、6379、9100、9101。首次预检四个 tc-2 端口超时，按用户要求暂停；用户调整网络后全部复测通过。tc-2 必须能访问 hn-1 的 8006、8007、9101、9102，待安装后从 backend 容器验收。
+
+hn-1 原 `/root/apps` 为官方 main，额外 16 个提交；经用户确认完整保留在 `/root/auto-x-hn1-entry-backup/apps`，本地已发布 apps/stanxu 通过 Git bundle 复制并核对。`kejilion.sh` 和 `auto-x.sh` 同样由本地已发布版本复制，核对 SHA-256；原脚本保留在该备份目录。应用定义版本为 `d9ac418`，sh 为 `b2436ce`。Auto-X 应用源码通过安装器从 main 拉取。
+
+### 1. 先下载并验证完整镜像
+
+在 hn-1 按[安装文档的无超时预拉取步骤](Auto-X一键安装傻瓜式安装文档.md#hn-1-无超时预拉取大镜像)下载 backend、xhs-worker、camoufox-worker 三个目标镜像。当前后台任务记录为 `/root/auto-x-hn1-images.log`、`.pid`、`.exit`，未设置 timeout。三镜像必须下载完成、退出码 0、revision 对应目标 SHA，才能停旧服务。
+
+### 2. 备份与 Nacos 迁移预检查
+
+在 tc-2 通过安装器的源码刷新阶段获取 main，保留 `.env`、`.auto-x-services`、数据目录及运行容器。先按第二节备份数据库、清单和控制面文件，然后校验：
+
+```bash
+cd /home/docker/auto-x
+python3 infra/scripts/migrate-monitor-node.py --env-file .env \
+  --from-node tc-1 --to-node hn-1 --advertise-ip 177.2.18.14
+```
+
+默认只读校验，不发布、不修改本地配置。迁移范围：
+
+- `x-sentinel-monitor-topology.json`：节点名、默认 agent 服务名、该节点服务的 node、默认 tc1- ID 前缀及 agent 显示名。
+- `x-sentinel-monitor-nodes.json`：节点名与地址，hn-1 地址为 177.2.18.14。
+- `x-sentinel-config.json`：仅 monitor 的 `agent:tc-1` 授权改为 `agent:hn-1`；保留 tc-2、密钥、凭据及其他运行配置。
+
+保留采集参数、自定义字段、端口及其他节点。目标节点、IP、服务 ID 或授权冲突会拒绝写入。Nacos 没有跨 Data ID 事务，脚本先完整校验、保存三个原文档再发布并逐项回读；重复执行不重复，部分写入后可重试。若运行发生错误，先报告用户确认。
+
+**已存在的 monitor 客户端以 PostgreSQL 授权为准。** 只改 Nacos 或重启 auth-center 不会重新导入授权，因此必须同步数据库中的 monitor audience；这是身份记录更新，无新增 Alembic 结构迁移。
+
+### 3. 切换前停旧应用并复制卷
+
+镜像与源码准备完成后，在 tc-1 仅停止下列应用；保留 Nacos：
+
+```bash
+docker stop --time 45 x-sentinel-xhs-worker-1 \
+  x-sentinel-monitor-center-1 x-sentinel-monitor-agent-1
+```
+
+停止后备份 `x-sentinel_xhs_home`、`x-sentinel_xhs_uploads`、`x-sentinel_article_uploads` 的实际 Mountpoint，以 tar 保存原权限、属主。经 SSH 标准输入传到 hn-1 的受限备份目录，逐份核对 SHA-256；在 hn-1 创建同名 Docker 卷，确认目标卷为空后解包，再比较文件清单、大小与内容摘要。不要传完整旧 `.env`；仅复制 `NACOS_*` 连接引导字段，运行配置由安装器从 Nacos 同步。
+
+本次停止前核对：xhs_home 有一个 148 字节的 `users/1/.xhs-cli/cookies.json`；xhs_uploads、article_uploads 均为空。旧登录态卷在新版本仅挂载给 camoufox-worker；不要让旧浏览器与新浏览器同时使用同一登录态。
+
+### 4. 发布节点映射并更新数据库授权
+
+在 tc-2 执行，备份目录名称必须为本次新目录：
+
+```bash
+cd /home/docker/auto-x
+umask 077
+migration_stamp="$(date +%Y%m%d-%H%M%S)"
+python3 infra/scripts/migrate-monitor-node.py --env-file .env \
+  --from-node tc-1 --to-node hn-1 --advertise-ip 177.2.18.14 \
+  --apply --backup-dir "backups/pre-hn1-nacos-${migration_stamp}"
+
+docker exec x-sentinel-postgres-1 sh -ec \
+  'PGPASSWORD="$POSTGRES_PASSWORD" psql --username="$POSTGRES_USER" --host=127.0.0.1 --dbname="$POSTGRES_DB" --command="COPY service_auth_grants TO STDOUT WITH CSV HEADER"' \
+  > "backups/pre-hn1-grants-${migration_stamp}.csv"
+docker exec -i x-sentinel-postgres-1 sh -ec \
+  'PGPASSWORD="$POSTGRES_PASSWORD" psql --username="$POSTGRES_USER" --host=127.0.0.1 --dbname="$POSTGRES_DB" -v ON_ERROR_STOP=1 -v old_node=tc-1 -v new_node=hn-1' \
+  < infra/scripts/migrate-monitor-grant.sql
+```
+
+SQL 在事务内锁定授权表，保留原 scopes 与其他身份；冲突拒绝提交，重复执行无副作用。已有相同目标授权会复用，切换后的旧 monitor→agent:tc-1 授权移除。
+
+### 5. 通过原安装器在 hn-1 安装
+
+按[安装文档第五节](Auto-X一键安装傻瓜式安装文档.md#五在-hn-1-安装监控和小红书服务)，在 hn-1 运行原菜单 1。自动化命令等价于菜单选择安装，不会另开独立 docker run：
+
+```bash
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=install KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_MONITOR_NODE_ID=hn-1 \
+KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
+AUTO_X_SERVICES=xhs-worker,camoufox-worker,monitor-center,monitor-agent \
+bash kejilion.sh app auto-x
+```
+
+前提是三完整镜像和已发布安装入口均已核对，Nacos 节点迁移完成。正常交互入口选择环境 3，再选择安装 1，四项服务和相同 Nacos 信息。hn-1 不启动本机数据服务或 auth-center；服务发现与运行配置由 Nacos 提供。
+
+### 6. 验收与回退
+
+按安装文档第六节验收，并确认：四项服务使用目标 SHA 且 healthy，Camoufox Memory 为 2147483648、ShmSize 为 536870912；旧 Cookie 文件摘要不变；Nacos 的 XHS、Camoufox、monitor-center 注册到 177.2.18.14，两个 agent 分别为 hn-1、tc-2；13 项监控实例和两主机均 healthy；backend→XHS→Camoufox 状态调用成功、installed 为 true；无 JWT 的浏览器 API 返回 401。
+
+tc-1 Nacos 始终运行，旧三个 Auto-X 容器保持停止且卷保留；tc-2 原七项服务清单保持不变。验收仅调用健康和状态 API，不执行真实平台发布。
+
+若切换失败，先报告用户。回退需先停止 hn-1 四项服务，从备份恢复三个 Nacos Data ID，并用 SQL 反向迁移 hn-1→tc-1 的 monitor grant，再启动旧三服务；不能在两个节点同时运行相同 XHS/monitor-center。确认回退前保留新节点日志及数据，避免遗漏切换后新增登录态。

@@ -711,7 +711,7 @@ def monitor_seed_topology(node_id: str, control_dir: Path, seed_path: Path | Non
     root = Path(__file__).resolve().parents[1] / "microservices"
     topology_path = seed_path or (
         root / "services.tc-dual.json"
-        if node_id in {"tc-1", "tc-2"}
+        if node_id in {"hn-1", "tc-2"}
         else control_dir / "services.json"
     )
     topology = json.loads(topology_path.read_text(encoding="utf-8"))

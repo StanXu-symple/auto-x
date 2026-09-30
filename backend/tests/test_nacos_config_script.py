@@ -142,13 +142,13 @@ def test_monitor_documents_seed_once_and_merge_node_addresses(monkeypatch, tmp_p
                   token="", timeout=3, control_dir=tmp_path)
     module.sync_monitor_documents(**common, local_env={"NACOS_ADVERTISE_IP": "203.0.113.10"},
                                   seed_node_id="tc-2")
-    assert remote["x-sentinel-monitor-topology.json"]["services"][0]["node"] == "tc-1"
+    assert remote["x-sentinel-monitor-topology.json"]["services"][0]["node"] == "hn-1"
     assert remote["x-sentinel-monitor-nodes.json"]["nodes"] == {
         "tc-2": {"advertise_ip": "203.0.113.10"}
     }
     module.sync_monitor_documents(**common, local_env={"NACOS_ADVERTISE_IP": "203.0.113.11"},
-                                  seed_node_id="tc-1")
-    assert set(remote["x-sentinel-monitor-nodes.json"]["nodes"]) == {"tc-1", "tc-2"}
+                                  seed_node_id="hn-1")
+    assert set(remote["x-sentinel-monitor-nodes.json"]["nodes"]) == {"hn-1", "tc-2"}
     assert published == ["x-sentinel-monitor-topology.json", "x-sentinel-monitor-nodes.json",
                          "x-sentinel-monitor-nodes.json"]
     module.sync_monitor_documents(**common, local_env={"NACOS_ADVERTISE_IP": "203.0.113.11"},
@@ -548,7 +548,7 @@ def test_consumer_rejects_docker_only_endpoints():
 def test_consumer_preserves_remote_data_owner():
     module = load_script()
     values = {"POSTGRES_HOST": "43.172.88.37", "REDIS_HOST": "43.172.88.37"}
-    module.resolve_data_endpoints(values, {"AUTO_X_MANAGE_DATA": "false", "NACOS_ADVERTISE_IP": "118.25.197.211"})
+    module.resolve_data_endpoints(values, {"AUTO_X_MANAGE_DATA": "false", "NACOS_ADVERTISE_IP": "203.0.113.11"})
     assert values["POSTGRES_HOST"] == "43.172.88.37"
 
 
@@ -606,14 +606,14 @@ def test_camoufox_defaults_upgrade_preserves_config_and_is_idempotent():
 def test_monitor_upgrade_adds_only_selected_browser_and_preserves_remote(monkeypatch, tmp_path):
     import copy
     module = load_script()
-    topology = module.monitor_seed_topology("tc-1", tmp_path)
+    topology = module.monitor_seed_topology("hn-1", tmp_path)
     topology["services"] = [s for s in topology["services"]
                             if s["container_service"] != "camoufox-worker"]
     topology["interval_seconds"] = 17
     remote = {
         "x-sentinel-monitor-topology.json": copy.deepcopy(topology),
         "x-sentinel-monitor-nodes.json": {
-            "nodes": {"tc-1": {"advertise_ip": "203.0.113.11"}}
+            "nodes": {"hn-1": {"advertise_ip": "203.0.113.11"}}
         },
     }
     published = []
@@ -641,8 +641,8 @@ def test_monitor_upgrade_adds_only_selected_browser_and_preserves_remote(monkeyp
     assert updated["interval_seconds"] == 17
     assert updated["nodes"] == topology["nodes"]
     assert updated["services"][-1] == {
-        "id": "tc1-camoufox-worker", "name": "Camoufox Worker",
-        "component": "camoufox_worker", "node": "tc-1", "project": "x-sentinel",
+        "id": "hn1-camoufox-worker", "name": "Camoufox Worker",
+        "component": "camoufox_worker", "node": "hn-1", "project": "x-sentinel",
         "container_service": "camoufox-worker", "port": 18007,
     }
     assert published == ["x-sentinel-monitor-topology.json"]
@@ -658,14 +658,14 @@ def test_monitor_browser_upgrade_rejects_id_collision(monkeypatch, tmp_path):
     import copy
     import pytest
     module = load_script()
-    topology = module.monitor_seed_topology("tc-1", tmp_path)
+    topology = module.monitor_seed_topology("hn-1", tmp_path)
     topology["services"] = [s for s in topology["services"]
                             if s["container_service"] != "camoufox-worker"]
-    topology["services"][0]["id"] = "tc1-camoufox-worker"
+    topology["services"][0]["id"] = "hn1-camoufox-worker"
     remote = {
         "x-sentinel-monitor-topology.json": topology,
         "x-sentinel-monitor-nodes.json": {
-            "nodes": {"tc-1": {"advertise_ip": "203.0.113.11"}}
+            "nodes": {"hn-1": {"advertise_ip": "203.0.113.11"}}
         },
     }
     monkeypatch.setattr(module, "load_json_document",

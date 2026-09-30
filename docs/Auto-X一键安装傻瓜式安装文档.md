@@ -1,6 +1,6 @@
 # Auto-X 一键安装傻瓜式文档
 
-本文用于在两台 Debian Docker 主机上安装 Auto-X。`tc-1` 保留现有 Nacos 容器及 `/home/docker/nacos/data`、`/home/docker/nacos/logs`。安装前先检查两台主机的 Auto-X 目录和容器状态；已有安装时不要把本流程当作清理命令执行。
+本文用于在 `tc-2` 与 `hn-1` 两台 Debian Docker 主机上安装 Auto-X。从既有 tc-1 迁移时，先按[更新文档第十三节](Auto-X一键更新傻瓜式文档.md#十三tc-1-auto-x-服务迁移到-hn-1)备份、迁移 Nacos 节点与授权并复制持久卷，再执行 hn-1 安装；仅更换本地拓扑文件不会覆盖已有 Nacos 配置。`tc-1` 仅保留现有 Nacos 容器及 `/home/docker/nacos/data`、`/home/docker/nacos/logs`。安装前先检查两台主机的 Auto-X 目录和容器状态；已有安装时不要把本流程当作清理命令执行。
 
 ## 一、先记住正确命令
 
@@ -17,7 +17,7 @@ bash kejilion.sh app auto-x
 | 服务器 | 输入 | 运行环境 |
 | --- | --- | --- |
 | `tc-2` | `3`（也可直接回车） | `default`，GitHub 直连 |
-| `tc-1` | `1` | `CN`，GitHub 走代理，Auto-X 镜像从 `ghcr.nju.edu.cn` 拉取 |
+| `hn-1` | `3` | `default`；显式指定 `KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io` 使用官方镜像 |
 
 这里的 `3` 和 `1` 是 **运行环境选项**，不是 Auto-X 服务编号。出现 `请选择 [3/default]:` 时输入对应数字并回车；随后进入应用菜单，再选择安装。
 
@@ -56,12 +56,15 @@ chmod +x kejilion.sh
 
 如果实际 Nacos 地址发生变化，以实际地址为准。Nacos 地址可以填写带 `/nacos` 的控制台地址，程序会自动处理接口路径。
 
+
+hn-1 → tc-2（`43.172.88.37`）必须可达 TCP `5432`、`6379`、`9100`、`9101`；tc-2 → hn-1（`177.2.18.14`）必须可达 `8006`、`8007`、`9101`、`9102`。安全组可按对端公网 IP 的 `/32` 放行。安装前 hn-1 端口未监听返回 Connection refused 是正常现象；启动后须从 tc-2 容器验证 HTTP 调用。
+
 ## 三、推荐安装顺序
 
-推荐先安装 `tc-2`，再安装 `tc-1`：
+推荐先安装 `tc-2`，再安装 `hn-1`：
 
 1. `tc-2` 运行 backend、auth-center、Worker、frontend，并作为默认数据服务节点。
-2. `tc-1` 运行小红书 Worker、独立 Camoufox 浏览器 Worker、monitor-center、monitor-agent，并从 Nacos 读取共享配置。
+2. `hn-1` 运行小红书 Worker、独立 Camoufox 浏览器 Worker、monitor-center、monitor-agent，并从 Nacos 读取共享配置。
 
 两台机器使用同一个 Nacos namespace 和 group，并共用下述三个 Data ID。第一次安装会生成数据库密码、Redis 密码、管理员密码、JWT/X 密钥、认证中心密钥和服务客户端凭据并发布到 Nacos；第二台安装时会复用 Nacos 中已有值。
 
@@ -70,7 +73,7 @@ chmod +x kejilion.sh
 | Data ID | 内容 | 来源与作用 |
 | --- | --- | --- |
 | `x-sentinel-monitor-topology.json` | 完整的 `services.tc-dual.json` JSON：采集周期、超时、节点、13 个服务 | 首台安装时初始化；之后由 Nacos 管理，monitor-center 和 monitor-agent 启动时直接读取。升级旧部署并选中 camoufox-worker 时，安装器仅补入本节点缺少的浏览器监控记录。 |
-| `x-sentinel-monitor-nodes.json` | `{"nodes":{"tc-1":{"advertise_ip":"..."},"tc-2":{"advertise_ip":"..."}}}` | 安装器将节点 ID 和检测到的本机公网注册地址绑定；agent 按本机 `NACOS_ADVERTISE_IP` 找到自己对应的节点 ID。 |
+| `x-sentinel-monitor-nodes.json` | `{"nodes":{"hn-1":{"advertise_ip":"..."},"tc-2":{"advertise_ip":"..."}}}` | 安装器将节点 ID 和检测到的本机公网注册地址绑定；agent 按本机 `NACOS_ADVERTISE_IP` 找到自己对应的节点 ID。 |
 
 `x-sentinel-config.json` 继续保存其他应用运行配置，不再用来控制监控拓扑。`MONITOR_STALE_SECONDS` 仍用于 backend 判断监控快照是否过期；拓扑自身的 `stale_seconds` 在新的拓扑 Data ID 中。两份新配置是合法 JSON，直接在 Nacos 控制台编辑，不要写 JSON 注释。修改后重启 monitor-center 和相关 monitor-agent 才会加载新值。
 
@@ -79,7 +82,7 @@ chmod +x kejilion.sh
 ```json
 {
   "nodes": {
-    "tc-1": {"advertise_ip": "118.25.197.211"},
+    "hn-1": {"advertise_ip": "177.2.18.14"},
     "tc-2": {"advertise_ip": "43.172.88.37"}
   }
 }
@@ -155,21 +158,22 @@ x-sentinel-postgres-1
 x-sentinel-redis-1
 ```
 
-## 五、在 tc-1 安装监控和小红书服务
+## 五、在 hn-1 安装监控和小红书服务
 
-登录 tc-1。`CN` 模式使用已在此节点实际拉取验证的 `ghcr.nju.edu.cn`，单次镜像拉取上限为 900 秒：
+登录 hn-1（`177.2.18.14`）。它使用官方 `ghcr.io`；首次大镜像可按下文无超时预拉取，再让安装器复用完整缓存：
 
 ```bash
-ssh tc-1
+ssh hn-1
 cd ~
-KJ_AUTO_X_MONITOR_NODE_ID=tc-1 \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_MONITOR_NODE_ID=hn-1 \
 KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
 bash kejilion.sh app auto-x
 ```
 
-在运行环境提示处输入 `1` 并回车，然后在应用菜单中选择 `1` 安装。这是两个不同的菜单。
+在运行环境提示处输入 `3` 并回车，然后在应用菜单中选择 `1` 安装。这是两个不同的菜单。
 
-`tc-1` 不运行 backend，因此安装器会跳过“应用对外服务端口”提示，直接进入源码下载和 Nacos 配置。
+`hn-1` 不运行 backend，因此安装器会跳过“应用对外服务端口”提示，直接进入源码下载和 Nacos 配置。
 
 服务选择输入：
 
@@ -177,7 +181,7 @@ bash kejilion.sh app auto-x
 xhs-worker,camoufox-worker,monitor-center,monitor-agent
 ```
 
-不要在 tc-1 手工添加 `auth-center`。认证中心由 tc-2 提供，tc-1 会通过 Nacos 服务发现和共享服务凭据访问它。
+不要在 hn-1 手工添加 `auth-center`。认证中心由 tc-2 提供，hn-1 会通过 Nacos 服务发现和共享服务凭据访问它。
 
 Nacos 信息填写为与 tc-2 完全相同的值：
 
@@ -188,7 +192,7 @@ Nacos 用户名：    nacos
 Nacos 密码：      输入实际 Nacos 密码
 ```
 
-安装器会自动探测本机注册地址，并把 tc-1 的 monitor-agent、monitor-center 和 xhs-worker 注册到 Nacos。通常不需要手工填写 `NACOS_ADVERTISE_IP`。首次建立这套双节点配置时，上述启动命令中的节点 ID 和双节点拓扑必须分别照写；安装器先写入两份独立的 Nacos 配置，再启动监控服务。以后更新时从 Nacos 读取，节点 ID 不再保存在本机 `.env` 中。
+安装器会自动探测本机注册地址，并把 hn-1 的 monitor-agent、monitor-center、xhs-worker 和 camoufox-worker 注册到 Nacos。通常不需要手工填写 `NACOS_ADVERTISE_IP`。首次建立这套双节点配置时，上述启动命令中的节点 ID 和双节点拓扑必须分别照写；安装器先写入两份独立的 Nacos 配置，再启动监控服务。以后更新时从 Nacos 读取，节点 ID 不再保存在本机 `.env` 中。
 
 安装结束后检查：
 
@@ -206,13 +210,13 @@ x-sentinel-monitor-center-1
 x-sentinel-monitor-agent-1
 ```
 
-tc-1 的 Nacos 容器应始终存在：
+Nacos 仍在 tc-1，迁移和安装时应始终保留：
 
 ```bash
-docker ps --filter name=^nacos$
+ssh tc-1 'docker ps --filter name=^nacos$'
 ```
 
-`tc-1` 没有部署 frontend，因此本机 `8080` 不提供管理页面。安装器完成提示和应用管理菜单都会显示“此节点未部署 frontend”，不显示 `tc-1:8080`；管理页面请访问 `tc-2` 的 `http://43.172.88.37:8080`。
+`hn-1` 没有部署 frontend，因此本机 `8080` 不提供管理页面。安装器完成提示和应用管理菜单都会显示“此节点未部署 frontend”，不显示 `hn-1:8080`；管理页面请访问 `tc-2` 的 `http://43.172.88.37:8080`。
 
 ## 六、安装完成后的快速验收
 
@@ -241,15 +245,15 @@ curl -fsS http://127.0.0.1:8007/health/live
 
 不存在的服务端口可以跳过。返回 HTTP 200 即表示对应服务已就绪。
 
-双节点部署还须从 **tc-2 的 backend 容器**检查 tc-1 注册的 xhs-worker 地址，不能只在 tc-1 本机测试 `127.0.0.1:8006`。当前 tc-1 的 Nacos 注册地址为 `118.25.197.211:8006`：
+双节点部署还须从 **tc-2 的 backend 容器**检查 hn-1 注册的 xhs-worker 地址，不能只在 hn-1 本机测试 `127.0.0.1:8006`。当前 hn-1 的 Nacos 注册地址为 `177.2.18.14:8006`：
 
 ```bash
 ssh tc-2
 docker exec x-sentinel-backend-1 python -c \
-  'import urllib.request; print(urllib.request.urlopen("http://118.25.197.211:8006/health/live", timeout=6).status)'
+  'import urllib.request; print(urllib.request.urlopen("http://177.2.18.14:8006/health/live", timeout=6).status)'
 ```
 
-应输出 `200`。如果 tc-1 本机检查正常、tc-2 容器访问超时，则先核对 tc-1 云安全组与主机防火墙是否允许来自 tc-2 的 `8006/TCP`，并确认 Nacos 中 `xsentinel-xhs-worker` 注册的 IP、端口与实际映射一致。此时 `/xhs` 的“保存登录态”请求可能一直等待，前端代理日志出现 `POST /api/v1/xhs/login` 的 `499`；恢复跨节点连接后再重试，不要将本机健康检查视作完整验收。
+应输出 `200`。如果 hn-1 本机检查正常、tc-2 容器访问超时，则先核对 hn-1 云安全组与主机防火墙是否允许来自 tc-2 的 `8006/TCP`，并确认 Nacos 中 `xsentinel-xhs-worker` 注册的 IP、端口与实际映射一致。此时 `/xhs` 的“保存登录态”请求可能一直等待，前端代理日志出现 `POST /api/v1/xhs/login` 的 `499`；恢复跨节点连接后再重试，不要将本机健康检查视作完整验收。
 
 ### 3. Nacos 服务注册
 
@@ -269,7 +273,7 @@ xsentinel-monitor-agent-<节点名>
 
 `frontend` 是由 Nginx 提供的前端页面，不注册到 Nacos；通过 `tc-2` 的 `http://43.172.88.37:8080` 验证页面可访问。
 
-后端和监控服务通过 Nacos 发现 `xsentinel-auth-center`，本部署不需要单独填写 `SERVICE_AUTH_URL`。双节点监控验收应看到 `xsentinel-monitor-agent-tc-1` 和 `xsentinel-monitor-agent-tc-2` 各有一个健康实例；监控中心的 13 个资源实例应全部为 healthy。xhs-worker 通过 Nacos 发现 `xsentinel-camoufox-worker`，用认证中心签发的服务 JWT 调用其 API；浏览器服务 `/v1/status` 未带令牌返回 401 属于正常鉴权结果。8007/TCP 应允许调用节点访问其 Nacos 公网注册地址。
+后端和监控服务通过 Nacos 发现 `xsentinel-auth-center`，本部署不需要单独填写 `SERVICE_AUTH_URL`。双节点监控验收应看到 `xsentinel-monitor-agent-hn-1` 和 `xsentinel-monitor-agent-tc-2` 各有一个健康实例；监控中心的 13 个资源实例应全部为 healthy。xhs-worker 通过 Nacos 发现 `xsentinel-camoufox-worker`，用认证中心签发的服务 JWT 调用其 API；浏览器服务 `/v1/status` 未带令牌返回 401 属于正常鉴权结果。8007/TCP 应允许调用节点访问其 Nacos 公网注册地址。
 
 ### 4. 配置中心内容
 
@@ -287,7 +291,7 @@ X_SENTINEL
 
 配置中会包含数据库、Redis、管理员、JWT/X、认证中心、provider 和 Worker 运行参数。Nacos 的连接地址、账号和密码仍保留在每台主机的本地引导文件中，因为应用必须先用它们连接 Nacos。
 
-另外检查同一 Group 下的 `x-sentinel-monitor-topology.json` 和 `x-sentinel-monitor-nodes.json`：前者应有 13 个 `services`，后者应有 `tc-1`、`tc-2` 两个节点。编辑监控配置只需改这两个 Data ID；安装器后续更新会保留已有的远端内容，并在部署 camoufox-worker 时补入缺少的浏览器监控记录。浏览器的 5 项运行配置由安装器补充到 `x-sentinel-config.json`，已有值优先，详见[更新文档](Auto-X一键更新傻瓜式文档.md#nacos-缺失配置的升级补齐)。
+另外检查同一 Group 下的 `x-sentinel-monitor-topology.json` 和 `x-sentinel-monitor-nodes.json`：前者应有 13 个 `services`，后者应有 `hn-1`、`tc-2` 两个节点。编辑监控配置只需改这两个 Data ID；安装器后续更新会保留已有的远端内容，并在部署 camoufox-worker 时补入缺少的浏览器监控记录。浏览器的 5 项运行配置由安装器补充到 `x-sentinel-config.json`，已有值优先，详见[更新文档](Auto-X一键更新傻瓜式文档.md#nacos-缺失配置的升级补齐)。
 
 ## 七、常见问题处理
 
@@ -301,38 +305,31 @@ curl -I http://118.25.197.211:9999/nacos
 
 如果 Nacos 使用防火墙，确保 9999/TCP 可访问；Nacos 2.x 服务发现还建议放行 9848/TCP。
 
-### 应用列表下载失败
+### 安装入口不是你的已发布版本
 
-确认服务器可以访问 GitHub 或配置的代理。交互安装时，tc-1 应先选择运行环境 `1`（CN），再进入应用菜单。非交互更新会使用 `default` 环境；tc-1 曾因此在直连 GitHub 刷新应用列表时失败，Auto-X 源码、Nacos 和旧容器均未受影响。
-
-仅当 `/root/apps` 已包含目标版本且工作区干净时，才可在非交互更新命令前加 `KJ_APPS_SKIP_REFRESH=1`，跳过重复刷新。先核对：
+核对 `/root/apps` 的远端、分支、提交和工作区。hn-1 曾使用官方仓库的 main，且存在 16 个额外提交；用户确认后完整保留在 `/root/auto-x-hn1-entry-backup/apps`，再由本地已发布的 apps/stanxu Git bundle 重建 `/root/apps`。原 kejilion.sh 同目录备份；本地 kejilion.sh、auto-x.sh 通过 SSH 标准输入传输，逐个核对 SHA-256。不要 reset 或覆盖未备份仓库。
 
 ```bash
+git -C /root/apps remote -v
 git -C /root/apps status --short --branch
-git -C /root/apps rev-parse --short HEAD
+git -C /root/apps rev-parse HEAD
+bash -n /root/kejilion.sh
+bash -n /root/auto-x.sh
 ```
 
-本次验证的安装器提交是 `b4d7b81`。如果本地不是目标提交，先检查网络，并通过 GitHub 代理将 `/root/apps` 更新到目标版本；不要直接跳过刷新使用旧安装器。
+只有 `/root/apps` 为目标发布版本、工作区干净且包含 auto-x.conf 时，才能用 `KJ_APPS_SKIP_REFRESH=1` 跳过重复刷新。Auto-X 应用源码仍由安装器从 main 获取。
 
-### tc-1 镜像拉取长时间没有进度
+### hn-1 无超时预拉取大镜像
 
-安装器在 `tc-1` 选择运行环境 `1`（CN）后，默认从 `ghcr.nju.edu.cn` 拉取 Auto-X 镜像。`tc-1` 已实际拉取并验证 backend、xhs-worker 和 frontend 镜像；其他运行环境仍使用原来的 `ghcr.dockerproxy.net`。单次拉取超过 900 秒时会终止该镜像源的尝试，并自动切换到官方 `ghcr.io`；`timeout` 返回 124 或 Docker Compose 未及时退出时返回 137，均视为超时。普通拉取错误最多重试 3 次。
-
-新增独立 `camoufox-worker` 后，tc-1 也应从 `ghcr.nju.edu.cn/stanxu-symple/auto-x-camoufox-worker` 拉取。`KJ_APP_INTERACTIVE=1` 等非交互入口不会出现运行环境菜单；此时必须显式设置 `KJ_AUTO_X_IMAGE_REGISTRY=ghcr.nju.edu.cn`。应用定义从提交 `46e0577` 起，会把此前误写入 `.env` 的 Camoufox 默认代理迁移到 CN 源，保留自定义镜像地址。更新步骤和验收见[更新文档的 Camoufox 迁移章节](Auto-X一键更新傻瓜式文档.md#十二camoufox-独立服务迁移)。
-
-此前 `tc-1` 从旧代理 `ghcr.dockerproxy.net` 下载停在 10/13；已改用上述国内源，并把默认上限设为 900 秒。中断后继续选择运行环境 `1`（CN）：
+当前迁移使用已发布运行镜像 `sha-936774a32ec78c7a73987d65b5ea8968f032c80f`。先逐个下载三个镜像，不添加 timeout；建议放在有退出码记录的后台任务中。后台下载进度查看 `/root/auto-x-hn1-images.log`、`.exit` 和 `ctr -n moby content active`；临时层存在不代表进程还活着。
 
 ```bash
-ssh tc-1
-cd ~
-KJ_AUTO_X_MONITOR_NODE_ID=tc-1 \
-KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
-bash kejilion.sh app auto-x
+for name in backend xhs-worker camoufox-worker; do
+  docker pull "ghcr.io/stanxu-symple/auto-x-${name}:sha-936774a32ec78c7a73987d65b5ea8968f032c80f" || break
+done
 ```
 
-若 900 秒仍不够，可在执行安装入口前设置 `KJ_AUTO_X_PULL_TIMEOUT_SECONDS` 为更大的正整数秒数。若下载失败，先保留现场并检查镜像仓库连接和剩余磁盘空间，不要删除 Nacos 或 Auto-X 数据目录。
-
-如果安装被中断，先确认没有仍在运行的 Auto-X 安装进程，再重新执行同一个安装入口，仍选择本机原定的运行环境、服务和 Nacos 信息。已生成的 `/home/docker/auto-x/.env` 和数据目录会由安装器复用；不要因镜像拉取失败删除 Nacos 配置或数据目录。
+三个目标镜像全部完整下载、Docker 校验通过后，执行第五节安装入口时加 `KJ_AUTO_X_IMAGE_TAG=sha-936774a32ec78c7a73987d65b5ea8968f032c80f KJ_AUTO_X_SKIP_PULL=1`。此时安装器验证本机完整镜像缓存并直接启动；不会触发它默认的 900 秒拉取上限。单纯把超时设为 0 不受当前安装器支持。镜像下载失败时先报告，不删除全局缓存或业务卷。旧 tc-1 的南京大学/官方/国内代理失败记录保留在[更新文档](Auto-X一键更新傻瓜式文档.md#十二camoufox-独立服务迁移)，当前迁移不在 tc-1 重试下载。
 
 ### 提示安装目录已经存在
 
@@ -342,7 +339,7 @@ bash kejilion.sh app auto-x
 ls -ld /home/docker/auto-x
 ```
 
-如果这是中断后重试且 `/home/docker/auto-x` 是安装器克隆的 Git 仓库，直接重新执行安装入口。只有目录不是 Auto-X Git 仓库、安装器明确拒绝接管时，才先核对目录内容并处理；不要删除 `/home/docker/nacos`，tc-1 的 Nacos 数据就在这里。
+如果这是中断后重试且 `/home/docker/auto-x` 是安装器克隆的 Git 仓库，直接重新执行安装入口。只有目录不是 Auto-X Git 仓库、安装器明确拒绝接管时，才先核对目录内容并处理；不要删除 tc-1 的 `/home/docker/nacos`。
 
 ### 服务启动后反复重启
 
@@ -378,22 +375,27 @@ bash kejilion.sh app auto-x
 # 填写 Nacos 地址、public、nacos、Nacos 密码
 ```
 
-### tc-1
+### hn-1
 
 ```bash
-ssh tc-1
+ssh hn-1
 cd ~
-KJ_AUTO_X_MONITOR_NODE_ID=tc-1 \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_MONITOR_NODE_ID=hn-1 \
 KJ_AUTO_X_TOPOLOGY_FILE=/home/docker/auto-x/infra/microservices/services.tc-dual.json \
 bash kejilion.sh app auto-x
-# 运行环境选择 1（CN），然后在应用菜单选择 1（安装）
-# 选择 xhs-worker,monitor-center,monitor-agent；此节点没有对外端口提示
+# 运行环境选择 3（default），然后在应用菜单选择 1（安装）
+# 选择 xhs-worker,camoufox-worker,monitor-center,monitor-agent；此节点没有对外端口提示
 # 填写与 tc-2 相同的 Nacos 地址、命名空间、账号和密码
 ```
 
 完成后通过 `tc-2` 的 `http://43.172.88.37:8080` 访问管理页面，并按第六节分别检查两台主机的健康状态；不需要手工创建数据库、Redis、账号、密钥或复制控制面文件。
 
-### 已有安装：按已发布镜像更新监控配置
+### 历史记录：2026-09-29 已有安装的监控配置更新
+
+以下保留当时 tc-1/tc-2 的实际命令与验收；当前拓扑为 hn-1/tc-2，请使用前文及更新文档第十三节。
+
+
 
 先将 Auto-X 代码推到 `dev`、合并到 `main`，等待 GitHub Actions 的 `Publish Auto-X images` 成功。安装器配置需发布到 `apps` 仓库的 `stanxu` 分支；两台机器的 `/root/apps` 都应更新到该分支的目标提交。镜像标签使用 Actions 为 **main 提交完整 SHA** 发布的 `sha-<完整提交 SHA>`，不要凭 `latest` 判断版本。本次验收提交是 `76efad32ebacd601c2600eb3fb0814208223bff4`，其 [Actions 运行记录](https://github.com/StanXu-symple/auto-x/actions/runs/36555604474) 已成功。
 
