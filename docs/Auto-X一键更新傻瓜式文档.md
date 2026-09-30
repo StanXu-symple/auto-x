@@ -269,19 +269,27 @@ ctr -n moby content active
 
 官方源的下一次无超时拉取于 2026-09-30 19:16 因 `read: connection reset by peer` 退出，临时层留在约 577.9 MB。该退出来自传输连接重置，不是安装器 900 秒上限；完整镜像尚不存在。用户确认后保留该层重试同一官方 SHA。重试前只归档原后台任务的 `.log`、`.exit`、`.pid` 记录，不删除 containerd 临时层；新任务使用 `nohup docker pull` 的监护 shell，不加 `timeout`。检查当前 `.exit` 是否存在、进程是否活跃及日志错误，不能把残留 SIZE 当成下载仍在运行。无超时不能避免网络错误，出现新的失败仍先报告确认。
 
-### 官方镜像下载成功后恢复菜单 2 更新
+### 切换国内加速源的实测记录
+
+用户随后要求另找国内加速源。本次在 tc-1 比较公开 GHCR 代理：DaoCloud 对此仓库返回白名单拒绝，多个入口不可达或限流；南京大学和旧默认代理的该层请求忽略 Range。毫秒镜像 `ghcr.1ms.run` 最初探测曾返回 403，按 Docker 请求方式重测后大层返回 HTTP 206；指定 `600000000-616777215` 范围，16 MiB 样本完整下载，耗时 10.78 秒，约 1.48 MiB/s。目标 manifest 摘要为 `sha256:52fe46047fc4bc422aa3842a8f0fef007a89bedc6e3cb764b07b9a3b3b21748e`，最大层摘要及大小与先前官方清单一致。该结果验证本次镜像与样本可用，不能保证长期稳定或后续大层吞吐不变。
+
+本次下载切换到 `ghcr.1ms.run/stanxu-symple/auto-x-camoufox-worker:sha-936774a32ec78c7a73987d65b5ea8968f032c80f`。只终止旧的官方 `docker pull` 客户端，保留 containerd 临时层，新的后台任务仍无超时限制。当前任务记录改为 `/root/auto-x-camoufox-domestic-pull.log`、`.pid` 和 `.exit`；检查当前记录，不要把被替换的官方任务退出码当作新任务结果。
+
+下载成功后按下节校验完整镜像与 revision，再标记为安装器当前配置的 `ghcr.nju.edu.cn` 别名并通过 `KJ_AUTO_X_SKIP_PULL=1` 完成菜单 2。别名指向已缓存的同一个镜像，更新时不会再次请求南京大学源。来源：[毫秒镜像](https://1ms.run)。
+
+### 完整镜像下载成功后恢复菜单 2 更新
 
 先等当前后台任务退出码为 0，确认完整镜像存在。以下命令中的 SHA 必须与本次目标版本一致；重新加标签复用的是同一个本机镜像，不会再下载镜像层：
 
 ```bash
 ssh tc-1
-cat /root/auto-x-camoufox-official-pull.exit
+cat /root/auto-x-camoufox-domestic-pull.exit
 # 必须输出 0；文件不存在表示任务尚未结束，非 0 则先检查并报告错误
 docker image inspect \
-  ghcr.io/stanxu-symple/auto-x-camoufox-worker:sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
+  ghcr.1ms.run/stanxu-symple/auto-x-camoufox-worker:sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
   --format '{{.Id}} | revision={{index .Config.Labels "org.opencontainers.image.revision"}}'
 docker tag \
-  ghcr.io/stanxu-symple/auto-x-camoufox-worker:sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
+  ghcr.1ms.run/stanxu-symple/auto-x-camoufox-worker:sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
   ghcr.nju.edu.cn/stanxu-symple/auto-x-camoufox-worker:sha-936774a32ec78c7a73987d65b5ea8968f032c80f
 
 cd /root
