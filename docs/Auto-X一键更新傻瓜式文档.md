@@ -164,3 +164,20 @@ bash kejilion.sh app auto-x
 ```
 
 安装器自动加入 `auth-center`、`monitor-agent`，并由 Compose 的 `migrate` 服务执行 `alembic upgrade head`。更新成功后按第四节恢复原有 7 项服务清单，再按第五节验收。此次实测 `migrate` 为 `Exited (0)`，数据库为 `0028_qq_placeholder_seed_once`，`app_settings.qq_placeholder_defaults_seeded` 的值为 `{"initialized": true}`。`frontend`、`backend`、`auth-center`、`monitor-agent` 使用目标 SHA 且健康；`worker`、`qq-worker`、`ai-worker` 保持原镜像且健康；frontend、backend、auth 三个 HTTP 检查均返回 200。
+
+## 九、内容类型监听与 QQ 消息模板更新记录
+
+2026-09-30，提交 `92d7a4e` 和 `aca20ba` 已合入 `main`；目标提交 `aca20bae3cb363614740e86504fb9f80f8e99b84` 的 [GitHub Actions 镜像构建](https://github.com/StanXu-symple/auto-x/actions/runs/36664538268)成功。此次需在 tc-2 更新 `backend`、X 采集 `worker`、`qq-worker`、`frontend`，并执行迁移 `0029_tweet_type_target_mode`、`0030_qq_message_templates`。其中 `0029` 为历史内容补齐原创、回复、转推类型，且为现有群目标设置默认监听模式 `all`；`0030` 新建 QQ 消息模板表。
+
+先按第二节备份数据库与原服务清单。本次升级前数据库为 `0028_qq_placeholder_seed_once`，备份文件为 `/home/docker/auto-x/backups/pre-update-20260930-112918.dump`，服务清单备份为 `/home/docker/auto-x/backups/services-20260930-112918.txt`。然后执行：
+
+```bash
+ssh tc-2
+cd ~
+KJ_AUTO_X_IMAGE_TAG=sha-aca20bae3cb363614740e86504fb9f80f8e99b84 \
+AUTO_X_SERVICES=backend,worker,qq-worker,frontend \
+bash kejilion.sh app auto-x
+# 运行环境输入 3（default），Auto-X 应用菜单输入 2（更新）
+```
+
+安装器自动加入 `auth-center`、`monitor-agent`，Compose 的 `migrate` 服务自动执行 `alembic upgrade head`。更新成功后按第四节恢复原有 7 项服务清单，并按第五节核对健康状态。本次实测 `migrate` 为 `Exited (0)`，数据库版本为 `0030_qq_message_templates`，`qq_message_templates` 表存在；1064 条历史内容分类为原创 431、回复 478、转推 155，现有 1 个群目标的监听模式为 `all`。目标服务及自动加入的依赖服务均使用目标 SHA 且健康，`ai-worker` 保持原镜像且健康；frontend、backend、auth 三个 HTTP 检查均返回 200。
