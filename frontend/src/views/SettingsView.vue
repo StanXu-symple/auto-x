@@ -1,10 +1,89 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'; import { message } from 'ant-design-vue'; import { systemApi } from '@/services/api'; import { getErrorMessage } from '@/services/http'; import type { SystemSettings } from '@/types'; import PageHeader from '@/components/PageHeader.vue'
-const settings = ref<SystemSettings | null>(null); const loading = ref(false); const saving = ref(false); const form = reactive({ global_poll_interval_seconds:300, max_concurrency:5 }); const dirty = computed(() => settings.value && (settings.value.global_poll_interval_seconds !== form.global_poll_interval_seconds || settings.value.max_concurrency !== form.max_concurrency))
-async function load() { loading.value=true; try { const value=await systemApi.settings(); settings.value=value; form.global_poll_interval_seconds=value.global_poll_interval_seconds; form.max_concurrency=value.max_concurrency } catch(e) { message.error(getErrorMessage(e,'无法加载系统配置')) } finally { loading.value=false } }
-async function save() { if (form.global_poll_interval_seconds < 15 || form.global_poll_interval_seconds > 86400 || form.max_concurrency < 1 || form.max_concurrency > 100) return message.warning('轮询间隔需为 15–86400 秒，并发需为 1–100'); saving.value=true; try { settings.value=await systemApi.updateSettings({ ...form }); message.success('系统设置已保存') } catch(e) { message.error(getErrorMessage(e,'保存设置失败')) } finally { saving.value=false } }
-function reset() { if (settings.value) { form.global_poll_interval_seconds=settings.value.global_poll_interval_seconds; form.max_concurrency=settings.value.max_concurrency } }
+import { computed, onMounted, reactive, ref } from 'vue'
+import { message } from 'ant-design-vue'
+import { systemApi } from '@/services/api'
+import { getErrorMessage } from '@/services/http'
+import type { SystemSettings } from '@/types'
+import PageHeader from '@/components/PageHeader.vue'
+const settings = ref<SystemSettings | null>(null)
+const loading = ref(false)
+const saving = ref(false)
+const form = reactive({ global_poll_interval_seconds: 300, max_concurrency: 5 })
+const dirty = computed(
+  () =>
+    settings.value &&
+    (settings.value.global_poll_interval_seconds !== form.global_poll_interval_seconds ||
+      settings.value.max_concurrency !== form.max_concurrency),
+)
+async function load() {
+  loading.value = true
+  try {
+    const value = await systemApi.settings()
+    settings.value = value
+    form.global_poll_interval_seconds = value.global_poll_interval_seconds
+    form.max_concurrency = value.max_concurrency
+  } catch (e) {
+    message.error(getErrorMessage(e, '无法加载系统配置'))
+  } finally {
+    loading.value = false
+  }
+}
+async function save() {
+  if (
+    form.global_poll_interval_seconds < 15 ||
+    form.global_poll_interval_seconds > 86400 ||
+    form.max_concurrency < 1 ||
+    form.max_concurrency > 100
+  )
+    return message.warning('轮询间隔需为 15–86400 秒，并发需为 1–100')
+  saving.value = true
+  try {
+    settings.value = await systemApi.updateSettings({ ...form })
+    message.success('系统设置已保存')
+  } catch (e) {
+    message.error(getErrorMessage(e, '保存设置失败'))
+  } finally {
+    saving.value = false
+  }
+}
+function reset() {
+  if (settings.value) {
+    form.global_poll_interval_seconds = settings.value.global_poll_interval_seconds
+    form.max_concurrency = settings.value.max_concurrency
+  }
+}
 onMounted(load)
 </script>
 
-<template><div class="page-stack"><PageHeader eyebrow="SYSTEM / 03" title="系统与设置" description="配置系统默认轮询策略与并发容量" /><a-card :bordered="false" :loading="loading"><a-form layout="vertical" style="max-width:620px"><a-form-item label="默认轮询间隔"><a-input-number v-model:value="form.global_poll_interval_seconds" :min="15" :max="86400" addon-after="秒" style="width:100%" /><span class="muted">建议 2–15 分钟，过于频繁可能触发平台限制。</span></a-form-item><a-form-item label="最大并发任务数"><a-input-number v-model:value="form.max_concurrency" :min="1" :max="100" style="width:100%" /><span class="muted">控制同一时间正在执行的采集任务数量。</span></a-form-item><a-space><a-button type="primary" :disabled="!dirty" :loading="saving" @click="save">保存配置</a-button><a-button :disabled="!dirty" @click="reset">重置</a-button></a-space></a-form></a-card></div></template>
+<template>
+  <div class="page-stack">
+    <PageHeader
+      eyebrow="SYSTEM / 03"
+      title="系统与设置"
+      description="配置系统默认轮询策略与并发容量"
+    /><a-card :bordered="false" :loading="loading"
+      ><a-form layout="vertical" style="max-width: 620px"
+        ><a-form-item label="默认轮询间隔"
+          ><a-input-number
+            v-model:value="form.global_poll_interval_seconds"
+            :min="15"
+            :max="86400"
+            addon-after="秒"
+            style="width: 100%"
+          /><span class="muted">建议 2–15 分钟，过于频繁可能触发平台限制。</span></a-form-item
+        ><a-form-item label="最大并发任务数"
+          ><a-input-number
+            v-model:value="form.max_concurrency"
+            :min="1"
+            :max="100"
+            style="width: 100%"
+          /><span class="muted">控制同一时间正在执行的采集任务数量。</span></a-form-item
+        ><a-space
+          ><a-button type="primary" :disabled="!dirty" :loading="saving" @click="save"
+            >保存配置</a-button
+          ><a-button :disabled="!dirty" @click="reset">重置</a-button></a-space
+        ></a-form
+      ></a-card
+    >
+  </div>
+</template>

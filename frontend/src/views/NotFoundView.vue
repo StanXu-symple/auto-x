@@ -1,1 +1,11 @@
-<template><div class="empty-space"><a-result status="404" title="页面不存在" sub-title="这个页面可能已被移动或删除"><template #extra><a-button type="primary" @click="$router.push('/dashboard')">返回仪表盘</a-button></template></a-result></div></template>
+<template>
+  <div class="empty-space">
+    <a-result status="404" title="页面不存在" sub-title="这个页面可能已被移动或删除"
+      ><template #extra
+        ><a-button type="primary" @click="$router.push('/dashboard')"
+          >返回仪表盘</a-button
+        ></template
+      ></a-result
+    >
+  </div>
+</template>

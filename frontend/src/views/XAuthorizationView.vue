@@ -1,15 +1,232 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { CheckCircleOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons-vue'; import { message, Modal } from 'ant-design-vue'; import { xCredentialsApi, xSourcesApi } from '@/services/api'; import { getErrorMessage } from '@/services/http'; import type { XCredentialAcquisitionMethod, XSourceProvider, XSourceStatus } from '@/types'; import PageHeader from '@/components/PageHeader.vue'; import StatusPill from '@/components/StatusPill.vue'
-const status = ref<XSourceStatus | null>(null); const loading = ref(false); const saving = ref(false); const provider = ref<XSourceProvider>('official_api'); const method = ref<XCredentialAcquisitionMethod>('developer_console'); const bearer = ref(''); const confirmed = ref(false); const accountLabel = ref('x-reader'); const authToken = ref(''); const ct0 = ref(''); const riskConfirmed = ref(false)
-const official = computed(() => status.value?.official_api); const twscrape = computed(() => status.value?.twscrape); const active = computed(() => status.value?.active_provider === provider.value)
-async function load() { loading.value = true; try { status.value = await xSourcesApi.status(); provider.value = status.value.active_provider } catch (e) { message.error(getErrorMessage(e, '读取数据源状态失败')) } finally { loading.value = false } }
-async function activate() { if (!(provider.value === 'official_api' ? official.value?.configured : twscrape.value?.configured)) return message.warning('请先保存并测试该数据源凭据'); saving.value = true; try { status.value = await xSourcesApi.selectProvider(provider.value); message.success('数据源已切换') } catch (e) { message.error(getErrorMessage(e, '切换失败')) } finally { saving.value = false } }
-async function saveOfficial() { if (!bearer.value.trim() || !confirmed.value) return message.warning('请填写 Token 并完成确认'); saving.value = true; try { await xCredentialsApi.save({ bearer_token: bearer.value.trim(), acquisition_method: method.value }); bearer.value=''; confirmed.value=false; await load(); message.success('Bearer Token 已加密保存') } catch (e) { message.error(getErrorMessage(e, '保存失败')) } finally { saving.value = false } }
-async function testOfficial() { saving.value = true; try { const result = await xCredentialsApi.test(); result.valid ? message.success(result.message) : message.warning(result.message); await load() } catch (e) { message.error(getErrorMessage(e, '测试失败')) } finally { saving.value = false } }
-async function saveTwscrape() { if (!accountLabel.value.trim() || !authToken.value.trim() || !ct0.value.trim() || !riskConfirmed.value) return message.warning('请填写凭据并确认风险'); saving.value = true; try { await xSourcesApi.saveTwscrape({ account_label: accountLabel.value.trim(), auth_token: authToken.value.trim(), ct0: ct0.value.trim(), acknowledged_risk: true }); authToken.value=''; ct0.value=''; riskConfirmed.value=false; await load(); message.success('Cookies 已加密保存') } catch (e) { message.error(getErrorMessage(e, '保存失败')) } finally { saving.value = false } }
-function removeTwscrape() { Modal.confirm({ title:'删除 twscrape Cookies？', content:'删除后将无法使用 twscrape 数据源。', okType:'danger', okText:'确认删除', cancelText:'取消', onOk: async () => { await xSourcesApi.removeTwscrape(); await load(); message.success('Cookies 已删除') } }) }
+import { CheckCircleOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { message, Modal } from 'ant-design-vue'
+import { xCredentialsApi, xSourcesApi } from '@/services/api'
+import { getErrorMessage } from '@/services/http'
+import type { XCredentialAcquisitionMethod, XSourceProvider, XSourceStatus } from '@/types'
+import PageHeader from '@/components/PageHeader.vue'
+import StatusPill from '@/components/StatusPill.vue'
+const status = ref<XSourceStatus | null>(null)
+const loading = ref(false)
+const saving = ref(false)
+const provider = ref<XSourceProvider>('official_api')
+const method = ref<XCredentialAcquisitionMethod>('developer_console')
+const bearer = ref('')
+const confirmed = ref(false)
+const accountLabel = ref('x-reader')
+const authToken = ref('')
+const ct0 = ref('')
+const riskConfirmed = ref(false)
+const official = computed(() => status.value?.official_api)
+const twscrape = computed(() => status.value?.twscrape)
+const active = computed(() => status.value?.active_provider === provider.value)
+async function load() {
+  loading.value = true
+  try {
+    status.value = await xSourcesApi.status()
+    provider.value = status.value.active_provider
+  } catch (e) {
+    message.error(getErrorMessage(e, '读取数据源状态失败'))
+  } finally {
+    loading.value = false
+  }
+}
+async function activate() {
+  if (
+    !(provider.value === 'official_api' ? official.value?.configured : twscrape.value?.configured)
+  )
+    return message.warning('请先保存并测试该数据源凭据')
+  saving.value = true
+  try {
+    status.value = await xSourcesApi.selectProvider(provider.value)
+    message.success('数据源已切换')
+  } catch (e) {
+    message.error(getErrorMessage(e, '切换失败'))
+  } finally {
+    saving.value = false
+  }
+}
+async function saveOfficial() {
+  if (!bearer.value.trim() || !confirmed.value) return message.warning('请填写 Token 并完成确认')
+  saving.value = true
+  try {
+    await xCredentialsApi.save({
+      bearer_token: bearer.value.trim(),
+      acquisition_method: method.value,
+    })
+    bearer.value = ''
+    confirmed.value = false
+    await load()
+    message.success('Bearer Token 已加密保存')
+  } catch (e) {
+    message.error(getErrorMessage(e, '保存失败'))
+  } finally {
+    saving.value = false
+  }
+}
+async function testOfficial() {
+  saving.value = true
+  try {
+    const result = await xCredentialsApi.test()
+    result.valid ? message.success(result.message) : message.warning(result.message)
+    await load()
+  } catch (e) {
+    message.error(getErrorMessage(e, '测试失败'))
+  } finally {
+    saving.value = false
+  }
+}
+async function saveTwscrape() {
+  if (
+    !accountLabel.value.trim() ||
+    !authToken.value.trim() ||
+    !ct0.value.trim() ||
+    !riskConfirmed.value
+  )
+    return message.warning('请填写凭据并确认风险')
+  saving.value = true
+  try {
+    await xSourcesApi.saveTwscrape({
+      account_label: accountLabel.value.trim(),
+      auth_token: authToken.value.trim(),
+      ct0: ct0.value.trim(),
+      acknowledged_risk: true,
+    })
+    authToken.value = ''
+    ct0.value = ''
+    riskConfirmed.value = false
+    await load()
+    message.success('Cookies 已加密保存')
+  } catch (e) {
+    message.error(getErrorMessage(e, '保存失败'))
+  } finally {
+    saving.value = false
+  }
+}
+function removeTwscrape() {
+  Modal.confirm({
+    title: '删除 twscrape Cookies？',
+    content: '删除后将无法使用 twscrape 数据源。',
+    okType: 'danger',
+    okText: '确认删除',
+    cancelText: '取消',
+    onOk: async () => {
+      await xSourcesApi.removeTwscrape()
+      await load()
+      message.success('Cookies 已删除')
+    },
+  })
+}
 onMounted(load)
 </script>
 
-<template><div class="page-stack"><PageHeader eyebrow="CHANNEL / 01" title="X 数据源" description="选择官方 API 或 twscrape，并安全管理访问凭据"><template #actions><a-button :loading="loading" @click="load"><ReloadOutlined /> 刷新状态</a-button></template></PageHeader><a-card :bordered="false"><a-radio-group v-model:value="provider" button-style="solid"><a-radio-button value="official_api">官方 X API</a-radio-button><a-radio-button value="twscrape">twscrape 实验模式</a-radio-button></a-radio-group><div class="toolbar" style="margin-top:20px"><span class="toolbar__hint">当前数据源：<strong>{{ active ? '已启用' : '未启用' }}</strong></span><a-button type="primary" :loading="saving" :disabled="active" @click="activate"><CheckCircleOutlined /> 启用当前数据源</a-button></div></a-card><div v-if="provider === 'official_api'" class="two-column"><a-card title="官方认证方式" :bordered="false"><a-alert type="info" show-icon message="App-only Bearer Token 适合后台轮询，不绑定用户发帖权限。" /><a-steps direction="vertical" size="small" style="margin-top:20px"><a-step title="打开 Developer Console" description="登录 console.x.com" /><a-step title="进入项目与 App" /><a-step title="在 Keys & Tokens 生成 Token" /><a-step title="复制后立即保存" /></a-steps></a-card><a-card title="Bearer Token" :bordered="false"><a-descriptions size="small" :column="1"><a-descriptions-item label="状态"><StatusPill :value="official?.verification_status" /></a-descriptions-item><a-descriptions-item label="已保存">{{ official?.configured ? official.token_hint : '未保存' }}</a-descriptions-item></a-descriptions><a-radio-group v-model:value="method" style="margin:18px 0"><a-radio value="developer_console">Developer Console</a-radio><a-radio value="api_exchange">API Exchange</a-radio></a-radio-group><a-input-password v-model:value="bearer" :placeholder="official?.configured ? '••••••••（已保存，输入新值可替换）' : '粘贴 App-only Bearer Token'" /><a-checkbox v-model:checked="confirmed" style="display:block;margin:14px 0">确认这是 App-only Bearer Token</a-checkbox><a-space><a-button type="primary" :loading="saving" @click="saveOfficial">加密保存</a-button><a-button :loading="saving" :disabled="!official?.configured" @click="testOfficial">测试 API</a-button></a-space></a-card></div><div v-else class="two-column"><a-card title="实验性非官方方式" :bordered="false"><a-alert type="warning" show-icon message="Cookie 等同于登录凭据，请使用专用低权限账号。" /><a-steps direction="vertical" size="small" style="margin-top:20px"><a-step title="登录专用 X 账号" /><a-step title="打开浏览器开发者工具" /><a-step title="复制 auth_token 与 ct0" /><a-step title="保存后关闭工具" /></a-steps></a-card><a-card title="twscrape 凭据" :bordered="false"><a-descriptions size="small" :column="1" style="margin-bottom:16px"><a-descriptions-item label="凭据">{{ twscrape?.configured ? '已保存' : '未保存' }}</a-descriptions-item><a-descriptions-item v-if="twscrape?.configured" label="校验状态"><StatusPill :value="twscrape.verification_status" /></a-descriptions-item></a-descriptions><a-input v-model:value="accountLabel" placeholder="账号标识" style="margin-bottom:12px" /><a-input-password v-model:value="authToken" :placeholder="twscrape?.configured ? '••••••••（auth_token 已保存）' : 'auth_token Cookie Value'" style="margin-bottom:12px" /><a-input-password v-model:value="ct0" :placeholder="twscrape?.configured ? '••••••••（ct0 已保存）' : 'ct0 Cookie Value'" /><div v-if="twscrape?.configured" class="muted" style="margin-top:8px">凭据已保存，无需重复填写。如需替换，请重新填写 auth_token 和 ct0 后保存。</div><a-checkbox v-model:checked="riskConfirmed" style="display:block;margin:14px 0">我了解非官方抓取可能导致账号受限</a-checkbox><a-space><a-button type="primary" :loading="saving" @click="saveTwscrape">加密保存</a-button><a-button :loading="saving" :disabled="!twscrape?.configured" @click="removeTwscrape"><DeleteOutlined /> 删除</a-button></a-space></a-card></div></div></template>
+<template>
+  <div class="page-stack">
+    <PageHeader
+      eyebrow="CHANNEL / 01"
+      title="X 数据源"
+      description="选择官方 API 或 twscrape，并安全管理访问凭据"
+      ><template #actions
+        ><a-button :loading="loading" @click="load"><ReloadOutlined /> 刷新状态</a-button></template
+      ></PageHeader
+    ><a-card :bordered="false"
+      ><a-radio-group v-model:value="provider" button-style="solid"
+        ><a-radio-button value="official_api">官方 X API</a-radio-button
+        ><a-radio-button value="twscrape">twscrape 实验模式</a-radio-button></a-radio-group
+      >
+      <div class="toolbar" style="margin-top: 20px">
+        <span class="toolbar__hint"
+          >当前数据源：<strong>{{ active ? '已启用' : '未启用' }}</strong></span
+        ><a-button type="primary" :loading="saving" :disabled="active" @click="activate"
+          ><CheckCircleOutlined /> 启用当前数据源</a-button
+        >
+      </div></a-card
+    >
+    <div v-if="provider === 'official_api'" class="two-column">
+      <a-card title="官方认证方式" :bordered="false"
+        ><a-alert
+          type="info"
+          show-icon
+          message="App-only Bearer Token 适合后台轮询，不绑定用户发帖权限。" /><a-steps
+          direction="vertical"
+          size="small"
+          style="margin-top: 20px"
+          ><a-step title="打开 Developer Console" description="登录 console.x.com" /><a-step
+            title="进入项目与 App" /><a-step title="在 Keys & Tokens 生成 Token" /><a-step
+            title="复制后立即保存" /></a-steps></a-card
+      ><a-card title="Bearer Token" :bordered="false"
+        ><a-descriptions size="small" :column="1"
+          ><a-descriptions-item label="状态"
+            ><StatusPill :value="official?.verification_status" /></a-descriptions-item
+          ><a-descriptions-item label="已保存">{{
+            official?.configured ? official.token_hint : '未保存'
+          }}</a-descriptions-item></a-descriptions
+        ><a-radio-group v-model:value="method" style="margin: 18px 0"
+          ><a-radio value="developer_console">Developer Console</a-radio
+          ><a-radio value="api_exchange">API Exchange</a-radio></a-radio-group
+        ><a-input-password
+          v-model:value="bearer"
+          :placeholder="
+            official?.configured
+              ? '••••••••（已保存，输入新值可替换）'
+              : '粘贴 App-only Bearer Token'
+          "
+        /><a-checkbox v-model:checked="confirmed" style="display: block; margin: 14px 0"
+          >确认这是 App-only Bearer Token</a-checkbox
+        ><a-space
+          ><a-button type="primary" :loading="saving" @click="saveOfficial">加密保存</a-button
+          ><a-button :loading="saving" :disabled="!official?.configured" @click="testOfficial"
+            >测试 API</a-button
+          ></a-space
+        ></a-card
+      >
+    </div>
+    <div v-else class="two-column">
+      <a-card title="实验性非官方方式" :bordered="false"
+        ><a-alert
+          type="warning"
+          show-icon
+          message="Cookie 等同于登录凭据，请使用专用低权限账号。" /><a-steps
+          direction="vertical"
+          size="small"
+          style="margin-top: 20px"
+          ><a-step title="登录专用 X 账号" /><a-step title="打开浏览器开发者工具" /><a-step
+            title="复制 auth_token 与 ct0" /><a-step title="保存后关闭工具" /></a-steps></a-card
+      ><a-card title="twscrape 凭据" :bordered="false"
+        ><a-descriptions size="small" :column="1" style="margin-bottom: 16px"
+          ><a-descriptions-item label="凭据">{{
+            twscrape?.configured ? '已保存' : '未保存'
+          }}</a-descriptions-item
+          ><a-descriptions-item v-if="twscrape?.configured" label="校验状态"
+            ><StatusPill
+              :value="twscrape.verification_status" /></a-descriptions-item></a-descriptions
+        ><a-input
+          v-model:value="accountLabel"
+          placeholder="账号标识"
+          style="margin-bottom: 12px"
+        /><a-input-password
+          v-model:value="authToken"
+          :placeholder="
+            twscrape?.configured ? '••••••••（auth_token 已保存）' : 'auth_token Cookie Value'
+          "
+          style="margin-bottom: 12px"
+        /><a-input-password
+          v-model:value="ct0"
+          :placeholder="twscrape?.configured ? '••••••••（ct0 已保存）' : 'ct0 Cookie Value'"
+        />
+        <div v-if="twscrape?.configured" class="muted" style="margin-top: 8px">
+          凭据已保存，无需重复填写。如需替换，请重新填写 auth_token 和 ct0 后保存。
+        </div>
+        <a-checkbox v-model:checked="riskConfirmed" style="display: block; margin: 14px 0"
+          >我了解非官方抓取可能导致账号受限</a-checkbox
+        ><a-space
+          ><a-button type="primary" :loading="saving" @click="saveTwscrape">加密保存</a-button
+          ><a-button :loading="saving" :disabled="!twscrape?.configured" @click="removeTwscrape"
+            ><DeleteOutlined /> 删除</a-button
+          ></a-space
+        ></a-card
+      >
+    </div>
+  </div>
+</template>

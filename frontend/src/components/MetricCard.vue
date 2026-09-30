@@ -1,5 +1,10 @@
 <script setup lang="ts">
-defineProps<{ label: string; value: string | number; detail?: string; accent?: 'terracotta' | 'sage' | 'slate' | 'ochre' }>()
+defineProps<{
+  label: string
+  value: string | number
+  detail?: string
+  accent?: 'terracotta' | 'sage' | 'slate' | 'ochre'
+}>()
 </script>
 
 <template>

@@ -1,5 +1,41 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'; import { message } from 'ant-design-vue'; import { aiDataSourceApi } from '@/services/api'; import { getErrorMessage } from '@/services/http'
-const value=ref<any>(null); const form=reactive({name:'OpenAI',base_url:'https://api.openai.com/v1',model:'gpt-5.6-terra',api_key:''}); async function load(){try{value.value=await aiDataSourceApi.status()}catch(e){message.error(getErrorMessage(e,'读取 AI 数据源失败'))}}; async function save(){try{value.value=await aiDataSourceApi.save({...form,protocol:'openai_responses'});form.api_key='';message.success('已保存')}catch(e){message.error(getErrorMessage(e,'保存失败'))}}; onMounted(load)
+import { onMounted, reactive, ref } from 'vue'
+import { message } from 'ant-design-vue'
+import { aiDataSourceApi } from '@/services/api'
+import { getErrorMessage } from '@/services/http'
+const value = ref<any>(null)
+const form = reactive({
+  name: 'OpenAI',
+  base_url: 'https://api.openai.com/v1',
+  model: 'gpt-5.6-terra',
+  api_key: '',
+})
+async function load() {
+  try {
+    value.value = await aiDataSourceApi.status()
+  } catch (e) {
+    message.error(getErrorMessage(e, '读取 AI 数据源失败'))
+  }
+}
+async function save() {
+  try {
+    value.value = await aiDataSourceApi.save({ ...form, protocol: 'openai_responses' })
+    form.api_key = ''
+    message.success('已保存')
+  } catch (e) {
+    message.error(getErrorMessage(e, '保存失败'))
+  }
+}
+onMounted(load)
 </script>
-<template><a-card title="AI 数据源"><a-form layout="vertical"><a-form-item label="名称"><a-input v-model:value="form.name" /></a-form-item><a-form-item label="Base URL"><a-input v-model:value="form.base_url" /></a-form-item><a-form-item label="模型"><a-input v-model:value="form.model" /></a-form-item><a-form-item label="API Key"><a-input-password v-model:value="form.api_key" /></a-form-item><a-button type="primary" @click="save">保存</a-button></a-form></a-card></template>
+<template>
+  <a-card title="AI 数据源"
+    ><a-form layout="vertical"
+      ><a-form-item label="名称"><a-input v-model:value="form.name" /></a-form-item
+      ><a-form-item label="Base URL"><a-input v-model:value="form.base_url" /></a-form-item
+      ><a-form-item label="模型"><a-input v-model:value="form.model" /></a-form-item
+      ><a-form-item label="API Key"><a-input-password v-model:value="form.api_key" /></a-form-item
+      ><a-button type="primary" @click="save">保存</a-button></a-form
+    ></a-card
+  >
+</template>
