@@ -18,6 +18,7 @@ const tone = computed(() =>
     'connected',
     'valid',
     'succeeded',
+    'published',
     'sent',
     'ok',
   ].includes(normalized.value)
@@ -50,6 +51,8 @@ const labels: Record<string, string> = {
   queued: '队列中',
   polling: '轮询中',
   succeeded: '已完成',
+  unpublished: '未发布',
+  published: '已发布',
   sent: '已发送',
   failed: '失败',
   error: '异常',

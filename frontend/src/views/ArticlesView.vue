@@ -4,6 +4,7 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import {
   DeleteOutlined,
   EditOutlined,
+  EyeOutlined,
   HistoryOutlined,
   PlusOutlined,
   SendOutlined,
@@ -12,17 +13,31 @@ import {
 import { message, Modal } from 'ant-design-vue'
 import { articlesApi, qqApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
-import type { Article, ArticlePayload, EntityId, QQBotAccount, QQJoinedGroup } from '@/types'
+import type {
+  Article,
+  ArticlePayload,
+  ArticlePublishStatus,
+  EntityId,
+  QQBotAccount,
+  QQJoinedGroup,
+} from '@/types'
 import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import ArticleMediaGallery from '@/components/ArticleMediaGallery.vue'
+import ArticlePreview from '@/components/ArticlePreview.vue'
 const saving = ref(false)
 const uploading = ref(false)
 const open = ref(false)
 const publishOpen = ref(false)
+const previewOpen = ref(false)
 const historyOpen = ref(false)
 const editing = ref<Article | null>(null)
 const publishing = ref<Article | null>(null)
+const previewing = ref<Article | null>(null)
+const publishSubmitting = ref(false)
+const publishChannelLoading = ref(false)
+let channelRequest = 0
 const bots = ref<QQBotAccount[]>([])
 const groups = ref<QQJoinedGroup[]>([])
 const historyArticle = ref<EntityId | null>(null)
@@ -51,7 +66,7 @@ const {
       publish_status:
         filters.publish_status === 'all'
           ? undefined
-          : (filters.publish_status as 'unpublished' | 'published' | 'failed'),
+          : (filters.publish_status as ArticlePublishStatus),
     }),
   '无法加载文章',
 )
@@ -79,6 +94,10 @@ function edit(article?: Article) {
       : { title: '', content: '', excerpt: '', images: [] },
   )
   open.value = true
+}
+function view(article: Article) {
+  previewing.value = article
+  previewOpen.value = true
 }
 async function save() {
   if (!form.title.trim() || !form.content.trim()) return message.warning('请填写标题和正文')
@@ -125,27 +144,52 @@ function remove(article: Article) {
   })
 }
 async function preparePublish(article: Article) {
+  const request = ++channelRequest
   publishing.value = article
   publishForm.channel = 'qq'
   publishForm.bot_id = null
   publishForm.group_openids = []
+  bots.value = []
+  groups.value = []
+  publishOpen.value = true
+  publishChannelLoading.value = true
   try {
-    bots.value = await qqApi.bots()
-    publishForm.bot_id = bots.value.find((bot) => bot.is_enabled)?.id || null
-    groups.value = publishForm.bot_id ? await qqApi.joinedGroups(publishForm.bot_id) : []
-    publishOpen.value = true
+    const loadedBots = await qqApi.bots()
+    if (request !== channelRequest || !publishOpen.value) return
+    bots.value = loadedBots
+    const botId = loadedBots.find((bot) => bot.is_enabled)?.id || null
+    publishForm.bot_id = botId
+    const loadedGroups = botId ? await qqApi.joinedGroups(botId) : []
+    if (request !== channelRequest || !publishOpen.value) return
+    groups.value = loadedGroups
   } catch (e) {
-    message.error(getErrorMessage(e, '读取发布渠道失败'))
+    if (request === channelRequest && publishOpen.value)
+      message.error(getErrorMessage(e, '读取 QQ 发布渠道失败'))
+  } finally {
+    if (request === channelRequest) publishChannelLoading.value = false
   }
 }
 async function changeBot() {
-  groups.value = publishForm.bot_id ? await qqApi.joinedGroups(publishForm.bot_id) : []
+  const request = ++channelRequest
+  const botId = publishForm.bot_id
   publishForm.group_openids = []
+  groups.value = []
+  publishChannelLoading.value = true
+  try {
+    const loadedGroups = botId ? await qqApi.joinedGroups(botId) : []
+    if (request === channelRequest && publishOpen.value) groups.value = loadedGroups
+  } catch (e) {
+    if (request === channelRequest && publishOpen.value)
+      message.error(getErrorMessage(e, '读取机器人加入的群失败'))
+  } finally {
+    if (request === channelRequest) publishChannelLoading.value = false
+  }
 }
 async function submitPublish() {
-  if (!publishing.value) return
+  if (!publishing.value || publishSubmitting.value) return
   if (publishForm.channel === 'qq' && (!publishForm.bot_id || !publishForm.group_openids.length))
     return message.warning('请选择 QQ 机器人和发送群')
+  publishSubmitting.value = true
   try {
     await articlesApi.publish(publishing.value.id, {
       channel: publishForm.channel,
@@ -157,6 +201,8 @@ async function submitPublish() {
     message.success('发布任务已提交')
   } catch (e) {
     message.error(getErrorMessage(e, '发布失败'))
+  } finally {
+    publishSubmitting.value = false
   }
 }
 async function showHistory(article: Article) {
@@ -206,6 +252,7 @@ watch(
             :options="[
               { label: '全部状态', value: 'all' },
               { label: '未发布', value: 'unpublished' },
+              { label: '发布中', value: 'queued' },
               { label: '已发布', value: 'published' },
               { label: '失败', value: 'failed' },
             ]"
@@ -248,6 +295,9 @@ watch(
         ><a-table-column title="操作"
           ><template #default="{ record }"
             ><a-space
+              ><a-tooltip title="查看文章"
+                ><a-button type="link" aria-label="查看文章" @click="view(record)"
+                  ><EyeOutlined /></a-button></a-tooltip
               ><a-button type="link" aria-label="编辑文章" @click="edit(record)"
                 ><EditOutlined /></a-button
               ><a-button type="link" aria-label="发布文章" @click="preparePublish(record)"
@@ -274,23 +324,46 @@ watch(
           ><a-textarea v-model:value="form.content" :rows="14" /></a-form-item
         ><a-form-item label="媒体"
           ><label class="upload-zone"
-            ><input type="file" accept="image/*,video/*" multiple @change="upload" /><strong
-              ><UploadOutlined /> {{ uploading ? '上传中…' : '上传媒体' }}</strong
-            ><span>图片或视频会随文章保存</span></label
+            ><input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              @change="upload"
+            /><strong><UploadOutlined /> {{ uploading ? '上传中…' : '上传媒体' }}</strong
+            ><span>支持 JPG、PNG、WebP 图片，随文章保存</span></label
           >
           <div v-if="form.images.length" class="muted" style="margin-top: 10px">
             已添加 {{ form.images.length }} 个媒体文件
-          </div></a-form-item
-        ></a-form
-      ></a-modal
+          </div>
+          <ArticleMediaGallery
+            v-if="open && form.images.length"
+            :images="form.images"
+            style="margin-top: 12px"
+          /> </a-form-item></a-form
+    ></a-modal>
+    <a-modal
+      v-model:open="previewOpen"
+      title="查看文章"
+      :footer="null"
+      width="760px"
+      :body-style="{ maxHeight: '70vh', overflowY: 'auto' }"
     >
+      <ArticlePreview v-if="previewOpen && previewing" :article="previewing" />
+    </a-modal>
     <a-modal
       v-model:open="publishOpen"
       title="发布文章"
       ok-text="提交发布"
       cancel-text="取消"
+      width="760px"
+      :body-style="{ maxHeight: '70vh', overflowY: 'auto' }"
+      :confirm-loading="publishSubmitting"
       @ok="submitPublish"
-      ><a-form layout="vertical"
+      ><ArticlePreview
+        v-if="publishOpen && publishing"
+        :article="publishing"
+        :channel="publishForm.channel" />
+      <a-form layout="vertical"
         ><a-form-item label="发布渠道"
           ><a-radio-group v-model:value="publishForm.channel"
             ><a-radio value="qq">QQ</a-radio><a-radio value="xhs">小红书</a-radio></a-radio-group
@@ -299,11 +372,13 @@ watch(
           ><a-form-item label="机器人"
             ><a-select
               v-model:value="publishForm.bot_id"
+              :loading="publishChannelLoading"
               :options="bots.map((bot) => ({ label: bot.name, value: bot.id }))"
               @change="changeBot" /></a-form-item
           ><a-form-item label="发送群"
             ><a-select
               v-model:value="publishForm.group_openids"
+              :loading="publishChannelLoading"
               mode="multiple"
               :options="
                 groups.map((group) => ({
