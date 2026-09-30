@@ -351,7 +351,24 @@ hn-1 原 `/root/apps` 为官方 main，额外 16 个提交；经用户确认完�
 
 ### 2. 备份与 Nacos 迁移预检查
 
-在 tc-2 通过安装器的源码刷新阶段获取 main，保留 `.env`、`.auto-x-services`、数据目录及运行容器。先按第二节备份数据库、清单和控制面文件，然后校验：
+tc-2 本次默认 GitHub 代理源码刷新失败，官方直连 `git ls-remote` 成功；经用户确认后设置 `KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git`，通过同一安装器函数刷新成功，运行容器未变。后续优先使用该显式仓库参数。
+
+在 tc-2 通过安装器的源码刷新阶段获取 main，保留 `.env`、`.auto-x-services`、数据目录及运行容器。仅准备源码可使用已核对的安装定义函数：
+
+```bash
+# git 已安装；只调用原安装器的源码刷新阶段，不启动更新流程
+install() { command -v "$1" >/dev/null; }
+docker_app_plus() { :; }
+prepare_source() {
+  local gh_proxy="https://" canshu=default
+  local KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git
+  source /root/apps/auto-x.conf
+  auto_x_sync_source
+}
+prepare_source
+```
+
+此命令同样可在新 hn-1 上预备源码。若网络刷新失败先报告，不能改用未发布本地源码。先按第二节备份数据库、清单和控制面文件，然后校验：
 
 ```bash
 cd /home/docker/auto-x
@@ -411,6 +428,7 @@ SQL 在事务内锁定授权表，保留原 scopes 与其他身份；冲突拒�
 ```bash
 cd /root
 KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=install KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
 KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
 KJ_AUTO_X_IMAGE_TAG=sha-936774a32ec78c7a73987d65b5ea8968f032c80f \
 KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_MONITOR_NODE_ID=hn-1 \
@@ -428,3 +446,11 @@ bash kejilion.sh app auto-x
 tc-1 Nacos 始终运行，旧三个 Auto-X 容器保持停止且卷保留；tc-2 原七项服务清单保持不变。验收仅调用健康和状态 API，不执行真实平台发布。
 
 若切换失败，先报告用户。回退需先停止 hn-1 四项服务，从备份恢复三个 Nacos Data ID，并用 SQL 反向迁移 hn-1→tc-1 的 monitor grant，再启动旧三服务；不能在两个节点同时运行相同 XHS/monitor-center。确认回退前保留新节点日志及数据，避免遗漏切换后新增登录态。
+
+### 2026-09-30 迁移实测记录
+
+hn-1 官方三镜像无超时下载完成，Docker 校验通过，revision 均为 `936774a32ec78c7a73987d65b5ea8968f032c80f`。通过上述 kejilion 安装入口完成四项服务启动；Nacos 同步本地补充 0 项，四项容器 healthy，8006/8007/9101/9102 的 liveness 为 200。Camoufox Memory 为 2147483648、ShmSize 为 536870912，无 JWT 的 `/v1/status` 为 401；tc-2 backend 能发现所有迁移服务的新公网地址，监控两主机和 13 个实例均 healthy。
+
+tc-2 备份为 `/home/docker/auto-x/backups/pre-hn1-20260930/`；三份 Nacos 原配置为 tc-2 的 `/home/docker/auto-x/backups/pre-hn1-nacos-20260930/`。tc-1 切换备份为 `/home/docker/auto-x/backups/pre-hn1-cutover-20260930/`，hn-1 卷归档为 `/root/auto-x-hn1-volume-backup/`。Cookie 文件摘要保持 `0662aa4c3e14e8ce6a065512af316684043b92935480a97382b3192bb787f0e2`；旧三服务已停止，tc-1 Nacos 始终运行。
+
+浏览器业务验收发现 `installed: false`，已按要求暂停修复并报告。只读定位结果：XHS→Camoufox 使用 Nacos 的 `177.2.18.14:8007`，认证调用返回 HTTP 200，xhs CLI 存在。浏览器实际在 `/opt/xsentinel-cache/camoufox/browsers/official/152.0.4-beta.31-3a7958c8`；旧代码仅检查缓存根目录的 `camoufox-bin`/`camoufox`，未识别 SDK 0.5 的多版本目录，因此误判为未安装。容器 healthy 只能确认服务进程，业务验收还必须检查带令牌的 installed 状态；修复须发布镜像后通过菜单 2 更新，不能注入容器源码。
