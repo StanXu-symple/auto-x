@@ -428,9 +428,11 @@ async def update_target(
     for field in ("is_enabled", "all_monitored_users", "message_template", "template_variables"):
         if field in updates:
             setattr(row, field, updates[field])
-    row.message_template = await validate_target_template(
-        db, row.message_template, row.template_variables
-    )
+    # Always allow stopping deliveries, even if an old template needs repair.
+    if updates != {"is_enabled": False}:
+        row.message_template = await validate_target_template(
+            db, row.message_template, row.template_variables
+        )
     final_all = row.all_monitored_users
     if "monitored_user_ids" in updates or "all_monitored_users" in updates:
         if "monitored_user_ids" in updates:
