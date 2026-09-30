@@ -50,10 +50,22 @@ async def seed_runtime_defaults(settings: Settings, *, seed_admin: bool = True) 
                 extra={"username": settings.admin_username},
             )
 
-        statement = postgres_insert(QQPlaceholder).values(DEFAULT_PLACEHOLDERS)
-        await session.execute(
-            statement.on_conflict_do_nothing(index_elements=[QQPlaceholder.placeholder])
+        # Claim one-time initialization so deleted defaults stay deleted after restart.
+        seed_claim = (
+            postgres_insert(AppSetting)
+            .values(
+                key="qq_placeholder_defaults_seeded",
+                value={"initialized": True},
+                updated_at=datetime.now(UTC),
+            )
+            .on_conflict_do_nothing(index_elements=[AppSetting.key])
+            .returning(AppSetting.key)
         )
+        if (await session.execute(seed_claim)).scalar_one_or_none() is not None:
+            statement = postgres_insert(QQPlaceholder).values(DEFAULT_PLACEHOLDERS)
+            await session.execute(
+                statement.on_conflict_do_nothing(index_elements=[QQPlaceholder.placeholder])
+            )
 
         polling = await session.get(AppSetting, "polling")
         if polling is None:

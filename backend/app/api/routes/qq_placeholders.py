@@ -6,6 +6,7 @@ from app.api.deps import CurrentAdmin, DbSession
 from app.api.errors import APIError
 from app.models.qq import QQNotificationTarget
 from app.models.qq_placeholder import QQPlaceholder
+from app.schemas.common import MessageResponse
 from app.schemas.qq import normalize_message_template
 from app.schemas.qq_placeholder import (
     FIELD_LABELS,
@@ -89,3 +90,39 @@ async def update_placeholder(
     row.placeholder = payload.placeholder
     row.source_field = payload.source_field
     return await persist(db, row)
+
+
+@router.delete("/{placeholder_id}", response_model=MessageResponse)
+async def delete_placeholder(placeholder_id: int, db: DbSession, _: CurrentAdmin):
+    row = await db.get(QQPlaceholder, placeholder_id, with_for_update=True)
+    if row is None:
+        raise APIError(404, "qq_placeholder_not_found", "占位符不存在或已删除")
+    key = row.placeholder[1:-1]
+    targets = await db.scalars(select(QQNotificationTarget).order_by(QQNotificationTarget.id))
+    used_by = []
+    for target in targets:
+        template = normalize_message_template(target.message_template, {key: ""})
+        try:
+            referenced = key in parse_template_fields(template)
+        except ValueError:
+            # Legacy invalid templates must not crash deletion or hide a reference.
+            referenced = row.placeholder in template
+        if referenced:
+            used_by.append(
+                {
+                    "id": target.id,
+                    "name": target.name,
+                    "group_openid": target.group_openid,
+                    "is_enabled": target.is_enabled,
+                }
+            )
+    if used_by:
+        raise APIError(
+            409,
+            "qq_placeholder_in_use",
+            "无法删除，请先删除以下使用此占位符的群目标",
+            details={"targets": used_by},
+        )
+    await db.delete(row)
+    await db.commit()
+    return MessageResponse(message="占位符已删除")

@@ -221,6 +221,7 @@ export const systemApi = {
 }
 
 export const qqApi = {
+  async removePlaceholder(id: number) { await http.delete(`/qq/placeholders/${id}`) },
   async placeholders() { return dataOf(await http.get<Wrapped<import('@/types').QQPlaceholder[]>>('/qq/placeholders')) },
   async placeholderFields() { return dataOf(await http.get<Wrapped<import('@/types').QQPlaceholderField[]>>('/qq/placeholders/fields')) },
   async createPlaceholder(payload: Pick<import('@/types').QQPlaceholder, 'placeholder' | 'source_field'>) { return dataOf(await http.post<Wrapped<import('@/types').QQPlaceholder>>('/qq/placeholders', payload)) },

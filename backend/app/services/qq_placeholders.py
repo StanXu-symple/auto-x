@@ -27,8 +27,12 @@ def parse_template_fields(template: str) -> set[str]:
     return fields
 
 
-async def load_placeholder_mappings(session: AsyncSession) -> dict[str, str]:
-    rows = await session.scalars(select(QQPlaceholder).order_by(QQPlaceholder.id))
+async def load_placeholder_mappings(session: AsyncSession, *, lock: bool = False) -> dict[str, str]:
+    statement = select(QQPlaceholder).order_by(QQPlaceholder.id)
+    if lock:
+        # Hold shared locks until target writes commit; deletion takes an exclusive lock.
+        statement = statement.with_for_update(read=True)
+    rows = await session.scalars(statement)
     return {row.placeholder[1:-1]: row.source_field for row in rows}
 
 
@@ -37,7 +41,7 @@ async def validate_target_template(
 ) -> str:
     from app.schemas.qq import normalize_message_template
 
-    mappings = await load_placeholder_mappings(session)
+    mappings = await load_placeholder_mappings(session, lock=True)
     variables = variables or {}
     if set(variables) & set(mappings):
         raise APIError(422, "qq_template_collision", "自定义变量不能覆盖已配置占位符")
@@ -77,3 +81,20 @@ def placeholder_values(
             value = json.dumps(value, ensure_ascii=False)
         values[name] = "" if value is None else str(value)
     return values
+
+
+def default_mapped_template(mappings: dict[str, str]) -> str:
+    lines = []
+    if "title" in mappings:
+        lines.append("{title}")
+    identity = []
+    if "username" in mappings:
+        identity.append("@{username}")
+    if "posted_at" in mappings:
+        identity.append("{posted_at}")
+    if identity:
+        lines.append(" · ".join(identity))
+    for key in ("text", "url"):
+        if key in mappings:
+            lines.append("{" + key + "}")
+    return "\n".join(lines) or "\n".join("{" + key + "}" for key in mappings)

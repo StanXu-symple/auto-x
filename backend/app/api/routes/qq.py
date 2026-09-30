@@ -25,7 +25,6 @@ from app.models.qq import (
 from app.models.tweet import Tweet
 from app.schemas.common import MessageResponse, Page
 from app.schemas.qq import (
-    DEFAULT_QQ_MESSAGE_TEMPLATE,
     QQBatchPushAccepted,
     QQBatchPushCreate,
     QQBotCreate,
@@ -58,7 +57,11 @@ from app.services.qq_notifications import (
     secret_hint,
     validate_qq_credentials,
 )
-from app.services.qq_placeholders import load_placeholder_mappings, validate_target_template
+from app.services.qq_placeholders import (
+    default_mapped_template,
+    load_placeholder_mappings,
+    validate_target_template,
+)
 from app.services.qq_schedule import next_qq_task_run
 
 router = APIRouter(prefix="/qq", tags=["QQ Notifications"])
@@ -526,7 +529,7 @@ async def batch_push(
     for group in sorted(joined):
         target = targets.get(group)
         template = normalize_message_template(
-            target.message_template if target else DEFAULT_QQ_MESSAGE_TEMPLATE,
+            target.message_template if target else default_mapped_template(mappings),
             {**mappings, **(target.template_variables or {} if target else {})},
         )
         # {title} is a batch header and must only be emitted once per QQ message.

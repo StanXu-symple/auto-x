@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons-vue'
-import { message } from 'ant-design-vue'
+import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import axios from 'axios'
+import { message, Modal } from 'ant-design-vue'
 import { qqApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import type { QQPlaceholder, QQPlaceholderField } from '@/types'
@@ -52,6 +53,34 @@ async function save() {
   } catch (e) { message.error(getErrorMessage(e, '保存占位符失败')) }
   finally { saving.value = false }
 }
+const deleting = ref<Set<number>>(new Set())
+const blockedOpen = ref(false)
+const blockedPlaceholder = ref('')
+const blockedTargets = ref<{ id: number; name: string; group_openid: string; is_enabled: boolean }[]>([])
+function remove(row: QQPlaceholder) {
+  Modal.confirm({
+    title: `删除占位符 ${row.placeholder}？`, content: '删除前会检查群目标引用，正在使用的占位符不能删除。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      deleting.value.add(row.id)
+      try {
+        await qqApi.removePlaceholder(row.id)
+        message.success('占位符已删除')
+        await load()
+        emit('changed')
+      } catch (e) {
+        if (axios.isAxiosError(e) && e.response?.data?.error?.code === 'qq_placeholder_in_use') {
+          blockedPlaceholder.value = row.placeholder
+          blockedTargets.value = e.response.data.error.details?.targets || []
+          blockedOpen.value = true
+          return
+        }
+        message.error(getErrorMessage(e, '删除占位符失败'))
+        throw e
+      } finally { deleting.value.delete(row.id) }
+    },
+  })
+}
 onMounted(load)
 </script>
 
@@ -61,9 +90,13 @@ onMounted(load)
   <a-table :data-source="rows" :loading="loading" row-key="id" :pagination="false">
     <a-table-column title="占位符"><template #default="{record}"><code>{{ record.placeholder }}</code></template></a-table-column>
     <a-table-column title="原始字段"><template #default="{record}">{{ sourceLabel(record.source_field) }}</template></a-table-column>
-    <a-table-column title="操作" :width="100"><template #default="{record}"><a-button type="link" @click="edit(record)"><EditOutlined /> 编辑</a-button></template></a-table-column>
+    <a-table-column title="操作" :width="170"><template #default="{record}"><a-space><a-button type="link" :disabled="deleting.has(record.id)" @click="edit(record)"><EditOutlined /> 编辑</a-button><a-tooltip title="删除占位符"><a-button type="text" danger aria-label="删除占位符" :loading="deleting.has(record.id)" :disabled="deleting.has(record.id)" @click="remove(record)"><DeleteOutlined /></a-button></a-tooltip></a-space></template></a-table-column>
   </a-table>
   <p class="muted">原始字段完整列出内容流接口字段；原文链接和推送标题为系统生成字段。修改后用于新生成的投递，已入队消息保持原内容。</p>
+  <a-modal v-model:open="blockedOpen" title="无法删除占位符" :footer="null">
+    <p>占位符 {{ blockedPlaceholder }} 已被以下群目标使用，请先删除这些群目标后再删除占位符：</p>
+    <a-list :data-source="blockedTargets" :pagination="false" style="max-height:400px;overflow:auto"><template #renderItem="{item}"><a-list-item><div><strong>{{ item.name }}（ID：{{ item.id }}）</strong><div class="muted">{{ item.group_openid }} · {{ item.is_enabled ? '已开启' : '已关闭' }}</div></div></a-list-item></template></a-list>
+  </a-modal>
   <a-modal v-model:open="open" :title="editing ? '编辑占位符' : '新增占位符'" ok-text="保存" cancel-text="取消" :confirm-loading="saving" @ok="save">
     <a-form layout="vertical">
       <a-form-item label="占位符" required :extra="editing && defaults.has(editing.placeholder) ? '默认占位符保留名称，可修改字段映射。' : '使用单花括号包裹小写名称，如 {likes}。正在使用的占位符不可改名。'"><a-input v-model:value="form.placeholder" placeholder="例如 {likes}" :disabled="!!editing && defaults.has(editing.placeholder)" /></a-form-item>

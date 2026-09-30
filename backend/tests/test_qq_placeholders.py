@@ -7,7 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.errors import APIError
-from app.api.routes.qq_placeholders import create_placeholder, list_fields, update_placeholder
+from app.api.routes.qq_placeholders import (
+    create_placeholder,
+    delete_placeholder,
+    list_fields,
+    update_placeholder,
+)
 from app.db.base import Base
 from app.models.qq import QQNotificationTarget
 from app.models.qq_placeholder import QQPlaceholder
@@ -15,6 +20,7 @@ from app.schemas.qq_placeholder import DEFAULT_PLACEHOLDERS, QQPlaceholderWrite
 from app.schemas.tweet import TweetOut
 from app.services.qq_notifications import render_qq_message
 from app.services.qq_placeholders import (
+    default_mapped_template,
     load_placeholder_mappings,
     parse_template_fields,
     validate_target_template,
@@ -163,7 +169,94 @@ def test_json_null_zero_dates_and_generated_fields_render():
         placeholder_mappings=mappings,
     )
     assert (
-        result
-        == 'alice|0||{"话题": ["测试"]}|2026-09-30 00:00:00|'
-        'https://x.com/alice/status/123|【X Sentinel】内容推送'
+        result == 'alice|0||{"话题": ["测试"]}|2026-09-30 00:00:00|'
+        "https://x.com/alice/status/123|【X Sentinel】内容推送"
     )
+
+
+@pytest.mark.parametrize("placeholder", ["{text}", "{likes}"])
+async def test_delete_unreferenced_placeholder_and_reject_reuse(db, placeholder):
+    if placeholder == "{likes}":
+        row = await create_placeholder(
+            QQPlaceholderWrite(placeholder=placeholder, source_field="like_count"), db, object()
+        )
+    else:
+        row = await db.scalar(select(QQPlaceholder).where(QQPlaceholder.placeholder == placeholder))
+    row_id = row.id
+    await delete_placeholder(row_id, db, object())
+    assert await db.get(QQPlaceholder, row_id) is None
+    with pytest.raises(APIError) as error:
+        await validate_target_template(db, placeholder, {})
+    assert error.value.code == "qq_template_unknown"
+    with pytest.raises(APIError) as error:
+        await delete_placeholder(row_id, db, object())
+    assert error.value.status_code == 404
+
+
+async def test_delete_lists_all_referencing_targets_including_disabled(db):
+    row = await create_placeholder(
+        QQPlaceholderWrite(placeholder="{likes}", source_field="like_count"), db, object()
+    )
+    targets = [
+        QQNotificationTarget(
+            bot_id=1,
+            name=f"群目标 {index}",
+            group_openid=f"group-{index}",
+            message_template=template,
+            is_enabled=enabled,
+        )
+        for index, (template, enabled) in enumerate(
+            [
+                ("点赞 {likes}", True),
+                ("点赞 {{likes}}", False),
+                ("{likes_extra}", True),
+                ("{{{{likes}}}}", True),
+            ]
+        )
+    ]
+    db.add_all(targets)
+    await db.commit()
+    with pytest.raises(APIError) as error:
+        await delete_placeholder(row.id, db, object())
+    assert error.value.status_code == 409
+    assert error.value.code == "qq_placeholder_in_use"
+    assert error.value.details == {
+        "targets": [
+            {
+                "id": target.id,
+                "name": target.name,
+                "group_openid": target.group_openid,
+                "is_enabled": target.is_enabled,
+            }
+            for target in targets[:2]
+        ]
+    }
+    assert await db.get(QQPlaceholder, row.id) is row
+    for target in targets[:2]:
+        await db.delete(target)
+    await db.commit()
+    await delete_placeholder(row.id, db, object())
+    assert await db.get(QQPlaceholder, row.id) is None
+
+
+async def test_invalid_legacy_template_still_blocks_referenced_placeholder(db):
+    row = await db.scalar(select(QQPlaceholder).where(QQPlaceholder.placeholder == "{text}"))
+    db.add(
+        QQNotificationTarget(
+            bot_id=1, name="旧模板", group_openid="legacy", message_template="{text} {"
+        )
+    )
+    await db.commit()
+    with pytest.raises(APIError) as error:
+        await delete_placeholder(row.id, db, object())
+    assert error.value.code == "qq_placeholder_in_use"
+
+
+async def test_default_template_only_uses_remaining_mappings(db):
+    mappings = await load_placeholder_mappings(db)
+    assert default_mapped_template(mappings) == "{title}\n@{username} · {posted_at}\n{text}\n{url}"
+    del mappings["username"]
+    del mappings["text"]
+    assert parse_template_fields(default_mapped_template(mappings)) <= mappings.keys()
+    assert default_mapped_template({"likes": "like_count"}) == "{likes}"
+    assert default_mapped_template({}) == ""

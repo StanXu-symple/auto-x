@@ -7,7 +7,8 @@ async function loadTemplateFields() {
   try {
     const [placeholders, fields] = await Promise.all([qqApi.placeholders(), qqApi.placeholderFields()])
     templateFields.value = placeholders.map(item => ({ value: item.placeholder, label: fields.find(field => field.value === item.source_field)?.label || item.source_field }))
-  } catch (e) { message.error(getErrorMessage(e, '读取占位符配置失败')) }
+    return true
+  } catch (e) { message.error(getErrorMessage(e, '读取占位符配置失败')); return false }
 }
 const customTemplateFields = computed(() => Object.keys(targetForm.template_variables).map(key => '{' + key + '}').join('、'))
 const targetHistoryOptions = [...[1, 3, 7, 15, 30, 90, 180, 365].map(value => ({ label: `最近 ${value} 天`, value })), { label: '自定义天数', value: 'custom' }]
@@ -55,7 +56,27 @@ function editBot(item?:QQBotAccount){editingBot.value=item||null;Object.assign(b
 async function saveBot(){if(!botForm.name||!botForm.app_id||(!editingBot.value&&!botForm.app_secret))return message.warning('请填写机器人名称、App ID 和 Secret');try{editingBot.value?await qqApi.updateBot(editingBot.value.id,{name:botForm.name,app_id:botForm.app_id,is_enabled:botForm.is_enabled}):await qqApi.createBot(botForm);botOpen.value=false;await loadAll();message.success('机器人已保存')}catch(e){message.error(getErrorMessage(e,'保存机器人失败'))}}
 function removeBot(bot:QQBotAccount){Modal.confirm({title:`删除机器人「${bot.name}」？`,okType:'danger',okText:'删除',cancelText:'取消',onOk:async()=>{await qqApi.removeBot(bot.id);await loadAll();message.success('机器人已删除')}})}
 async function testBot(bot:QQBotAccount){try{const result=await qqApi.testBot(bot.id);result.valid?message.success(result.message):message.warning(result.message);await loadAll()}catch(e){message.error(getErrorMessage(e,'测试失败'))}}
-function editTarget(item?:QQNotificationTarget){editingTarget.value=item||null;targetHistorySelection.value=7;targetHistoryDays.value=7;Object.assign(targetForm,item?{bot_id:item.bot_id,name:item.name,group_openid:item.group_openid,is_enabled:item.is_enabled,all_monitored_users:item.all_monitored_users,monitored_user_ids:[...item.monitored_user_ids],message_template:item.message_template,template_variables:item.template_variables}:{bot_id:bots.value[0]?.id||0,name:'',group_openid:'',is_enabled:true,all_monitored_users:true,monitored_user_ids:[],message_template:'{author} (@{username})\n{text}\n{url}',template_variables:{}});targetOpen.value=true;void loadTemplateFields();void loadTargetGroups()}
+async function editTarget(item?: QQNotificationTarget) {
+  if (!await loadTemplateFields()) return
+  editingTarget.value = item || null
+  targetHistorySelection.value = 7
+  targetHistoryDays.value = 7
+  const available = new Set(templateFields.value.map(field => field.value))
+  const identity = [available.has('{author}') ? '{author}' : '', available.has('{username}') ? '(@{username})' : ''].filter(Boolean).join(' ')
+  const defaultTemplate = [identity, ...['{text}', '{url}'].filter(field => available.has(field))].filter(Boolean).join('\n')
+  Object.assign(targetForm, item ? {
+    bot_id: item.bot_id, name: item.name, group_openid: item.group_openid,
+    is_enabled: item.is_enabled, all_monitored_users: item.all_monitored_users,
+    monitored_user_ids: [...item.monitored_user_ids], message_template: item.message_template,
+    template_variables: item.template_variables,
+  } : {
+    bot_id: bots.value[0]?.id || 0, name: '', group_openid: '', is_enabled: true,
+    all_monitored_users: true, monitored_user_ids: [], message_template: defaultTemplate,
+    template_variables: {},
+  })
+  targetOpen.value = true
+  void loadTargetGroups()
+}
 async function saveTarget() {
   if (targetSaving.value) return
   const days = targetHistorySelection.value === 'custom' ? targetHistoryDays.value : Number(targetHistorySelection.value)
