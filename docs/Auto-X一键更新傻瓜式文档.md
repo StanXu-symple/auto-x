@@ -122,3 +122,29 @@ cat /home/docker/auto-x/.auto-x-services
 frontend 应运行目标 SHA 镜像且为 healthy；backend 的镜像和运行时间、migrate 的退出时间、原服务清单应保持不变。完整更新时仍按前文使用全局 `KJ_AUTO_X_IMAGE_TAG`；安装器会将已有的 `FRONTEND_IMAGE_TAG` 同步到该版本，避免单独更新后的前端长期停留在旧标签。
 
 2026-09-30 实测：tc-2 的 frontend 镜像为 `sha-9c5d9be0ca1eab31737acb9a8168d388f7c9608b` 且 healthy；frontend 页面和 backend 就绪接口均返回 HTTP 200。backend、auth-center、monitor-agent、worker、ai-worker、qq-worker 与 migrate 容器 ID 均未变化；数据库仍为 `0026_qq_target_history`，原 7 项服务清单保持不变。
+
+## 七、占位符配置与 QQ 历史范围修复更新记录
+
+2026-09-30，提交 `c79690f7af00a0e1583d8f93ec8a0c8b1d34d7c3` 已通过 [GitHub Actions 镜像构建](https://github.com/StanXu-symple/auto-x/actions/runs/36657802652)。该版本包含占位符表迁移 `0027_qq_placeholders`，也包含此前 `30e1d25` 的 qq-worker 历史范围复核修复，因此 tc-2 选择 `backend,frontend,worker,qq-worker` 更新；安装器自动加入 `auth-center,monitor-agent`。更新前先按第二节备份数据库和 `/home/docker/auto-x/.auto-x-services`，确认旧迁移版本为 `0026_qq_target_history`。
+
+```bash
+ssh tc-2
+cd ~
+KJ_AUTO_X_IMAGE_TAG=sha-c79690f7af00a0e1583d8f93ec8a0c8b1d34d7c3 \
+AUTO_X_SERVICES=backend,frontend,worker,qq-worker \
+bash kejilion.sh app auto-x
+# 运行环境输入 3（default），Auto-X 应用菜单输入 2（更新）
+```
+
+安装器的 Compose `migrate` 服务自动执行 `alembic upgrade head`，不需要手工执行迁移。更新完成后，按第四节将保存的 7 项服务清单恢复到 `.auto-x-services`，再核对容器、数据库版本和默认数据。本次备份为 `/home/docker/auto-x/backups/pre-0027-20260930.dump`，原服务清单备份为 `/home/docker/auto-x/backups/services-pre-0027-20260930.txt`。
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+docker exec x-sentinel-postgres-1 sh -ec \
+  'PGPASSWORD="$POSTGRES_PASSWORD" psql --tuples-only --no-align --username="$POSTGRES_USER" --host=127.0.0.1 --port=5432 --dbname="$POSTGRES_DB" --command="SELECT version_num FROM alembic_version LIMIT 1" --command="SELECT placeholder, source_field FROM qq_placeholders ORDER BY placeholder"'
+curl -fsS -o /dev/null -w 'frontend=%{http_code}\n' http://127.0.0.1:8080/
+curl -fsS -o /dev/null -w 'backend=%{http_code}\n' http://127.0.0.1:8200/api/v1/health/ready
+cat /home/docker/auto-x/.auto-x-services
+```
+
+本次实测：`migrate` 为 `Exited (0)`，数据库版本为 `0027_qq_placeholders`；`{author}`、`{username}`、`{text}`、`{url}`、`{posted_at}`、`{title}` 六行默认映射均已写入。tc-2 的目标容器均为 healthy，frontend 与 backend 返回 HTTP 200；原 7 项服务清单已恢复。tc-1 服务保持 healthy。
