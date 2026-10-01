@@ -275,6 +275,12 @@ xsentinel-monitor-agent-<节点名>
 
 后端和监控服务通过 Nacos 发现 `xsentinel-auth-center`，本部署不需要单独填写 `SERVICE_AUTH_URL`。双节点监控验收应看到 `xsentinel-monitor-agent-hn-1` 和 `xsentinel-monitor-agent-tc-2` 各有一个健康实例；监控中心的 13 个资源实例应全部为 healthy。xhs-worker 通过 Nacos 发现 `xsentinel-camoufox-worker`，用认证中心签发的服务 JWT 调用其 API；浏览器服务 `/v1/status` 未带令牌返回 401 属于正常鉴权结果。8007/TCP 应允许调用节点访问其 Nacos 公网注册地址。
 
+### 浏览器安装检测与实际运行
+
+容器 healthy 和 `/health/live` 为 200 只确认服务进程。还需从 tc-2 backend 调用 XHS 状态，确认 `installed: true`。Camoufox SDK 0.5 将浏览器放在容器内 `/opt/xsentinel-cache/camoufox/browsers/official/<版本>/`；不能只检查缓存根目录或手工硬编码版本号。安装检测使用 SDK 的当前版本解析，禁止自动下载，核对实际可执行文件；旧缓存不兼容时返回 false 并保留文件。
+
+如果浏览器文件存在但 installed 为 false，按[更新文档第十四节](Auto-X一键更新傻瓜式文档.md#十四camoufox-新版安装路径检测修复)核对并更新。实际浏览器烟测只创建临时本地页面、检查渲染和点击，不使用账号 profile 或发布内容。
+
 ### 4. 配置中心内容
 
 Data ID：

@@ -454,3 +454,43 @@ hn-1 官方三镜像无超时下载完成，Docker 校验通过，revision 均�
 tc-2 备份为 `/home/docker/auto-x/backups/pre-hn1-20260930/`；三份 Nacos 原配置为 tc-2 的 `/home/docker/auto-x/backups/pre-hn1-nacos-20260930/`。tc-1 切换备份为 `/home/docker/auto-x/backups/pre-hn1-cutover-20260930/`，hn-1 卷归档为 `/root/auto-x-hn1-volume-backup/`。Cookie 文件摘要保持 `0662aa4c3e14e8ce6a065512af316684043b92935480a97382b3192bb787f0e2`；旧三服务已停止，tc-1 Nacos 始终运行。
 
 浏览器业务验收发现 `installed: false`，已按要求暂停修复并报告。只读定位结果：XHS→Camoufox 使用 Nacos 的 `177.2.18.14:8007`，认证调用返回 HTTP 200，xhs CLI 存在。浏览器实际在 `/opt/xsentinel-cache/camoufox/browsers/official/152.0.4-beta.31-3a7958c8`；旧代码仅检查缓存根目录的 `camoufox-bin`/`camoufox`，未识别 SDK 0.5 的多版本目录，因此误判为未安装。容器 healthy 只能确认服务进程，业务验收还必须检查带令牌的 installed 状态；修复须发布镜像后通过菜单 2 更新，不能注入容器源码。
+
+
+## 十四、Camoufox 新版安装路径检测修复
+
+2026-10-01 用户确认检查修复。hn-1 的已部署 SDK 是 0.5.6，实际可执行文件为 `/opt/xsentinel-cache/camoufox/browsers/official/152.0.4-beta.31-3a7958c8/camoufox-bin`。旧 `browser_installed()` 只查缓存根目录，导致带令牌 `/v1/status` 和 tc-2 的 XHS 状态误报 installed=false。
+
+修复通过 SDK 的 `camoufox_path(download_if_missing=False)` 解析当前版本，再通过 `launch_path(browser_path=...)` 获取启动文件并核对可读、可执行。缺失、不支持或权限错误返回 false；不兼容旧缓存不交给 SDK 清理，避免状态检查删文件。无需更改 Nacos 配置、手工复制浏览器或重新运行 camoufox fetch。
+
+本地 12 项针对性测试通过，覆盖多版本路径、禁止下载、缺失与不支持、权限、缓存保留和状态传递。发布前在 hn-1 已安装浏览器内烟测成功：临时本地页面启动、渲染、按钮点击及关闭；未使用真实账号 profile、未执行平台发布。
+
+先按 dev→main 发布代码，等待对应完整 SHA 的 Actions 镜像构建成功。安装器使用统一 IMAGE_TAG，并按服务清单加载 Compose 片段；hn-1 采用原完整四项清单更新，保持 monitor-center 在 Compose 模型中，避免部分选择配合 remove-orphans 移除现有服务。
+
+### 更新步骤
+
+1. 备份 hn-1 的 `.env`、`.auto-x-services` 和控制面文件，记录旧四容器 ID、镜像与 Cookie 摘要。
+2. 对照 Actions 的目标 SHA，在 hn-1 无超时预拉 backend、xhs-worker、camoufox-worker 三镜像。新旧大浏览器层摘要一致时复用本机缓存；须以 Docker 完整校验和 revision 为准。
+3. 验证安装器版本和完整镜像后通过原菜单 2 更新：
+
+```bash
+cd /root
+# 将 sha-<完整目标SHA> 替换成已构建成功的本次发布版本
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io KJ_AUTO_X_IMAGE_TAG=sha-<完整目标SHA> \
+KJ_AUTO_X_SKIP_PULL=1 \
+AUTO_X_SERVICES=xhs-worker,camoufox-worker,monitor-center,monitor-agent \
+bash kejilion.sh app auto-x
+```
+
+本次没有新增 Alembic 迁移；完整更新由 migrate 检查当前 head。四项原服务清单保持不变。tc-2 与 tc-1 无需更新应用，Nacos 仍留 tc-1。
+
+### 验收
+
+- 四项容器 healthy，镜像 revision 对应本次发布。
+- XHS→Camoufox 带令牌 `/v1/status` installed=true；tc-2 backend→XHS 状态同样 true。
+- Camoufox 实际启动、临时页面渲染与点击成功，无 JWT API 仍为 401。
+- Memory=2147483648、ShmSize=536870912；Cookie 摘要、Nacos 三文档、数据库版本与原服务清单保留。
+- 两主机及 13 个实例监控健康；原 tc-1 三项应用保持停止，Nacos 正常。
+
+出现新错误先报告用户确认，不注入容器源码；经确认后使用备份镜像与原安装器入口回退。

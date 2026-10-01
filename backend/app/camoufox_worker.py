@@ -49,9 +49,24 @@ class CamoufoxWorker:
 
     @staticmethod
     def browser_installed():
-        # The Linux image downloads the binary under XDG_CACHE_HOME/camoufox.
-        root = Path(os.getenv("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "camoufox"
-        return (root / "camoufox-bin").is_file() or (root / "camoufox").is_file()
+        try:
+            from camoufox.exceptions import CamoufoxNotInstalled, UnsupportedVersion
+            from camoufox.multiversion import COMPAT_FLAG
+            from camoufox.pkgman import INSTALL_DIR, camoufox_path, launch_path
+        except ImportError:
+            return False
+        try:
+            # SDK 0.5 resolves its active/pinned version below browsers/.
+            # Its resolver also deletes incompatible old caches; a status
+            # request must leave those files for an explicit upgrade instead.
+            root = Path(INSTALL_DIR)
+            if root.exists() and any(root.iterdir()) and not COMPAT_FLAG.exists():
+                return False
+            browser = camoufox_path(download_if_missing=False)
+            executable = Path(launch_path(browser_path=browser))
+            return executable.is_file() and os.access(executable, os.R_OK | os.X_OK)
+        except (CamoufoxNotInstalled, UnsupportedVersion, OSError, ValueError):
+            return False
 
     async def _heartbeat_loop(self):
         while not self.stop_event.is_set():
