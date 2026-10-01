@@ -802,3 +802,43 @@ bash kejilion.sh app auto-x
 从 tc-2 backend 经 frontend 的原 `/api/v1/system/logs/stream` 请求验收：xhs-worker 和 camoufox-worker 均 HTTP 200、ready 各返回 200 行，分别在 8.3 秒和 9.6 秒收到实时 log 事件；本地 worker 也返回 200 行并在 2.1 秒收到追加。匿名页面接口返回 401；两 Worker 直接匿名日志请求返回 401，日志只读令牌提交 `/v1/jobs` 同样返回 401。文章列表的两条记录均有有效 `https://x.com/` 原文链接，HTTP 200。
 
 首次验收登录的注销请求曾返回 503；随后复测登录、me、logout 均返回 200，认证中心未复现异常，未修改认证配置。首次验收的残留会话按精确登录时间与来源唯一定位，通过认证中心既有 revoke_session 方法清理；没有影响用户其他会话。XHS online、installed=true；两主机及 13 个监控实例全部 healthy，tc-1 Nacos 持续运行。Nacos 逐项对比保留全部既有值与既有身份，只新增 runtime-logs 及其 secret；两份监控 JSON 不变，两节点 secret 文件与 Nacos 一致。hn-1 Cookie 摘要保留、浏览器 Memory=2147483648、ShmSize=536870912，无 OOM 或重启；8007 公网规则仍只有一条。已有截图卷保留，悬浮标题遮挡仍是另一项待确认修复。
+
+## 十八、小红书图片上传失败诊断升级
+
+### 已确认的失败阶段与诊断范围
+
+2026-10-01 14:31:15（北京时间），任务 `5c69ecd214fe44fda148466c039ba2bb` 的一张图片上传到 `ros-upload-d4.xhscdn.com` 时触发浏览器 `requestfailed`。当时已进入发布页并找到图片输入控件，尚未填写标题正文或点击发布。旧代码只保留请求地址，遗漏 Playwright `request.failure`，无法据此确定连接重置、CORS、超时或其他具体原因。
+
+只读复测中 hn-1 宿主机和实际浏览器容器的 DNS、TCP、TLS 正常；隔离无登录态的 Camoufox 访问 CDN 根地址也收到 HTTP 响应。两个 Worker 健康、无重启，浏览器 cgroup 没有 OOM，未配置出站代理。这些结果仅证明复测时根地址可达，不能证明原签名图片上传正常，也不能将该次失败直接归因于 tc-2 或 hn-1。
+
+本次只补执行代码的诊断信息，保留原成功判定、失败停止流程，不自动重新上传或发布。新增：
+
+- `image_upload_request_failed`：真实浏览器失败原因、方法、资源类型、去查询参数的地址、已完成图片数和上传耗时。
+- `image_upload_http_error`：上传及 OPTIONS 预检的 HTTP 错误；预检仅观察，不计入上传成功数，也不改变失败判定。
+- `image_upload_diagnostics`：预期/已完成图片数、耗时、最近 12 项网络观察、CORS/网络错误类别、页面预览数量、加载状态、上传状态和错误代码。
+- 阶段日志同时写入 `camoufox-worker.log`，可从 `/runtime-logs` 的“浏览器 Worker”读取；保留 CLI 使用的 `XHS_STAGE` stderr 帧。
+
+不记录请求正文、任意页面/console 文本、Cookie、Authorization 或签名查询参数。上传完成、失败或超时后移除全部四类事件监听器，防止持久页面积累重复监听。
+
+### 发布与安装器更新
+
+先完成针对性测试及 Ruff 检查，push dev 并快进合入 main，等待完整发布 SHA 对应的 Actions 成功。没有新增迁移、Nacos 配置或授权；tc-2 保持当前运行版本。本次代码在 hn-1 浏览器服务中执行，但该节点安装器使用统一镜像标签，仍选择原完整四项清单，避免遗失现有服务。
+
+升级前备份 hn-1 `.env`、`.auto-x-services`、`data/control-plane`、容器记录及三份 Nacos JSON，保存 Cookie 摘要、浏览器资源限制和防火墙规则。备份目录权限 700、敏感文件 600。按第十五节从官方 GHCR 无超时预拉目标 SHA 的 backend、xhs-worker、camoufox-worker 三镜像；退出码 0、revision 全部正确后再跳过安装器重复拉取。
+
+```bash
+ssh hn-1
+cd /root
+TERM=xterm KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io KJ_AUTO_X_IMAGE_TAG=sha-<完整SHA> \
+KJ_AUTO_X_SKIP_PULL=1 \
+AUTO_X_SERVICES=xhs-worker,camoufox-worker,monitor-center,monitor-agent \
+bash kejilion.sh app auto-x
+```
+
+以上执行原菜单 `2. 更新`。只有确认 `/root/apps` 已包含本次所需安装定义时才使用 `KJ_APPS_SKIP_REFRESH=1`；本次复用 apps/stanxu `24016c6`。安装器仍运行 `alembic upgrade head`，预期数据库保持 `0031_tweet_screenshots`。完成后核对四项 healthy、目标 revision、完整清单、Cookie 摘要、2 GB 内存、512 MB 共享内存、8007 规则，以及 Nacos 三份 JSON 与备份相同。
+
+### 用户重新上传复测
+
+先在 `/runtime-logs` 连接“浏览器 Worker”日志，然后由用户在 `/xhs` 重新发起上传；部署验收不自行调用真实上传或发布。若再次失败，保留任务 ID、北京时间和上述阶段日志，用具体 `failure`、HTTP/预检结果和页面状态继续定位。升级完成及诊断日志可读取不代表原上传故障已经修复，实际业务结果以此次用户复测为准。出现新的部署问题先报告用户确认，保留现场后再处理。

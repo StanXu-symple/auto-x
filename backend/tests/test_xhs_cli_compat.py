@@ -1,6 +1,11 @@
+import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from app.core.logging import JsonFormatter
 from app.services.xhs_verification import verification_image_path
 from app.xhs_cli_compat import (
     _arm_image_upload_tracker,
@@ -14,6 +19,7 @@ from app.xhs_cli_compat import (
     _is_image_publish_url,
     _is_image_upload_request,
     _log_stage,
+    _log_upload_diagnostics,
     _publish_diagnostics_snapshot,
     _publish_page_feedback,
     _save_verification_screenshot,
@@ -178,6 +184,141 @@ def test_stage_log_is_structured_and_written_to_stderr(capsys) -> None:
     assert output.err.startswith("XHS_STAGE ")
     assert '"stage": "title_filled"' in output.err
     assert '"character_count": 12' in output.err
+
+
+def test_stage_log_reaches_worker_file_and_runtime_tail(tmp_path, capsys) -> None:
+    from app.services.runtime_logs import read_tail
+
+    logger = logging.getLogger("app.xhs_cli_compat")
+    path = tmp_path / "camoufox-worker.log"
+    handler = logging.FileHandler(path)
+    handler.setFormatter(JsonFormatter())
+    old_level = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        _log_stage("image_upload_started", "照片已提交至页面", image_count=1)
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+        handler.close()
+    record = json.loads(read_tail(path, 200)[0])
+    assert record["stage"] == "image_upload_started"
+    assert record["image_count"] == 1
+    assert capsys.readouterr().err.startswith("XHS_STAGE ")
+
+
+def test_upload_failure_logs_real_browser_reason_and_safe_snapshot(caplog, capsys) -> None:
+    page = FakePage()
+    page.url = "https://creator.xiaohongshu.com/publish?token=page-secret"
+    page.evaluate_result = {
+        "previewCount": 1, "fileInputCount": 1, "loadingVisible": True,
+        "statusCodes": ["upload_in_progress"], "errorCodes": [],
+        "arbitraryPageText": "private-page-text",
+    }
+    tracker = _arm_image_upload_tracker(page, admin_id=7)
+    tracker["successfulUrls"].add("https://ros-upload-d4.xhscdn.com/first")
+    request = SimpleNamespace(
+        method="PUT", resource_type="xhr",
+        url="https://ros-upload-d4.xhscdn.com/second?signature=signed-secret",
+        failure="NS_ERROR_NET_RESET https://ros-upload-d4.xhscdn.com/?token=failed-secret "
+        "authorization: Bearer jwt-secret Cookie: session=cookie-secret; a1=another-secret",
+    )
+    with caplog.at_level(logging.INFO):
+        tracker["requestFailedHandler"](request)
+        with pytest.raises(RuntimeError, match="NS_ERROR_NET_RESET") as error:
+            _wait_for_image_uploads(
+                page, tracker, expected_count=2, timeout_seconds=0.1, settle_seconds=0,
+            )
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "image_upload_diagnostics")
+    assert record.admin_id == 7
+    assert record.expected == 2
+    assert record.completed == 1
+    assert record.elapsed_seconds >= 0
+    assert record.requests[-1]["method"] == "PUT"
+    assert record.requests[-1]["resource_type"] == "xhr"
+    assert "NS_ERROR_NET_RESET" in record.requests[-1]["failure"]
+    assert record.page_state["previewCount"] == 1
+    assert record.page_state["loadingVisible"] is True
+    all_output = str(error.value) + capsys.readouterr().err + "".join(
+        JsonFormatter().format(r) for r in caplog.records
+    )
+    for secret in (
+        "page-secret", "signed-secret", "failed-secret", "jwt-secret", "cookie-secret",
+        "another-secret", "private-page-text",
+    ):
+        assert secret not in all_output
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_upload_preflight_is_observed_without_counting_or_failing_upload(caplog) -> None:
+    page = FakePage()
+    tracker = _arm_image_upload_tracker(page)
+    request = SimpleNamespace(
+        method="OPTIONS", url="https://ros-upload-d4.xhscdn.com/?token=secret",
+        failure="NS_ERROR_FAILURE", resource_type="xhr",
+    )
+    with caplog.at_level(logging.INFO):
+        tracker["requestFailedHandler"](request)
+        tracker["responseHandler"](SimpleNamespace(request=request, url=request.url, status=403))
+    assert len(tracker["observed"]) == 2
+    assert tracker["failures"] == []
+    assert tracker["successfulUrls"] == set()
+    assert any(getattr(r, "stage", "") == "image_upload_http_error" for r in caplog.records)
+    assert all(not r["recognized"] for r in tracker["observed"])
+    tracker["responseHandler"](SimpleNamespace(
+        request=SimpleNamespace(method="PUT", url=request.url), url=request.url, status=200,
+    ))
+    _wait_for_image_uploads(page, tracker, expected_count=1, timeout_seconds=0.1, settle_seconds=0)
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_upload_browser_errors_keep_only_categories_and_safe_endpoints() -> None:
+    page = FakePage()
+    tracker = _arm_image_upload_tracker(page)
+    handler = tracker["browserErrorHandler"]
+    handler(SimpleNamespace(text="private normal console text"))
+    for _ in range(20):
+        handler(SimpleNamespace(text="CORS private text cookie=session-secret "
+                                "https://ros-upload-d4.xhscdn.com/?signature=signed-secret"))
+    page.listeners["pageerror"][0](RuntimeError("NS_ERROR_NET_RESET private-page-error"))
+    assert len(tracker["browserErrors"]) == 12
+    assert tracker["browserErrors"][0] == {
+        "category": "cors", "endpoints": ["https://ros-upload-d4.xhscdn.com/"],
+    }
+    assert tracker["browserErrors"][-1] == {"category": "network", "endpoints": []}
+    output = json.dumps(tracker["browserErrors"])
+    assert "private" not in output
+    assert "secret" not in output
+
+
+@pytest.mark.parametrize("mode", ["http", "timeout", "dom"])
+def test_upload_failure_modes_log_summary_and_remove_all_listeners(mode, caplog) -> None:
+    page = FakePage()
+    page.evaluate_result = {"errorCodes": ["upload_failed"] if mode == "dom" else []}
+    tracker = _arm_image_upload_tracker(page)
+    if mode == "http":
+        request = SimpleNamespace(method="POST", url="https://ros-upload-d4.xhscdn.com/")
+        tracker["responseHandler"](SimpleNamespace(request=request, url=request.url, status=500))
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError):
+        _wait_for_image_uploads(
+            page, tracker, expected_count=1, timeout_seconds=0.01, settle_seconds=0,
+        )
+    assert any(getattr(r, "stage", "") == "image_upload_diagnostics" for r in caplog.records)
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_upload_snapshot_exception_and_url_credentials_are_redacted(caplog) -> None:
+    page = FakePage()
+    tracker = _arm_image_upload_tracker(page)
+    snapshot = {"snapshotError": "failed https://user:password-secret@example.com/?token=secret"}
+    with caplog.at_level(logging.INFO):
+        _log_upload_diagnostics(page, tracker, snapshot, 1, "test")
+    output = JsonFormatter().format(caplog.records[-1])
+    assert "https://example.com/" in output
+    assert "password-secret" not in output
+    assert "token=secret" not in output
 
 
 def test_find_element_skips_hidden_candidate() -> None:

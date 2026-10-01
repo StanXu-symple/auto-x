@@ -7,6 +7,7 @@ import re
 import sys
 import time
 from collections.abc import Iterable
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlunparse
 
@@ -71,8 +72,11 @@ SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
 )
 
 
-def _log_stage(stage: str, message: str, **details: Any) -> None:
-    payload = {"level": "INFO", "stage": stage, "message": message, **details}
+def _log_stage(stage: str, message: str, *, level: str = "INFO", **details: Any) -> None:
+    payload = {"level": level, "stage": stage, "message": message, **details}
+    # Persistent SDK calls run in this process, so they need the same file log
+    # as the worker. Keep stderr frames for the standalone CLI transport.
+    logger.log(getattr(logging, level), message, extra={"stage": stage, **details})
     sys.stderr.write(
         STAGE_LOG_PREFIX + json.dumps(payload, ensure_ascii=False) + "\n"
     )
@@ -273,19 +277,60 @@ def _safe_upload_dom_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "statusCodes": list(snapshot.get("statusCodes", []))[:4],
         "errorCodes": list(snapshot.get("errorCodes", []))[:4],
         **(
-            {"snapshotError": _diagnostic_text(snapshot["snapshotError"])}
+            {"snapshotError": _safe_network_text(snapshot["snapshotError"])}
             if snapshot.get("snapshotError")
             else {}
         ),
     }
 
 
-def _arm_image_upload_tracker(page: Any) -> dict[str, Any]:
+def _safe_network_text(value: Any) -> str:
+    text = re.sub(
+        r"https?://[^\s\"'<>]+",
+        lambda match: _diagnostic_url(match.group()),
+        str(value),
+    )
+    text = re.sub(r"(?i)\bcookie\s*[:=][^\r\n]*", "cookie=***", text)
+    text = re.sub(
+        r"(?i)\bauthorization\s*[:=]\s*(?:bearer\s+)?[^\s,;\"']+",
+        "authorization=***",
+        text,
+    )
+    return _diagnostic_text(text)
+
+
+def _upload_network_related(request: Any) -> bool:
+    # Include OPTIONS in observations without changing upload success/failure decisions.
+    if str(request.method).upper() == "OPTIONS":
+        return _is_image_upload_request(SimpleNamespace(method="PUT", url=request.url))
+    return _is_image_upload_request(request)
+
+
+def _arm_image_upload_tracker(page: Any, *, admin_id: int | None = None) -> dict[str, Any]:
     state: dict[str, Any] = {
         "successfulUrls": set(),
         "failures": [],
         "observed": [],
+        "browserErrors": [],
+        "started_at": time.monotonic(),
+        "admin_id": admin_id,
     }
+
+    def observe(entry: dict[str, Any]) -> dict[str, Any]:
+        entry["elapsed_seconds"] = round(time.monotonic() - state["started_at"], 3)
+        state["observed"].append(entry)
+        del state["observed"][:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+        return entry
+
+    def log_failure(stage: str, entry: dict[str, Any]) -> None:
+        _log_stage(
+            stage,
+            "照片上传网络请求异常",
+            level="WARNING",
+            admin_id=admin_id,
+            completed=len(state["successfulUrls"]),
+            **entry,
+        )
 
     def record_response(response: Any) -> None:
         try:
@@ -298,7 +343,7 @@ def _arm_image_upload_tracker(page: Any) -> dict[str, Any]:
                 method != "GET"
                 and hostname.endswith(("xiaohongshu.com", "xhscdn.com"))
             ):
-                state["observed"].append(
+                entry = observe(
                     {
                         "method": method,
                         "status": int(response.status),
@@ -306,7 +351,8 @@ def _arm_image_upload_tracker(page: Any) -> dict[str, Any]:
                         "recognized": recognized,
                     }
                 )
-                del state["observed"][:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+                if _upload_network_related(request) and int(response.status) >= 400:
+                    log_failure("image_upload_http_error", entry)
             if not recognized:
                 return
             status = int(response.status)
@@ -325,19 +371,62 @@ def _arm_image_upload_tracker(page: Any) -> dict[str, Any]:
                     )
             else:
                 state["failures"].append(f"HTTP {status}: {url}")
+                del state["failures"][:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
         except Exception:
             return
 
     def record_request_failure(request: Any) -> None:
-        if _is_image_upload_request(request):
-            state["failures"].append(
-                f"request failed: {_diagnostic_url(str(request.url))}"
+        try:
+            if not _upload_network_related(request):
+                return
+            recognized = _is_image_upload_request(request)
+            failure = _safe_network_text(getattr(request, "failure", None) or "unknown")
+            method = str(request.method).upper()
+            url = _diagnostic_url(str(request.url))
+            entry = observe(
+                {
+                    "method": method,
+                    "status": "failed",
+                    "url": url,
+                    "recognized": recognized,
+                    "failure": failure,
+                    "resource_type": str(getattr(request, "resource_type", "unknown"))[:30],
+                },
             )
+            log_failure("image_upload_request_failed", entry)
+            if recognized:
+                state["failures"].append(f"request failed: {method} {url} ({failure})")
+                del state["failures"][:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+        except Exception:
+            return
+
+    def record_browser_error(message: Any) -> None:
+        try:
+            text = str(getattr(message, "text", message))
+            # Keep categories and sanitized URLs, never arbitrary page/console text.
+            category = "cors" if re.search(r"cors|cross-origin|跨源", text, re.I) else "network"
+            if not re.search(
+                r"cors|cross-origin|跨源|network|net::|NS_ERROR|fetch|load.*resource", text, re.I
+            ):
+                return
+            entry = {
+                "category": category,
+                "endpoints": [
+                    _diagnostic_url(url) for url in re.findall(r"https?://[^\s\"'<>]+", text)[:4]
+                ],
+            }
+            state["browserErrors"].append(entry)
+            del state["browserErrors"][:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+        except Exception:
+            return
 
     page.on("response", record_response)
     page.on("requestfailed", record_request_failure)
+    page.on("console", record_browser_error)
+    page.on("pageerror", record_browser_error)
     state["responseHandler"] = record_response
     state["requestFailedHandler"] = record_request_failure
+    state["browserErrorHandler"] = record_browser_error
     return state
 
 
@@ -345,6 +434,8 @@ def _disarm_image_upload_tracker(page: Any, tracker: dict[str, Any]) -> None:
     for event, key in (
         ("response", "responseHandler"),
         ("requestfailed", "requestFailedHandler"),
+        ("console", "browserErrorHandler"),
+        ("pageerror", "browserErrorHandler"),
     ):
         try:
             page.remove_listener(event, tracker[key])
@@ -369,6 +460,7 @@ def _wait_for_image_uploads(
             page.text_content("body")
             failures = tracker.get("failures") or []
             if failures:
+                last_snapshot = _image_upload_dom_snapshot(page)
                 raise RuntimeError(f"图片上传失败：{failures[-1]}")
             last_snapshot = _image_upload_dom_snapshot(page)
             dom_errors = last_snapshot.get("errorCodes") or []
@@ -409,15 +501,38 @@ def _wait_for_image_uploads(
             else:
                 editor_ready_since = None
             time.sleep(0.25)
+    except Exception as exc:
+        _log_upload_diagnostics(page, tracker, last_snapshot, expected_count, exc)
+        raise
     finally:
         _disarm_image_upload_tracker(page, tracker)
     completed = len(tracker.get("successfulUrls") or ())
+    _log_upload_diagnostics(page, tracker, last_snapshot, expected_count, "upload_timeout")
     raise RuntimeError(
         f"等待图片上传完成超过 {int(timeout_seconds)} 秒"
         f"（网络确认 {completed}/{expected_count}）；"
         f"当前页面：{_diagnostic_url(str(getattr(page, 'url', '') or ''))}；"
         f"上传请求：{tracker.get('observed', [])[-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT:]}；"
         f"页面状态：{_safe_upload_dom_snapshot(last_snapshot)}"
+    )
+
+
+def _log_upload_diagnostics(
+    page: Any, tracker: dict[str, Any], snapshot: dict[str, Any], expected: int, error: Any
+) -> None:
+    _log_stage(
+        "image_upload_diagnostics",
+        "照片上传失败诊断",
+        level="WARNING",
+        admin_id=tracker.get("admin_id"),
+        expected=expected,
+        completed=len(tracker.get("successfulUrls") or ()),
+        elapsed_seconds=round(time.monotonic() - tracker.get("started_at", time.monotonic()), 3),
+        error=_safe_network_text(error),
+        page_url=_diagnostic_url(str(getattr(page, "url", ""))),
+        requests=tracker.get("observed", [])[-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT:],
+        browser_errors=tracker.get("browserErrors", [])[-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT:],
+        page_state=_safe_upload_dom_snapshot(snapshot),
     )
 
 
@@ -495,7 +610,9 @@ def _wait_for_publish_button(page: Any, timeout_seconds: float) -> Any | None:
 
 def _diagnostic_url(url: str) -> str:
     parsed = urlparse(url)
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))[:300]
+    return urlunparse(
+        (parsed.scheme, parsed.netloc.rsplit("@", 1)[-1], parsed.path, "", "", "")
+    )[:300]
 
 
 def _diagnostic_text(value: Any) -> str:
@@ -950,7 +1067,7 @@ def publish_note_compat(
         "图片上传元素捕获成功",
         element="image_input",
     )
-    upload_tracker = _arm_image_upload_tracker(page)
+    upload_tracker = _arm_image_upload_tracker(page, admin_id=admin_id)
     try:
         image_input.set_input_files(image_paths)
         _log_stage(
