@@ -738,6 +738,7 @@ export interface Article {
   id: EntityId
   job_id: EntityId | null
   source_tweet_id: EntityId | null
+  source_url?: string | null
   article_source: ArticleSource
   title: string
   content: string

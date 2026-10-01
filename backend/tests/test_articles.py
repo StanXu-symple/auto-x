@@ -5,8 +5,16 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.errors import APIError
-from app.api.routes.articles import create_article, delete_article, publish_article, update_article
+from app.api.routes.articles import (
+    _source_url,
+    create_article,
+    delete_article,
+    list_articles,
+    publish_article,
+    update_article,
+)
 from app.models.ai import AIDraft
+from app.models.tweet import Tweet
 from app.schemas.article import ArticleCreate, ArticlePatch, ArticlePublishCreate
 from app.services.xhs_limits import (
     XHS_NOTE_CONTENT_MAX_LENGTH,
@@ -24,6 +32,9 @@ class MutationSession:
 
     async def scalar(self, _statement):
         return self.article
+
+    async def execute(self, _statement):
+        return []
 
     async def get(self, _model, _article_id):
         return self.article
@@ -56,6 +67,7 @@ async def test_manual_article_is_created_with_user_source() -> None:
     assert result.content == "正文内容"
     assert result.job_id is None
     assert result.source_tweet_id is None
+    assert result.source_url is None
     assert result.images == []
     assert result.publish_status == "unpublished"
 
@@ -74,6 +86,9 @@ async def test_article_update_increments_revision() -> None:
         updated_at=now,
     )
     session = MutationSession(article)
+    session.execute = AsyncMock(
+        return_value=[(Tweet(id=3, tweet_id="1840000000000000012", raw_payload={}), "original")]
+    )
 
     result = await update_article(
         7,
@@ -85,6 +100,72 @@ async def test_article_update_increments_revision() -> None:
     assert result.title == "新标题"
     assert result.article_source == "ai"
     assert result.revision == 3
+    assert result.source_url == "https://x.com/original/status/1840000000000000012"
+
+
+async def test_article_list_resolves_sources_in_one_batch() -> None:
+    now = datetime.now(UTC)
+    articles = [
+        AIDraft(
+            id=index,
+            article_source="ai" if source_id else "user",
+            source_tweet_id=source_id,
+            title="文章",
+            content="正文",
+            revision=1,
+            created_at=now,
+            updated_at=now,
+        )
+        for index, source_id in enumerate([3, 3, None, 4], start=1)
+    ]
+    session = AsyncMock()
+    session.scalar.return_value = 4
+    session.scalars.return_value = articles
+    session.execute.return_value = [
+        (
+            Tweet(
+                id=3,
+                tweet_id="1840000000000000012",
+                raw_payload={
+                    "source_url": "https://twitter.com/actual_author/status/1840000000000000012"
+                },
+            ),
+            "monitored",
+        )
+    ]
+
+    result = await list_articles(
+        session,
+        None,
+        page=1,
+        page_size=20,
+        keyword=None,  # type: ignore[arg-type]
+    )
+
+    assert [article.source_url for article in result.items] == [
+        "https://x.com/actual_author/status/1840000000000000012",
+        "https://x.com/actual_author/status/1840000000000000012",
+        None,
+        None,
+    ]
+    assert result.total == 4
+    session.execute.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "https://evil.example/author/status/1840000000000000012",
+        "https://user:password@x.com/author/status/1840000000000000012",
+        "https://x.com/author/status/3",
+        "http://x.com/author/status/1840000000000000012",
+    ],
+)
+def test_article_source_rejects_untrusted_urls(source_url: str) -> None:
+    tweet = Tweet(tweet_id="1840000000000000012", raw_payload={"source_url": source_url})
+
+    assert _source_url(tweet, "monitored") == "https://x.com/monitored/status/1840000000000000012"
+    assert _source_url(tweet, "invalid/username") is None
 
 
 async def test_article_delete_removes_only_the_article() -> None:

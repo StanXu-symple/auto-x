@@ -70,6 +70,7 @@ class ArticleOut(APIModel):
     id: int
     job_id: int | None
     source_tweet_id: int | None
+    source_url: str | None = None
     article_source: ArticleSource
     title: str
     content: str

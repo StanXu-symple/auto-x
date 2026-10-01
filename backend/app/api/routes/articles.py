@@ -1,9 +1,11 @@
 import asyncio
 import logging
 import os
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, File, Query, UploadFile, status
 from fastapi.responses import FileResponse
@@ -13,7 +15,9 @@ from app.api.deps import CurrentAdmin, DbSession, RedisClient
 from app.api.errors import APIError
 from app.core.config import get_settings
 from app.models.ai import AIDraft, ArticlePublishAttempt
+from app.models.monitored_user import MonitoredUser
 from app.models.qq import QQBotAccount, QQDelivery, QQJoinedGroup
+from app.models.tweet import Tweet
 from app.schemas.article import (
     ArticleCreate,
     ArticleOut,
@@ -49,11 +53,12 @@ router = APIRouter(prefix="/articles", tags=["Article Management"])
 logger = logging.getLogger(__name__)
 
 
-def _article_out(article: AIDraft) -> ArticleOut:
+def _article_out(article: AIDraft, source_url: str | None = None) -> ArticleOut:
     return ArticleOut(
         id=article.id,
         job_id=article.job_id,
         source_tweet_id=article.source_tweet_id,
+        source_url=source_url,
         article_source=article.article_source,
         title=article.title,
         content=article.content,
@@ -67,6 +72,48 @@ def _article_out(article: AIDraft) -> ArticleOut:
         created_at=article.created_at,
         updated_at=article.updated_at,
     )
+
+
+def _source_url(tweet: Tweet, username: str) -> str | None:
+    if re.fullmatch(r"[0-9]{1,32}", tweet.tweet_id) is None:
+        return None
+    payload = tweet.raw_payload if isinstance(tweet.raw_payload, dict) else {}
+    stored_url = payload.get("source_url")
+    if isinstance(stored_url, str):
+        try:
+            parsed = urlsplit(stored_url)
+            port = parsed.port
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            match = re.fullmatch(r"/([A-Za-z0-9_]{1,15})/status/([0-9]{1,32})/?", parsed.path)
+            if (
+                parsed.scheme == "https"
+                and parsed.hostname in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}
+                and parsed.username is None
+                and parsed.password is None
+                and port in (None, 443)
+                and match
+                and match.group(2) == tweet.tweet_id
+            ):
+                return f"https://x.com/{match.group(1)}/status/{tweet.tweet_id}"
+    if re.fullmatch(r"[A-Za-z0-9_]{1,15}", username) is None:
+        return None
+    return f"https://x.com/{username}/status/{tweet.tweet_id}"
+
+
+async def _article_source_urls(db: DbSession, articles: list[AIDraft]) -> dict[int, str | None]:
+    tweet_ids = {
+        article.source_tweet_id for article in articles if article.source_tweet_id is not None
+    }
+    if not tweet_ids:
+        return {}
+    sources = await db.execute(
+        select(Tweet, MonitoredUser.username)
+        .join(MonitoredUser, Tweet.monitored_user_id == MonitoredUser.id)
+        .where(Tweet.id.in_(tweet_ids))
+    )
+    return {tweet.id: _source_url(tweet, username) for tweet, username in sources}
 
 
 def _publish_history_out(attempt: ArticlePublishAttempt) -> ArticlePublishHistoryOut:
@@ -119,8 +166,11 @@ async def list_articles(
             .limit(page_size)
         )
     )
+    source_urls = await _article_source_urls(db, articles)
     return Page(
-        items=[_article_out(article) for article in articles],
+        items=[
+            _article_out(article, source_urls.get(article.source_tweet_id)) for article in articles
+        ],
         total=total,
         page=page,
         page_size=page_size,
@@ -147,7 +197,8 @@ async def create_article(payload: ArticleCreate, db: DbSession, admin: CurrentAd
     db.add(article)
     await db.commit()
     await db.refresh(article)
-    return _article_out(article)
+    source_urls = await _article_source_urls(db, [article])
+    return _article_out(article, source_urls.get(article.source_tweet_id))
 
 
 @router.patch("/{article_id}", response_model=ArticleOut)
@@ -189,7 +240,8 @@ async def update_article(
         await _clear_unreferenced_images(
             db, [image for image in old_images if image not in (article.images or [])]
         )
-    return _article_out(article)
+    source_urls = await _article_source_urls(db, [article])
+    return _article_out(article, source_urls.get(article.source_tweet_id))
 
 
 @router.delete("/{article_id}", response_model=MessageResponse)

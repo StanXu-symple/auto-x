@@ -5,6 +5,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   EyeOutlined,
+  ExportOutlined,
   HistoryOutlined,
   PlusOutlined,
   SendOutlined,
@@ -344,11 +345,24 @@ watch(
     <a-modal
       v-model:open="previewOpen"
       title="查看文章"
-      :footer="null"
       width="760px"
       :body-style="{ maxHeight: '70vh', overflowY: 'auto' }"
     >
       <ArticlePreview v-if="previewOpen && previewing" :article="previewing" />
+      <template #footer>
+        <a-button @click="previewOpen = false">关闭</a-button>
+        <a-tooltip :title="previewing?.source_url ? '在新标签页打开原文' : '该文章未关联原文'">
+          <a-button
+            type="primary"
+            :href="previewing?.source_url || undefined"
+            target="_blank"
+            rel="noopener noreferrer"
+            :disabled="!previewing?.source_url"
+          >
+            <ExportOutlined /> 查看原文
+          </a-button>
+        </a-tooltip>
+      </template>
     </a-modal>
     <a-modal
       v-model:open="publishOpen"
