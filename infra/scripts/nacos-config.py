@@ -39,6 +39,7 @@ EXCLUDED_KEYS = {
     "SERVICE_AUTH_CLIENTS_FILE",
     "SERVICE_TOPOLOGY_FILE",
     "SERVICE_CLIENT_SECRET_FILE",
+    "RUNTIME_LOGS_CLIENT_SECRET_FILE",
     "SERVICE_AUTH_PUBLIC_KEY_FILE",
     "MONITOR_NODE_ID",
     "DOCKER_SOCKET",
@@ -222,6 +223,7 @@ CONTROL_PLANE_KEYS = {
     "SERVICE_CLIENT_AGENT_SECRET",
     "SERVICE_CLIENT_XHS_WORKER_SECRET",
     "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET",
+    "SERVICE_CLIENT_RUNTIME_LOGS_SECRET",
 }
 RUNTIME_CONFIG_KEYS.update(CONTROL_PLANE_KEYS)
 
@@ -443,6 +445,28 @@ def ensure_screenshot_caller(values: dict) -> None:
         raise RuntimeError("Nacos 中 screenshot-worker 服务凭据缺失或不匹配，请恢复原服务密钥")
 
 
+def ensure_runtime_logs_caller(values: dict) -> None:
+    """Seed a read-only caller without changing existing identities or revocations."""
+    import hashlib
+    import secrets
+
+    raw = values.get("SERVICE_AUTH_CLIENTS_JSON")
+    if not raw:
+        return
+    clients = json.loads(str(raw))
+    secret = str(values.get("SERVICE_CLIENT_RUNTIME_LOGS_SECRET") or "")
+    if "runtime-logs" not in clients:
+        secret = secret or secrets.token_hex(32)
+        clients["runtime-logs"] = {
+            "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+            "grants": {"xhs-worker": "logs:read", "camoufox-worker": "logs:read"},
+        }
+        values["SERVICE_AUTH_CLIENTS_JSON"] = json.dumps(clients, ensure_ascii=False)
+        values["SERVICE_CLIENT_RUNTIME_LOGS_SECRET"] = secret
+    elif not secret or clients["runtime-logs"]["secret_sha256"] != hashlib.sha256(secret.encode()).hexdigest():
+        raise RuntimeError("Nacos 中 runtime-logs 服务凭据缺失或不匹配，请恢复原服务密钥")
+
+
 def read_control_plane_values(path: Path) -> dict[str, str]:
     names = {
         "private.pem": "SERVICE_AUTH_PRIVATE_KEY_PEM",
@@ -453,6 +477,7 @@ def read_control_plane_values(path: Path) -> dict[str, str]:
         "agent.secret": "SERVICE_CLIENT_AGENT_SECRET",
         "xhs-worker.secret": "SERVICE_CLIENT_XHS_WORKER_SECRET",
         "screenshot-worker.secret": "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET",
+        "runtime-logs.secret": "SERVICE_CLIENT_RUNTIME_LOGS_SECRET",
     }
     values: dict[str, str] = {}
     for filename, key in names.items():
@@ -475,6 +500,7 @@ def write_control_plane_values(path: Path, values: Mapping[str, object]) -> int:
         "SERVICE_CLIENT_AGENT_SECRET": "agent.secret",
         "SERVICE_CLIENT_XHS_WORKER_SECRET": "xhs-worker.secret",
         "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET": "screenshot-worker.secret",
+        "SERVICE_CLIENT_RUNTIME_LOGS_SECRET": "runtime-logs.secret",
     }
     written = 0
     path.mkdir(parents=True, exist_ok=True)
@@ -1023,6 +1049,7 @@ def main() -> int:
     ensure_camoufox_caller(merged)
     ensure_screenshot_defaults(merged)
     ensure_screenshot_caller(merged)
+    ensure_runtime_logs_caller(merged)
     # Nacos remains authoritative by default.  An explicit command-line
     # override is the only supported way to supersede an existing remote value,
     # and it is applied before production validation and publication.

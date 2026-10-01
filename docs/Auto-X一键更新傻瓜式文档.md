@@ -726,3 +726,67 @@ bash kejilion.sh app auto-x
 数据库截图状态为 succeeded、attempts=3、last_error=null。正常登录下载 HTTP 200、Content-Type=image/png，PNG 15,759 字节、566×157，SHA256 为 `b187aee361f16d05a842beca87c7997b5cebdb7ab5ceae09f3237c49b8d615a0`；CRC、像素数据、尺寸、摘要及卷内文件字节校验全部通过。容器内文件为 `/var/lib/xsentinel/tweet-screenshots/2105178959327756396/07960c89365f42748744786b734f45cb.png`，tc-2 宿主机位置为 `/var/lib/docker/volumes/x-sentinel_tweet_screenshots/_data/2105178959327756396/07960c89365f42748744786b734f45cb.png`；UID=10001、权限 640。匿名下载返回 401，验收登录已注销。
 
 **完整截图视觉验收尚未通过。** 下载 PNG 后发现新版页面顶部 53 像素的 sticky DIV（文字为 Post）覆盖了头像与作者。原捕获流程把 article 滚动到 y=0，现有 screenshot style 只隐藏 `header[role="banner"]`，新版标题 DIV 没有该语义标记；登录弹框检查返回 false 不能排除这种悬浮标题。已报告用户，等待确认在截图期间临时隐藏与目标 article 重叠的外部悬浮标题，保留 article 自身内容及登录弹框校验，并补真实浏览器回归后重新发布升级。在此项修复验收前，不能把 PNG 成功保存和下载写成完整截图验收通过。
+
+## 十七、跨节点实时日志与文章原文链接升级
+
+### 原因和修复
+
+2026-10-01 `/runtime-logs` 的小红书和浏览器 Worker 返回 `lines: []`。只读检查确认 hn-1 两个 Worker 都健康、正常写入日志，而 tc-2 backend 仅查本机日志文件；两台 Docker 主机的同名 `runtime_logs` 卷不共享。HTTP 200 只表示 SSE 入口建立，不能证明远端日志已读取。
+
+修复使 backend 通过 Nacos 发现对应 Worker，调用其 `/v1/logs/stream`。认证中心使用新 `runtime-logs` 身份，只有 `xhs-worker: logs:read` 和 `camoufox-worker: logs:read` 两项只读授权。安装器已有的 `microservices-init.sh` 和 `nacos-config.py` 流程自动补入身份及 Nacos `SERVICE_CLIENT_RUNTIME_LOGS_SECRET`，backend 挂载 `runtime-logs.secret`；已有身份、凭据、撤销授权和业务配置保留，无需修改本机业务参数或额外开放端口。
+
+Worker 只提供自身日志，校验 audience、scope 和令牌时效；每条连接最多 45 秒，页面自动重连以刷新短期令牌并重新发现服务。取不到远端时，首次连接返回 503，已建立的连接发出明确错误事件；真正的空日志才显示等待输出。连接关闭时释放远端 HTTP 连接。本轮还包含用户本地提交 `1aba6df9ebfc447c55890f00f3ff3d562cd5a0bb`（文章预览“查看原文”），更新 backend、frontend。无新增 Alembic 迁移，安装器仍自动执行 `alembic upgrade head`，预期数据库保持 `0031_tweet_screenshots`。
+
+### 发布、备份与菜单 2
+
+按 dev→main 发布，等待对应完整 SHA 的 `Publish Auto-X images` 成功。使用 apps/stanxu `24016c6` 或后续安装定义，它已支持显式官方镜像源和本次源码中的配置同步工具。先备份两节点 `.env`、完整服务清单、控制面文件、容器记录及三份 Nacos 原文档；tc-2 另备份数据库，hn-1 保存 Cookie 摘要及浏览器资源限制。备份目录权限 700、敏感文件 600。
+
+按第十五节无超时预拉：tc-2 下载 backend、frontend；hn-1 下载 backend、xhs-worker、camoufox-worker。Docker 退出码必须为 0、镜像 revision 与本次 SHA 一致，再使用 `KJ_AUTO_X_SKIP_PULL=1`。本轮不需要改 kejilion.sh 菜单或上传源码包，原菜单 2 会从 main 获取配置同步工具及 Compose。
+
+把下述 `<完整SHA>` 替换成已成功构建的发布 SHA。先在 tc-2 更新认证中心，导入新的只读日志身份：
+
+```bash
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io KJ_AUTO_X_IMAGE_TAG=sha-<完整SHA> \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1 \
+AUTO_X_SERVICES=auth-center,monitor-agent \
+bash kejilion.sh app auto-x
+# 成功后按第四节立即恢复 tc-2 原七项服务清单
+```
+
+确认认证中心健康且 `runtime-logs` 有两项 `logs:read` 授权，再在 hn-1 按完整四项清单更新：
+
+```bash
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io KJ_AUTO_X_IMAGE_TAG=sha-<完整SHA> \
+KJ_AUTO_X_SKIP_PULL=1 \
+AUTO_X_SERVICES=xhs-worker,camoufox-worker,monitor-center,monitor-agent \
+bash kejilion.sh app auto-x
+```
+
+确认四项 healthy 后，在 tc-2 更新 API 和前端：
+
+```bash
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io KJ_AUTO_X_IMAGE_TAG=sha-<完整SHA> \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1 \
+AUTO_X_SERVICES=backend,frontend,auth-center,monitor-agent \
+bash kejilion.sh app auto-x
+# 成功后恢复 tc-2 原七项清单；hn-1 保留原四项清单
+```
+
+### 验收与故障恢复
+
+- 正常管理员登录后，通过 frontend 8080 的原日志 URL，两个 Worker 均返回非空最近日志，并有实时追加事件；本地 Worker 日志仍正常。
+- hn-1 日志接口无令牌、错误 audience、缺少 `logs:read` 均返回 401；日志令牌不能提交浏览器任务。
+- 文章 API 返回正确 `source_url`，前端文章预览显示“查看原文”，未关联原文时按钮禁用。
+- 目标镜像 revision 正确、服务 healthy；数据库仍为 0031，tc-2 原七项与 hn-1 原四项清单、已有 Nacos 值、Cookie 摘要、2 GB 浏览器限制保留。
+- 两主机与 13 项监控健康，tc-1 Nacos 正常；已有截图卷保留。本轮日志升级不代表此前悬浮标题截图问题已修复。
+
+出现新问题先报告用户确认。认证失败先检查 auth-center 是否已重新加载安装器同步的 clients.json 并导入新身份，再检查 Nacos 中该身份的密钥摘要匹配和数据库授权；不输出真实 secret/JWT，也不临时放宽 Worker 鉴权。源码与镜像版本必须对应本次发布；回退同样使用备份版本与原安装器菜单 2。

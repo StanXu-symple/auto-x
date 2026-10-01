@@ -69,7 +69,9 @@ async function connect(id: number) {
   controller?.abort()
   controller = new AbortController()
   try {
-    await runtimeLogsApi.stream(active.value, controller.signal, accept)
+    await runtimeLogsApi.stream(active.value, controller.signal, (event) => {
+      if (id === runId) accept(event)
+    })
     if (id === runId && state.value !== 'paused') reconnect(id)
   } catch (e) {
     if (id !== runId || controller.signal.aborted) return
@@ -134,7 +136,8 @@ onBeforeUnmount(() => {
         <a-checkbox v-model:checked="autoScroll">自动滚动</a-checkbox>
       </div>
       <pre ref="terminal" class="log-terminal">{{
-        visibleLines.join('\n') || '选择服务并连接，实时日志会显示在这里。'
+        visibleLines.join('\n') ||
+        (state === 'live' ? '已连接，当前暂无日志，等待服务输出。' : '选择服务并连接，实时日志会显示在这里。')
       }}</pre>
     </a-card>
   </div>

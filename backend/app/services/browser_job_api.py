@@ -8,12 +8,13 @@ import logging
 import os
 import socket
 import tempfile
+import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
@@ -37,6 +38,7 @@ from app.services.browser_screenshot_artifacts import (
     expire_artifacts,
     store_artifact,
 )
+from app.services.runtime_logs import log_path, stream_log
 from app.services.xhs_verification import clear_verification_image, read_verification_image
 
 logger = logging.getLogger(__name__)
@@ -69,7 +71,8 @@ class XHSRuntime:
         while True:
             try:
                 await asyncio.to_thread(
-                    expire_artifacts, self.artifact_root,
+                    expire_artifacts,
+                    self.artifact_root,
                     self.settings.xhs_job_result_ttl_seconds + 120,
                 )
             except OSError:
@@ -229,9 +232,7 @@ def create_app(
         await worker._wait_for_dependencies()
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         app.state.upload_root = UPLOAD_DIR
-        app.state.runtime = XHSRuntime(
-            worker, config, ip, namespace, UPLOAD_DIR / ".screenshots"
-        )
+        app.state.runtime = XHSRuntime(worker, config, ip, namespace, UPLOAD_DIR / ".screenshots")
         async with httpx.AsyncClient(timeout=5, trust_env=False) as http:
             nacos = NacosClient(
                 http,
@@ -245,6 +246,14 @@ def create_app(
                 None,
                 f"{namespace}-worker",
                 "browser:execute" if browser_service else "xhs:execute",
+                http=http,
+                auth_center_url=config.service_auth_url,
+                nacos=nacos,
+            )
+            app.state.log_verifier = ServiceVerifier(
+                None,
+                f"{namespace}-worker",
+                "logs:read",
                 http=http,
                 auth_center_url=config.service_auth_url,
                 nacos=nacos,
@@ -302,6 +311,41 @@ def create_app(
 
     async def authorize(request: Request):
         return await app.state.verifier(request)
+
+    async def authorize_logs(request: Request):
+        return await app.state.log_verifier(request)
+
+    @app.get("/v1/logs/stream")
+    async def logs(
+        claims: dict = Depends(authorize_logs),
+        tail: int = Query(default=200, ge=0, le=1000),
+    ):
+        # Reconnect with a fresh token and rediscover replicas at least every 45s.
+        duration = min(45.0, float(claims["exp"]) - time.time() - 1)
+        if duration <= 0:
+            raise HTTPException(401, "Service token expired")
+        if not await asyncio.to_thread(log_path(f"{namespace}-worker").is_file):
+            raise HTTPException(503, "Worker 日志文件尚未就绪，请检查日志卷")
+
+        async def events():
+            source = stream_log(f"{namespace}-worker", tail=tail)
+            try:
+                async with asyncio.timeout(duration):
+                    async for event in source:
+                        yield event
+            except TimeoutError:
+                pass
+            finally:
+                await source.aclose()
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get("/health/live")
     async def live():
@@ -412,7 +456,9 @@ def create_app(
             if not path.is_file():
                 raise HTTPException(404, "Screenshot expired or browser instance restarted")
             return FileResponse(
-                path, media_type="image/png", filename=f"{state.data['tweet_id']}.png",
+                path,
+                media_type="image/png",
+                filename=f"{state.data['tweet_id']}.png",
                 headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
             )
 

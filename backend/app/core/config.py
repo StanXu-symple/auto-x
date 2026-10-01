@@ -45,6 +45,7 @@ _NACOS_BOOTSTRAP_FIELDS = {
 # coordinates remain eligible for Nacos Config.
 _NACOS_LOCAL_ONLY_FIELDS = {
     "service_client_secret_file",
+    "runtime_logs_client_secret_file",
     "tweet_screenshot_client_secret_file",
     "tweet_screenshot_dir",
     "service_auth_public_key_file",
@@ -368,6 +369,7 @@ class Settings(BaseSettings):
     service_auth_key_encryption_key: str = ""
     service_auth_url: str = ""
     service_client_secret_file: str = "/etc/xsentinel/secrets/backend.secret"
+    runtime_logs_client_secret_file: str = "/etc/xsentinel/secrets/runtime-logs.secret"
     monitor_center_url: str = ""
     monitor_request_timeout_seconds: float = Field(default=4.0, gt=0, le=30)
     monitor_stale_seconds: float = Field(default=45.0, ge=10, le=300)

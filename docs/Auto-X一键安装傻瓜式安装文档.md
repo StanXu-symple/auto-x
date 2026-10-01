@@ -232,6 +232,14 @@ docker ps --format '{{.Names}}\t{{.Status}}' | grep x-sentinel
 
 服务状态应为 `healthy`。`Exited (0)` 的 migrate 或 log-init 一次性容器属于正常现象。
 
+### 实时日志检查
+
+登录管理页面进入 `/runtime-logs`，分别选择“小红书 Worker”和“浏览器 Worker”，点击“连接日志”。双节点模式下 backend 通过 Nacos 找到 hn-1 的对应 Worker，使用认证中心签发的 `logs:read` 令牌读取日志；Docker 同名日志卷在不同主机上不会自动共享。
+
+安装器自动在 Nacos 中初始化独立 `runtime-logs` 身份，以及 `SERVICE_CLIENT_RUNTIME_LOGS_SECRET`；只有 backend 挂载该只读调用凭据。Worker 的 `/v1/logs/stream` 只提供本进程的日志，未认证、错误 audience 或缺少 `logs:read` 均拒绝读取。令牌只允许查看日志，不能执行浏览器或小红书任务。
+
+页面应先显示最近 200 行，再接收追加日志。远端日志流最多持续 45 秒，页面自动重新连接、刷新令牌并重新发现服务。网络、认证或日志文件异常会明确显示错误，不应再以空日志冒充成功；真正的空文件会显示“已连接，当前暂无日志”。安装器升级顺序及恢复说明见[更新文档第十七节](Auto-X一键更新傻瓜式文档.md#十七跨节点实时日志与文章原文链接升级)。
+
 ### 2. HTTP 健康检查
 
 在对应服务器执行：

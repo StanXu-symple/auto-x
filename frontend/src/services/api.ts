@@ -141,30 +141,42 @@ export const runtimeLogsApi = {
       window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)
       throw new Error('登录状态已失效')
     }
-    if (!response.ok) throw new Error(`日志流连接失败（HTTP ${response.status}）`)
+    if (!response.ok) {
+      const error = await response.json().catch(() => null)
+      throw new Error(error?.detail || `日志流连接失败（HTTP ${response.status}）`)
+    }
     if (!response.body) throw new Error('当前浏览器不支持流式日志')
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
-      const messages = buffer.split('\n\n')
-      buffer = messages.pop() || ''
-      for (const message of messages) {
-        if (!message || message.startsWith(':')) continue
-        let event = 'message'
-        const data: string[] = []
-        for (const row of message.split('\n')) {
-          if (row.startsWith('event:')) event = row.slice(6).trim()
-          if (row.startsWith('data:')) data.push(row.slice(5).trimStart())
-        }
-        if ((event === 'ready' || event === 'log') && data.length) {
-          onEvent({ event, data: JSON.parse(data.join('\n')) } as RuntimeLogEvent)
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+        const messages = buffer.split('\n\n')
+        buffer = messages.pop() || ''
+        for (const message of messages) {
+          if (!message || message.startsWith(':')) continue
+          let event = 'message'
+          const data: string[] = []
+          for (const row of message.split('\n')) {
+            if (row.startsWith('event:')) event = row.slice(6).trim()
+            if (row.startsWith('data:')) data.push(row.slice(5).trimStart())
+          }
+          if (event === 'error' && data.length) {
+            const error = JSON.parse(data.join('\n'))
+            throw new Error(error.message || '日志读取失败')
+          }
+          if ((event === 'ready' || event === 'log') && data.length) {
+            onEvent({ event, data: JSON.parse(data.join('\n')) } as RuntimeLogEvent)
+          }
         }
       }
+    } finally {
+      await reader.cancel().catch(() => undefined)
+      reader.releaseLock()
     }
   },
 }

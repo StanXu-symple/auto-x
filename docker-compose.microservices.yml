@@ -18,8 +18,10 @@ services:
       NACOS_SERVICE_PORT: ${BACKEND_HOST_PORT:-8200}
       SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
       SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/backend.secret
+      RUNTIME_LOGS_CLIENT_SECRET_FILE: /run/xsentinel/runtime-logs.secret
     volumes:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}/backend.secret:/run/xsentinel/backend.secret:ro
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/runtime-logs.secret:/run/xsentinel/runtime-logs.secret:ro
     networks: [control, app, data, monitoring]
 
   worker:

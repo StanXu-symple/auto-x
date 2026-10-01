@@ -647,6 +647,50 @@ def test_screenshot_caller_rejects_missing_or_mismatched_remote_secret():
         module.ensure_screenshot_caller(values)
 
 
+def test_runtime_logs_identity_round_trip_and_revocation(tmp_path):
+    import hashlib
+    import json
+
+    module = load_script()
+    existing = {"backend": {"secret_sha256": "b" * 64, "grants": {}}}
+    values = {"SERVICE_AUTH_CLIENTS_JSON": json.dumps(existing)}
+    module.ensure_runtime_logs_caller(values)
+    first = dict(values)
+    module.ensure_runtime_logs_caller(values)
+    assert values == first
+    clients = json.loads(values["SERVICE_AUTH_CLIENTS_JSON"])
+    assert clients["backend"] == existing["backend"]
+    secret = values["SERVICE_CLIENT_RUNTIME_LOGS_SECRET"]
+    assert clients["runtime-logs"] == {
+        "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+        "grants": {"xhs-worker": "logs:read", "camoufox-worker": "logs:read"},
+    }
+    module.write_control_plane_values(tmp_path, values)
+    assert (tmp_path / "runtime-logs.secret").stat().st_mode & 0o777 == 0o600
+    assert module.read_control_plane_values(tmp_path)["SERVICE_CLIENT_RUNTIME_LOGS_SECRET"] == secret
+    assert "SERVICE_CLIENT_RUNTIME_LOGS_SECRET" not in module.BOOTSTRAP_CACHE_KEYS
+    assert "RUNTIME_LOGS_CLIENT_SECRET_FILE" in module.EXCLUDED_KEYS
+    clients["runtime-logs"]["grants"] = {}
+    values["SERVICE_AUTH_CLIENTS_JSON"] = json.dumps(clients)
+    module.ensure_runtime_logs_caller(values)
+    assert json.loads(values["SERVICE_AUTH_CLIENTS_JSON"])["runtime-logs"]["grants"] == {}
+
+
+def test_runtime_logs_identity_rejects_missing_and_mismatched_secret():
+    import json
+    import pytest
+
+    module = load_script()
+    values = {"SERVICE_AUTH_CLIENTS_JSON": json.dumps({
+        "runtime-logs": {"secret_sha256": "b" * 64, "grants": {}}
+    })}
+    for secret in (None, "wrong-secret"):
+        if secret:
+            values["SERVICE_CLIENT_RUNTIME_LOGS_SECRET"] = secret
+        with pytest.raises(RuntimeError, match="runtime-logs"):
+            module.ensure_runtime_logs_caller(values)
+
+
 def test_screenshot_config_separates_runtime_from_local_mounts():
     module = load_script()
     values = {"TWEET_SCREENSHOT_ENABLED": False, "TWEET_SCREENSHOT_RETRY_SECONDS": 60}

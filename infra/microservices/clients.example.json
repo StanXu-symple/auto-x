@@ -3,5 +3,6 @@
   "monitor": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "agent:hn-1": "resources:read", "agent:tc-2": "resources:read" } },
   "backend": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "monitor": "monitor:read", "xhs-worker": "xhs:execute" } },
   "xhs-worker": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "camoufox-worker": "browser:execute" } },
-  "screenshot-worker": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "camoufox-worker": "browser:execute" } }
+  "screenshot-worker": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "camoufox-worker": "browser:execute" } },
+  "runtime-logs": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "xhs-worker": "logs:read", "camoufox-worker": "logs:read" } }
 }

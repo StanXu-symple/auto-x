@@ -23,7 +23,7 @@ path = sys.argv[1]
 with open(path, encoding="utf-8") as stream:
     clients = json.load(stream)
 clients.setdefault("backend", {}).setdefault("grants", {})["xhs-worker"] = "xhs:execute"
-for client_id in ("xhs-worker", "screenshot-worker"):
+for client_id in ("xhs-worker", "screenshot-worker", "runtime-logs"):
     secret_path = Path(path).with_name(client_id + ".secret")
     client = clients.get(client_id)
     # Placeholders exist only in the bundled example used by a new install.
@@ -33,7 +33,8 @@ for client_id in ("xhs-worker", "screenshot-worker"):
         secret_path.write_text(secret + "\n")
         clients[client_id] = {
             "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
-            "grants": {"camoufox-worker": "browser:execute"},
+            "grants": ({"xhs-worker": "logs:read", "camoufox-worker": "logs:read"}
+                       if client_id == "runtime-logs" else {"camoufox-worker": "browser:execute"}),
         }
 
 with open(path, "w", encoding="utf-8") as stream:

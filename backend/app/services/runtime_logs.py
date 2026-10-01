@@ -55,6 +55,10 @@ async def stream_log(system: str, *, tail: int = 200) -> AsyncIterator[str]:
         except FileNotFoundError:
             inode = None
             offset = 0
+            idle_ticks += 1
+            if idle_ticks >= 30:
+                yield ": keepalive\n\n"
+                idle_ticks = 0
             continue
         with handle:
             stat = os.fstat(handle.fileno())
