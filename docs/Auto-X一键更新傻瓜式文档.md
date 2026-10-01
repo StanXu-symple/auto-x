@@ -701,3 +701,28 @@ systemctl daemon-reload
 针对性验证包含 13 项真实浏览器 DOM 测试、23 项截图捕获测试，以及 41 项持久截图、RPC、共享浏览器池相关测试，全部通过。真实 DOM 测试使用隔离临时 Chrome 页面，媒体通过固定 PNG 响应模拟，不访问平台；本机 Chrome 需要在正常权限下启动，沙箱内启动失败不代表页面识别失败。
 
 本次修改的运行代码在 hn-1 的 camoufox-worker 中执行；tc-2 当前的截图调用、数据库迁移 0031 和存储卷已就绪，无需再次更新 tc-2。安装器使用统一镜像标签，hn-1 仍按原完整四项清单执行菜单 2，避免 remove-orphans 移除原有服务。待修复提交发布、Actions 成功后，按第十五节无超时预拉 hn-1 的 backend、xhs-worker、camoufox-worker 三镜像，校验 revision，再使用相同更新入口并将 IMAGE_TAG 固定为修复提交 SHA。升级前再次备份 hn-1 原配置、清单、控制面及 Cookie 摘要；更新后复验 2 GB 内存、8007 规则、原帖截图入库和 PNG 下载。
+
+修复提交 `162f7844eb055bfc599c43c936c444615dfd6604` 已按 dev→main 发布，[Actions 镜像构建](https://github.com/StanXu-symple/auto-x/actions/runs/36816894928)成功。hn-1 三镜像预拉退出码为 0、revision 均为该 SHA；浏览器大层复用完整缓存，未重新下载。备份为 `/home/docker/auto-x/backups/pre-x-public-dom-20261001/`，含三份 Nacos 当前配置、原清单与 Cookie 摘要。后台下载记录为 `/root/auto-x-x-public-dom-pull.log`、`.pid`、`.exit`。
+
+hn-1 使用菜单 2 等价入口：
+
+```bash
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-162f7844eb055bfc599c43c936c444615dfd6604 \
+KJ_AUTO_X_SKIP_PULL=1 \
+AUTO_X_SERVICES=xhs-worker,camoufox-worker,monitor-center,monitor-agent \
+bash kejilion.sh app auto-x
+```
+
+### 2026-10-01 部署实测及待解决的悬浮标题遮挡
+
+上述安装器更新成功，hn-1 四项服务均为 healthy、revision=162f784，migrate 退出码 0；数据库仍为 `0031_tweet_screenshots`。Nacos 三份 JSON 与此次备份完全相同，原四项清单与 Cookie 摘要保留。Camoufox Memory=2147483648、ShmSize=536870912，无 OOM 或重启；8007 公网规则在重建后继续生效。tc-2 未再次升级，两主机和 13 项监控全部 healthy，XHS 状态为 online、installed=true。
+
+原帖首次尝试已通过身份、正文和媒体检查，但 `Locator.screenshot` 等待元素稳定时超时；第二次遇到页面同时出现多份相同原帖，严格身份检查拒绝任意选一份；第三次内置自动重试成功。没有为这两次渲染异常另改代码或重启服务。隔离诊断使用同一发布镜像执行原捕获函数也成功，耗时 13.3 秒。自动重试成功只代表此帖最终完成，不保证平台每次渲染均稳定。
+
+数据库截图状态为 succeeded、attempts=3、last_error=null。正常登录下载 HTTP 200、Content-Type=image/png，PNG 15,759 字节、566×157，SHA256 为 `b187aee361f16d05a842beca87c7997b5cebdb7ab5ceae09f3237c49b8d615a0`；CRC、像素数据、尺寸、摘要及卷内文件字节校验全部通过。容器内文件为 `/var/lib/xsentinel/tweet-screenshots/2105178959327756396/07960c89365f42748744786b734f45cb.png`，tc-2 宿主机位置为 `/var/lib/docker/volumes/x-sentinel_tweet_screenshots/_data/2105178959327756396/07960c89365f42748744786b734f45cb.png`；UID=10001、权限 640。匿名下载返回 401，验收登录已注销。
+
+**完整截图视觉验收尚未通过。** 下载 PNG 后发现新版页面顶部 53 像素的 sticky DIV（文字为 Post）覆盖了头像与作者。原捕获流程把 article 滚动到 y=0，现有 screenshot style 只隐藏 `header[role="banner"]`，新版标题 DIV 没有该语义标记；登录弹框检查返回 false 不能排除这种悬浮标题。已报告用户，等待确认在截图期间临时隐藏与目标 article 重叠的外部悬浮标题，保留 article 自身内容及登录弹框校验，并补真实浏览器回归后重新发布升级。在此项修复验收前，不能把 PNG 成功保存和下载写成完整截图验收通过。
