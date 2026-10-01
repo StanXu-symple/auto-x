@@ -504,3 +504,184 @@ hn-1 三个官方 GHCR 镜像无超时下载完成，后台退出码为 0，Dock
 Camoufox 内存上限为 2,147,483,648 字节，共享内存为 536,870,912 字节。Cookie 摘要保持 `0662aa4c3e14e8ce6a065512af316684043b92935480a97382b3192bb787f0e2`，hn-1 完整四项清单与备份逐字一致。三个 Nacos Data ID 的 JSON 内容与备份完全一致；共享配置因安装器重新序列化，仅键顺序变化，两份监控配置的原始文本也逐字一致。配置验收应同时比较原始文本和解析后的 JSON；键顺序变化无需恢复，不应据此误判配置值被修改。
 
 tc-2 原七项清单保持不变，数据库仍为 `0030_qq_message_templates`，frontend、backend、auth-center HTTP 检查均为 200。从 tc-2 backend 获取的监控快照中，hn-1、tc-2 两主机及 13 个实例全部 healthy。tc-1 原三项 Auto-X 应用保持停止，Nacos 持续运行。本次运行镜像固定为上述修复 SHA；后续验收记录和测试格式提交无需再次重建服务器容器。
+
+## 十五、X 帖子自动截图升级
+
+目标提交为 `055fe5a93d0c480676f4373c6383e69f8c57bc93`，已推送 dev、合入 main，[Actions 镜像构建](https://github.com/StanXu-symple/auto-x/actions/runs/36809603197)成功。安装定义为 apps/stanxu 的 `3606fff1b73168fdfd343bf5d3d2d572c90eddc6`。功能和配置见 [X 帖子自动截图](tweet-screenshots.md)。此次新增迁移 `0031_tweet_screenshots`；安装器通过 migrate 自动执行，不需另开终端手工迁移。
+
+首次更新在离线镜像校验处发现旧默认源未迁移：tc-2 已下载 `ghcr.io` 镜像，但 `.env` 的 BACKEND_IMAGE、FRONTEND_IMAGE 仍为历史 `ghcr.dockerproxy.net` 地址。安装器因此报告缺少本机镜像，旧七项容器 ID、健康状态未变化，原完整清单已恢复。用户确认修正后，apps/stanxu 发布修复 `24016c6`；本节更新要求使用该提交或后续版本。无需再添加镜像别名，也不修改应用 Nacos 业务参数。
+
+修复在完整安装、更新及仅更新 frontend 的镜像校验前处理显式 `KJ_AUTO_X_IMAGE_REGISTRY`：仅当保存的地址精确匹配 `ghcr.io`、`ghcr.dockerproxy.net`、`ghcr.nju.edu.cn` 下的 `stanxu-symple/auto-x-<服务名>` 标准地址时，切换到显式源；用户自定义域名、仓库或路径保留。仅更新 frontend 时只处理 FRONTEND_IMAGE，并在 Compose 校验或本机镜像缺失时恢复原地址。未显式指定源的 default 更新不触发历史源迁移；交互 CN 模式继续迁移到南京大学源。镜像标签仍由 IMAGE_TAG、FRONTEND_IMAGE_TAG 控制。
+
+### 节点、存储和备份
+
+tc-2 更新 backend、worker、frontend 及依赖的 auth-center、monitor-agent；hn-1 按原完整四项清单更新。backend 和 worker 都在 tc-2，使用同一个 `x-sentinel_tweet_screenshots` 命名卷，worker 可写、backend 只读。hn-1 的 Camoufox 通过认证 API 传回 PNG，最终图片保存于 tc-2，不需要在 hn-1 挂载 tc-2 的存储目录。
+
+更新前按第二节备份数据库、原服务清单、`.env` 和控制面；另保存 Nacos 三个原文档及 hn-1 业务卷、Cookie 摘要。本次两台备份目录均为 `/home/docker/auto-x/backups/pre-tweet-screenshots-20261001/`。tc-2 升级前数据库为 `0030_qq_message_templates`，数据库备份为该目录中的 `database.dump`。核对并备份两台 `/root/apps/auto-x.conf` 后，将干净仓库快进到上述已发布安装定义。
+
+### 无超时预拉镜像
+
+等待 Actions 成功后，在 tc-2 预拉 backend、frontend 两镜像，在 hn-1 预拉 backend、xhs-worker、camoufox-worker 三镜像；标签均为上述完整 SHA，镜像源为官方 `ghcr.io/stanxu-symple/auto-x-<服务名>`。后台记录为各节点的 `/root/auto-x-tweet-screenshot-pull.log`、`.pid`、`.exit`。下载不设置 timeout，退出码必须为 0，完整镜像 revision 必须与目标一致，才能设置 `KJ_AUTO_X_SKIP_PULL=1` 复用缓存。
+
+### 通过菜单 2 分阶段更新
+
+正常交互入口为 `bash kejilion.sh app auto-x`，运行环境选 3、应用菜单选 2。以下自动化入口执行同一个菜单 2：先更新认证中心，使其从 Nacos 同步文件导入新的 `screenshot-worker` 身份；再更新浏览器节点；最后启用新版采集、API 和前端。
+
+tc-2 第一阶段：
+
+```bash
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-055fe5a93d0c480676f4373c6383e69f8c57bc93 \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1 \
+AUTO_X_SERVICES=auth-center,monitor-agent \
+bash kejilion.sh app auto-x
+cp /home/docker/auto-x/backups/pre-tweet-screenshots-20261001/services.txt \
+   /home/docker/auto-x/.auto-x-services
+```
+
+确认认证中心 healthy、截图身份有 `camoufox-worker: browser:execute` 授权，再在 hn-1 执行：
+
+```bash
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-055fe5a93d0c480676f4373c6383e69f8c57bc93 \
+KJ_AUTO_X_SKIP_PULL=1 \
+AUTO_X_SERVICES=xhs-worker,camoufox-worker,monitor-center,monitor-agent \
+bash kejilion.sh app auto-x
+```
+
+确认四项 healthy 后，在 tc-2 第二阶段执行：
+
+```bash
+cd /root
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-055fe5a93d0c480676f4373c6383e69f8c57bc93 \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1 \
+AUTO_X_SERVICES=backend,worker,frontend,auth-center,monitor-agent \
+bash kejilion.sh app auto-x
+cp /home/docker/auto-x/backups/pre-tweet-screenshots-20261001/services.txt \
+   /home/docker/auto-x/.auto-x-services
+```
+
+`KJ_AUTO_X_CAMOUFOX_REMOTE=1` 必须在 tc-2 的采集更新中指定，表示继续通过 Nacos 使用 hn-1 的浏览器，避免安装器自动在 tc-2 加入第二个浏览器。部分更新后立即恢复 tc-2 原七项清单；hn-1 保留原四项清单。已有 Nacos 值优先；安装器只补截图四项运行默认值和新服务身份，已有身份的撤销授权不会恢复。
+
+### 验收
+
+- 目标服务 healthy、revision 正确；数据库为 `0031_tweet_screenshots`，截图表存在。
+- tc-2 worker 通过 Nacos 和 JWT 访问 hn-1 Camoufox；backend 和 worker 的截图卷来源相同，权限符合服务 UID 10001。
+- 使用已入库的公开原帖验证排队、截图、PNG 下载和校验，不执行平台发布；登录墙、删帖或正文不匹配应保留失败原因，不可当作成功。
+- Nacos 保留原配置值及监控拓扑；两节点完整清单、hn-1 Cookie 和 2 GB 浏览器内存上限保留。
+- 原未选择的 ai-worker、qq-worker 保持运行；两主机及 13 项监控健康；tc-1 Nacos 正常。
+
+### 2026-10-01 当前部署与待完成验收
+
+安装器修复 `24016c6a9d0ae57cd28638e6fb63a3dc3cf0d508` 已在两台 `/root/apps` 生效，镜像地址由原安装器自动切换到官方 GHCR。后台镜像预拉均退出 0，所有目标 revision 为 `055fe5a93d0c480676f4373c6383e69f8c57bc93`。tc-2 第一阶段更新 auth-center、monitor-agent 后，migrate 成功执行 `0031_tweet_screenshots`，数据库导入 `screenshot-worker → camoufox-worker: browser:execute` 授权；其余容器 ID 保持。
+
+随后通过菜单 2 完成 hn-1 原四项服务和 tc-2 的 backend、worker、frontend、auth-center、monitor-agent 更新，目标容器均 healthy。tc-2 原七项清单恢复；hn-1 原四项清单、Cookie 摘要、Camoufox Memory=2147483648、ShmSize=536870912 保留。未选的 ai-worker、qq-worker ID 未变且 healthy。backend 与 worker 挂载同一 `x-sentinel_tweet_screenshots` 卷，前者只读、后者可写。Nacos 仅增加四项截图运行默认值和截图服务 secret，客户端 JSON 中仅增加 screenshot-worker；原运行值、旧身份授权、监控拓扑及节点映射保留。
+
+**截图业务验收尚未通过。** 使用用户给出的、已入库的 `2105178959327756396`，管理员正常登录 HTTP 200、排队 HTTP 202；worker 首次尝试记录“X 截图服务请求超时”。只读复查发现 tc-2 宿主机、backend、worker 到 hn-1 `177.2.18.14:8007` 均连接超时，8006、9101、9102 可达。hn-1 本机浏览器健康接口 HTTP 200、无重启或 OOM，8007 已监听并映射到 0.0.0.0。
+
+hn-1 DOCKER-USER 残留规则只允许本机来源，随后按容器 IP 丢弃 TCP；其中 `172.18.0.4` 正好成为更新后 Camoufox 在 control 网络的地址，DROP 计数增长。旧容器 IP 规则可能在重建后匹配到其他服务，不能仅凭容器 healthy 判定跨节点调用正常，也不能全局清空防火墙。
+
+用户自行调整网络后再次复测：tc-2 到 8006、9101、9102 连接成功，到 8007 在 6 秒连接探测内仍超时；hn-1 本机浏览器健康接口仍为 HTTP 200，DOCKER-USER 中该容器的 TCP DROP 规则仍存在，计数为 91。认证截图客户端连接超时，同一帖子再次排队后仍记录“X 截图服务请求超时”，未保存成功图片。再次报告后，用户要求使用 firewalld；检查确认 hn-1 未安装该组件。用户随后明确要求不安装，直接调整 Docker 防火墙，将 8007 对公网开放。
+
+### Docker 防火墙拦截 8007 的恢复步骤
+
+以下是本次用户确认的公网开放方案。在 hn-1 执行，公网地址必须与 Nacos 注册的本机地址一致。Docker 会先把 8007 转发到容器；只添加宿主机 INPUT 规则无法覆盖 DOCKER-USER 的拦截。用 conntrack 原目标地址和端口匹配，避免固定容器 IP 造成重建后失效。
+
+1. 备份当前规则和旧持久化文件，确认 Docker 正常运行：
+
+```bash
+umask 077
+firewall_backup="/root/auto-x-firewall-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -m 700 "$firewall_backup"
+iptables-save > "$firewall_backup/iptables-before.v4"
+ip6tables-save > "$firewall_backup/iptables-before.v6"
+test ! -f /etc/iptables/rules.v4 || cp -a /etc/iptables/rules.v4 "$firewall_backup/rules.v4.before"
+docker ps --format '{{.Names}} {{.ID}} {{.Status}}' > "$firewall_backup/containers-before.txt"
+```
+
+2. 新建重复执行不会增加规则的脚本，放在现有 DROP 之前；只匹配转发到本机公网 TCP 8007 的连接：
+
+```bash
+cat > /usr/local/sbin/auto-x-open-browser-port <<'RULE'
+#!/bin/sh
+set -eu
+if ! /usr/sbin/iptables -w 10 -C DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdst 177.2.18.14 --ctorigdstport 8007 --ctdir ORIGINAL -m comment --comment auto-x-public-camoufox-8007 -j ACCEPT 2>/dev/null; then
+    /usr/sbin/iptables -w 10 -I DOCKER-USER 1 -p tcp -m conntrack --ctstate DNAT --ctorigdst 177.2.18.14 --ctorigdstport 8007 --ctdir ORIGINAL -m comment --comment auto-x-public-camoufox-8007 -j ACCEPT
+fi
+RULE
+chmod 700 /usr/local/sbin/auto-x-open-browser-port
+/usr/local/sbin/auto-x-open-browser-port
+```
+
+3. 使用 systemd 在 Docker 启动后补回规则，并随 Docker 重启重新执行。仅重启此规则服务，无需重启 Docker 或业务容器：
+
+```bash
+cat > /etc/systemd/system/auto-x-browser-firewall.service <<'UNIT'
+[Unit]
+Description=Allow public TCP 8007 for Auto-X Camoufox through Docker firewall
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/auto-x-open-browser-port
+RemainAfterExit=yes
+
+[Install]
+WantedBy=docker.service
+UNIT
+chmod 644 /etc/systemd/system/auto-x-browser-firewall.service
+systemctl daemon-reload
+systemctl enable --now auto-x-browser-firewall.service
+systemctl restart auto-x-browser-firewall.service
+systemctl is-enabled auto-x-browser-firewall.service
+systemctl is-active auto-x-browser-firewall.service
+iptables -nvL DOCKER-USER --line-numbers
+```
+
+本机已有 `/etc/iptables/rules.v4` 时，还应只向该文件的第一条 `-A DOCKER-USER` 之前插入相同放行规则，保留其他原文；避免后续人工加载旧文件时再次覆盖修复。本次已同步该文件。不要把整套旧 Docker NAT/容器 IP 规则重新加载到正在运行的 Docker。
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+p = Path('/etc/iptables/rules.v4')
+if p.exists():
+    content = p.read_text()
+    rule = '-A DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdst 177.2.18.14 --ctorigdstport 8007 --ctdir ORIGINAL -m comment --comment auto-x-public-camoufox-8007 -j ACCEPT'
+    if rule not in content.splitlines():
+        lines = content.splitlines(keepends=True)
+        index = next(i for i, line in enumerate(lines) if line.startswith('-A DOCKER-USER '))
+        lines.insert(index, rule + '\n')
+        p.write_text(''.join(lines))
+PY
+```
+
+4. 从 tc-2 的 worker 调用经 Nacos 发现的浏览器健康及带 JWT 状态接口，分别应为 200、200（installed=true）；未带 JWT 的 `/v1/status` 应为 401。然后重新排队原失败帖子，验收 PNG 保存与下载。本机 curl 成功不足以代表跨节点已通。
+
+本次备份目录为 `/root/auto-x-firewall-backup-20261001T041528Z/`。重复运行规则脚本及重启规则服务后仍只有一条放行规则，systemd 单元语法检查通过，原业务容器 ID 保持。tc-2 worker 到 hn-1 的上述三项接口验收均通过。未实际重启服务器或 Docker，开机及 Docker 重启自动恢复由已启用的单元依赖保证。
+
+需要撤销本次开放时，执行以下命令，保留备份；无需恢复整套 Docker 自动生成的旧规则：
+
+```bash
+systemctl disable --now auto-x-browser-firewall.service
+iptables -w 10 -D DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdst 177.2.18.14 --ctorigdstport 8007 --ctdir ORIGINAL -m comment --comment auto-x-public-camoufox-8007 -j ACCEPT
+test ! -f /etc/iptables/rules.v4 || sed -i '/auto-x-public-camoufox-8007/d' /etc/iptables/rules.v4
+rm /usr/local/sbin/auto-x-open-browser-port /etc/systemd/system/auto-x-browser-firewall.service
+systemctl daemon-reload
+```
+
+### 2026-10-01 网络恢复后的截图验收
+
+从 tc-2 worker 经 Nacos 发现 `177.2.18.14:8007` 后，`/health/live` 返回 200，带服务 JWT 的 `/v1/status` 返回 200、online、installed=true，未认证状态接口返回 401。公网放行规则已有请求命中；本机健康检查为 200。
+
+原帖 `2105178959327756396` 再次通过正常管理员登录排队，登录 200、排队 202；任务进入 running、attempts=1，浏览器实际执行后返回 `Requested X post was not found; it may require login or be unavailable`。此时已不再是跨节点连接超时，无法仅凭该错误判断登录要求、帖子可用性或页面定位问题。图片尚未成功保存和下载，截图业务验收仍未通过。已保留失败原因并报告用户，等待确认进一步排查；未修改页面定位逻辑或注入 X 登录态。验收登录已正常注销，返回 200。
