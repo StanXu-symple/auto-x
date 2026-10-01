@@ -69,6 +69,7 @@ def test_status_leaves_incompatible_cache_untouched(sdk):
 
 async def test_status_propagates_detection_and_requires_cli(sdk, monkeypatch):
     from types import SimpleNamespace
+
     import app.camoufox_worker as module
 
     worker = object.__new__(CamoufoxWorker)

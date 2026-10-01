@@ -464,20 +464,20 @@ tc-2 备份为 `/home/docker/auto-x/backups/pre-hn1-20260930/`；三份 Nacos �
 
 本地 12 项针对性测试通过，覆盖多版本路径、禁止下载、缺失与不支持、权限、缓存保留和状态传递。发布前在 hn-1 已安装浏览器内烟测成功：临时本地页面启动、渲染、按钮点击及关闭；未使用真实账号 profile、未执行平台发布。
 
-先按 dev→main 发布代码，等待对应完整 SHA 的 Actions 镜像构建成功。安装器使用统一 IMAGE_TAG，并按服务清单加载 Compose 片段；hn-1 采用原完整四项清单更新，保持 monitor-center 在 Compose 模型中，避免部分选择配合 remove-orphans 移除现有服务。
+修复提交 `604635583a8a2e47264e945c94b84329df89311c` 已按 dev→main 发布，[Actions 镜像构建](https://github.com/StanXu-symple/auto-x/actions/runs/36800420736)成功。安装器使用统一 IMAGE_TAG，并按服务清单加载 Compose 片段；hn-1 采用原完整四项清单更新，保持 monitor-center 在 Compose 模型中，避免部分选择配合 remove-orphans 移除现有服务。
 
 ### 更新步骤
 
-1. 备份 hn-1 的 `.env`、`.auto-x-services` 和控制面文件，记录旧四容器 ID、镜像与 Cookie 摘要。
-2. 对照 Actions 的目标 SHA，在 hn-1 无超时预拉 backend、xhs-worker、camoufox-worker 三镜像。新旧大浏览器层摘要一致时复用本机缓存；须以 Docker 完整校验和 revision 为准。
+1. 备份 hn-1 的 `.env`、`.auto-x-services` 和控制面文件，记录旧四容器 ID、镜像与 Cookie 摘要。本次受限备份目录为 `/home/docker/auto-x/backups/pre-browser-detection-20261001/`，还保存四个业务持久卷及三个 Nacos 原文档。
+2. 对照 Actions 的目标 SHA，在 hn-1 无超时预拉 backend、xhs-worker、camoufox-worker 三镜像。新旧大浏览器层摘要一致时复用本机缓存；须以 Docker 完整校验和 revision 为准。本次新浏览器大层为 `sha256:fb3dac68e0209104b05f5fec8617fccab8fa0da5cdccae410f7ca58e1b041b2f`，923,029,341 字节，和旧层摘要不同，需要重新下载。后台记录为 `/root/auto-x-browser-detection-pull.log`、`.pid`、`.exit`，未设置 timeout。
 3. 验证安装器版本和完整镜像后通过原菜单 2 更新：
 
 ```bash
 cd /root
-# 将 sha-<完整目标SHA> 替换成已构建成功的本次发布版本
 KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
 KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
-KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io KJ_AUTO_X_IMAGE_TAG=sha-<完整目标SHA> \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-604635583a8a2e47264e945c94b84329df89311c \
 KJ_AUTO_X_SKIP_PULL=1 \
 AUTO_X_SERVICES=xhs-worker,camoufox-worker,monitor-center,monitor-agent \
 bash kejilion.sh app auto-x
@@ -494,3 +494,13 @@ bash kejilion.sh app auto-x
 - 两主机及 13 个实例监控健康；原 tc-1 三项应用保持停止，Nacos 正常。
 
 出现新错误先报告用户确认，不注入容器源码；经确认后使用备份镜像与原安装器入口回退。
+
+### 2026-10-01 修复部署实测记录
+
+hn-1 三个官方 GHCR 镜像无超时下载完成，后台退出码为 0，Docker 完整校验及三个镜像 revision 均对应 `604635583a8a2e47264e945c94b84329df89311c`。通过上述 `kejilion.sh app auto-x` 菜单 2 更新入口完成四项服务升级；`xhs-worker`、`camoufox-worker`、`monitor-center`、`monitor-agent` 均为 healthy，revision 为目标 SHA，`migrate` 退出码为 0。
+
+浏览器容器内 SDK 仍为 0.5.6，解析到 `/opt/xsentinel-cache/camoufox/browsers/official/152.0.4-beta.31-3a7958c8/camoufox-bin`，新版安装检测返回 true。hn-1 的 xhs-worker 通过 Nacos 发现 `177.2.18.14:8007`，使用认证中心 JWT 调用 `/v1/status` 返回 HTTP 200、status=online、installed=true；tc-2 backend 的 XHS 服务客户端同样返回 online、installed=true。新容器内实际启动浏览器、渲染临时本地页面、点击按钮及关闭均成功；无 JWT 的 `/v1/status` 返回 401。
+
+Camoufox 内存上限为 2,147,483,648 字节，共享内存为 536,870,912 字节。Cookie 摘要保持 `0662aa4c3e14e8ce6a065512af316684043b92935480a97382b3192bb787f0e2`，hn-1 完整四项清单与备份逐字一致。三个 Nacos Data ID 的 JSON 内容与备份完全一致；共享配置因安装器重新序列化，仅键顺序变化，两份监控配置的原始文本也逐字一致。配置验收应同时比较原始文本和解析后的 JSON；键顺序变化无需恢复，不应据此误判配置值被修改。
+
+tc-2 原七项清单保持不变，数据库仍为 `0030_qq_message_templates`，frontend、backend、auth-center HTTP 检查均为 200。从 tc-2 backend 获取的监控快照中，hn-1、tc-2 两主机及 13 个实例全部 healthy。tc-1 原三项 Auto-X 应用保持停止，Nacos 持续运行。本次运行镜像固定为上述修复 SHA；后续验收记录和测试格式提交无需再次重建服务器容器。
