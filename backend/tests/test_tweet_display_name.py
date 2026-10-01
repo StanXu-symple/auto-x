@@ -15,6 +15,7 @@ def sample_tweet():
         monitored_user_id=2,
         author_id="42",
         text="Hello",
+        tweet_type="original",
         posted_at=datetime.now(UTC),
         fetched_at=datetime.now(UTC),
         like_count=0,
@@ -32,7 +33,7 @@ async def test_list_returns_nickname_and_handle(display_name):
     db = AsyncMock()
     db.scalar.return_value = 1
     db.execute.return_value = SimpleNamespace(
-        all=lambda: [(sample_tweet(), "openai", display_name)]
+        all=lambda: [(sample_tweet(), "openai", display_name, None)]
     )
     result = await list_tweets(db, object(), page=1, page_size=15, username=None, search=None)
     assert result.items[0].username == "openai"
@@ -44,7 +45,7 @@ async def test_list_returns_nickname_and_handle(display_name):
 async def test_detail_returns_nickname_without_replacing_handle():
     db = AsyncMock()
     db.execute.return_value = SimpleNamespace(
-        one_or_none=lambda: (sample_tweet(), "openai", "主昵称")
+        one_or_none=lambda: (sample_tweet(), "openai", "主昵称", None)
     )
     result = await get_tweet("123", db, object(), include_raw=True)
     assert result.display_name == "主昵称"

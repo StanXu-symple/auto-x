@@ -194,6 +194,16 @@ export const monitoredUsersApi = {
 }
 
 export const tweetsApi = {
+  async screenshot(tweetId: string) {
+    return (await http.get(`/tweets/${encodeURIComponent(tweetId)}/screenshot`, {
+      responseType: 'blob',
+    })).data as Blob
+  },
+  async captureScreenshot(tweetId: string) {
+    return dataOf(await http.post<Wrapped<import('@/types').TweetScreenshot>>(
+      `/tweets/${encodeURIComponent(tweetId)}/screenshot`,
+    ))
+  },
   async detail(tweetId: string) {
     return dataOf(await http.get<Wrapped<Tweet>>(`/tweets/${encodeURIComponent(tweetId)}`))
   },

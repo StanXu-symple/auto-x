@@ -22,6 +22,14 @@ services:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}/backend.secret:/run/xsentinel/backend.secret:ro
     networks: [control, app, data, monitoring]
 
+  worker:
+    environment:
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
+      TWEET_SCREENSHOT_CLIENT_SECRET_FILE: /run/xsentinel/screenshot-worker.secret
+    volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/screenshot-worker.secret:/run/xsentinel/screenshot-worker.secret:ro
+    networks: [control, app, data, monitoring]
+
   xhs-worker:
     image: ${XHS_WORKER_IMAGE:-x-sentinel-xhs-worker}:${IMAGE_TAG:-latest}
     command: ["uvicorn", "app.xhs_service:app", "--host", "0.0.0.0", "--port", "8006"]

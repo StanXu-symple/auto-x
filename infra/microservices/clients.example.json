@@ -1,5 +1,7 @@
 {
   "auth-center": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "agent:local": "resources:read", "monitor": "monitor:read" } },
   "monitor": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "agent:hn-1": "resources:read", "agent:tc-2": "resources:read" } },
-  "backend": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "monitor": "monitor:read", "xhs-worker": "xhs:execute" } }
+  "backend": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "monitor": "monitor:read", "xhs-worker": "xhs:execute" } },
+  "xhs-worker": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "camoufox-worker": "browser:execute" } },
+  "screenshot-worker": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "camoufox-worker": "browser:execute" } }
 }

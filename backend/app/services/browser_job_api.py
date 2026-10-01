@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import socket
 import tempfile
 from contextlib import asynccontextmanager, suppress
@@ -12,6 +13,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
@@ -30,6 +32,11 @@ from app.schemas.xhs_service import (
     XHSVerification,
 )
 from app.services.article_media import ALLOWED_IMAGE_SUFFIXES, MAX_ARTICLE_IMAGE_BYTES
+from app.services.browser_screenshot_artifacts import (
+    artifact_path,
+    expire_artifacts,
+    store_artifact,
+)
 from app.services.xhs_verification import clear_verification_image, read_verification_image
 
 logger = logging.getLogger(__name__)
@@ -45,7 +52,7 @@ RELEASE_LOCK = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call(
 
 
 class XHSRuntime:
-    def __init__(self, worker, settings: Settings, ip: str, namespace="xhs"):
+    def __init__(self, worker, settings: Settings, ip: str, namespace="xhs", artifact_root=None):
         self.namespace = namespace
         self.worker = worker
         self.settings = settings
@@ -53,6 +60,21 @@ class XHSRuntime:
         self.tasks: set[asyncio.Task] = set()
         self.submit_lock = asyncio.Lock()
         self.semaphore = asyncio.Semaphore(settings.xhs_browser_max_concurrency)
+        self.artifact_root = artifact_root or (
+            Path(os.getenv("XHS_UPLOAD_DIR", "/var/lib/xsentinel/camoufox-uploads"))
+            / ".screenshots"
+        )
+
+    async def expire_screenshots(self):
+        while True:
+            try:
+                await asyncio.to_thread(
+                    expire_artifacts, self.artifact_root,
+                    self.settings.xhs_job_result_ttl_seconds + 120,
+                )
+            except OSError:
+                logger.exception("Unable to expire browser screenshot artifacts")
+            await asyncio.sleep(60)
 
     async def submit(self, job: XHSJobRequest, directory, paths: list[str]) -> XHSJobState:
         async with self.submit_lock:
@@ -60,7 +82,8 @@ class XHSRuntime:
 
     async def _submit(self, job: XHSJobRequest, directory, paths: list[str]) -> XHSJobState:
         key = f"xsentinel:{self.namespace}:http:job:{job.job_id}"
-        active_key = f"xsentinel:{self.namespace}:http:active:{job.admin_id}"
+        account_key = "x-screenshot" if job.payload.operation == "x_screenshot" else job.admin_id
+        active_key = f"xsentinel:{self.namespace}:http:active:{account_key}"
         digest = hashlib.sha256(job.model_dump_json().encode())
         for path in paths:
             digest.update(await asyncio.to_thread(Path(path).read_bytes))
@@ -73,7 +96,7 @@ class XHSRuntime:
             return XHSJobState.model_validate(record["result"])
         # Bound pending browser work. Clients may resubmit with the same ID after a 429.
         if len(self.tasks) >= self.settings.xhs_browser_max_concurrency:
-            raise HTTPException(429, "XHS worker at capacity", headers={"Retry-After": "5"})
+            raise HTTPException(429, "Browser worker at capacity", headers={"Retry-After": "5"})
         route = json.dumps(
             {"job_id": job.job_id, "ip": self.ip, "port": self.settings.xhs_service_advertise_port}
         )
@@ -125,7 +148,8 @@ class XHSRuntime:
             payload = job.payload.model_dump(exclude={"operation", "image_count"})
             if isinstance(job.payload, PostJob):
                 payload["images"] = paths
-            await asyncio.to_thread(clear_verification_image, job.admin_id)
+            if job.payload.operation != "x_screenshot":
+                await asyncio.to_thread(clear_verification_image, job.admin_id)
             async with self.semaphore, asyncio.timeout(self.settings.xhs_job_timeout_seconds):
                 result = await self.worker._execute_job(
                     {
@@ -135,13 +159,21 @@ class XHSRuntime:
                         "payload": payload,
                     }
                 )
+                if job.payload.operation == "x_screenshot":
+                    result = await asyncio.to_thread(
+                        store_artifact, self.artifact_root, job.job_id, result
+                    )
             state = XHSJobState(job_id=job.job_id, state="succeeded", data=result)
-        except (Exception, asyncio.CancelledError):
+        except (Exception, asyncio.CancelledError) as exc:
             logger.exception("XHS HTTP job failed", extra={"job_id": job.job_id})
             state = XHSJobState(
                 job_id=job.job_id,
                 state="failed",
-                error="小红书执行失败或服务重启，请核对发布结果并查看 Worker 日志",
+                error=(
+                    (str(exc)[:1000] or "X 截图超时或服务重启")
+                    if job.payload.operation == "x_screenshot"
+                    else "小红书执行失败或服务重启，请核对发布结果并查看 Worker 日志"
+                ),
             )
         finally:
             renewal.cancel()
@@ -197,7 +229,9 @@ def create_app(
         await worker._wait_for_dependencies()
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         app.state.upload_root = UPLOAD_DIR
-        app.state.runtime = XHSRuntime(worker, config, ip, namespace)
+        app.state.runtime = XHSRuntime(
+            worker, config, ip, namespace, UPLOAD_DIR / ".screenshots"
+        )
         async with httpx.AsyncClient(timeout=5, trust_env=False) as http:
             nacos = NacosClient(
                 http,
@@ -217,6 +251,7 @@ def create_app(
             )
             beat = None
             worker_beat = None
+            artifact_gc = None
             metadata = {"component": f"{namespace}-worker", "version": __version__}
             try:
                 await nacos.register(
@@ -235,8 +270,14 @@ def create_app(
                     )
                 )
                 worker_beat = asyncio.create_task(worker._heartbeat_loop())
+                if browser_service:
+                    artifact_gc = asyncio.create_task(app.state.runtime.expire_screenshots())
                 yield
             finally:
+                if artifact_gc:
+                    artifact_gc.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await artifact_gc
                 if beat:
                     beat.cancel()
                     with suppress(asyncio.CancelledError):
@@ -294,11 +335,11 @@ def create_app(
     @app.post("/v1/jobs", dependencies=[Depends(authorize)], status_code=202)
     async def submit(request: Request) -> XHSJobState:
         # Multipart is parsed only after service authentication. Starlette spools files to disk.
-        async with request.form(max_files=18, max_fields=1, max_part_size=65536) as form:
+        async with request.form(max_files=18, max_fields=1, max_part_size=262144) as form:
             try:
                 job = request_model.model_validate_json(str(form.get("job", "")))
             except ValidationError:
-                raise HTTPException(422, "Invalid XHS job") from None
+                raise HTTPException(422, "Invalid browser job") from None
             uploads = form.getlist("images")
             expected = job.payload.image_count if isinstance(job.payload, PostJob) else 0
             if len(uploads) != expected or (isinstance(job.payload, LoginJob) and uploads):
@@ -358,6 +399,22 @@ def create_app(
         )
 
     if browser_service:
+
+        @app.get("/v1/jobs/{job_id}/screenshot", dependencies=[Depends(authorize)])
+        async def screenshot_result(job_id: str):
+            try:
+                path = artifact_path(app.state.runtime.artifact_root, job_id)
+            except ValueError:
+                raise HTTPException(422, "Invalid job ID") from None
+            state = await result(job_id)
+            if state.state != "succeeded" or not state.data.get("screenshot_ready"):
+                raise HTTPException(404, "Screenshot is not available")
+            if not path.is_file():
+                raise HTTPException(404, "Screenshot expired or browser instance restarted")
+            return FileResponse(
+                path, media_type="image/png", filename=f"{state.data['tweet_id']}.png",
+                headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+            )
 
         @app.delete("/v1/browsers/xhs/{admin_id}", dependencies=[Depends(authorize)])
         async def retire_browser(admin_id: int):

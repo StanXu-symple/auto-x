@@ -603,6 +603,100 @@ def test_camoufox_defaults_upgrade_preserves_config_and_is_idempotent():
     assert values == first
 
 
+def test_screenshot_caller_seeds_new_identity_and_preserves_revocation(tmp_path):
+    import hashlib
+    import json
+
+    module = load_script()
+    existing = {"backend": {"secret_sha256": "b" * 64, "grants": {}}}
+    values = {"SERVICE_AUTH_CLIENTS_JSON": json.dumps(existing)}
+    module.ensure_screenshot_caller(values)
+    first = dict(values)
+    module.ensure_screenshot_caller(values)
+    assert values == first
+    clients = json.loads(values["SERVICE_AUTH_CLIENTS_JSON"])
+    assert clients["backend"] == existing["backend"]
+    secret = values["SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET"]
+    assert clients["screenshot-worker"] == {
+        "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+        "grants": {"camoufox-worker": "browser:execute"},
+    }
+    module.write_control_plane_values(tmp_path, values)
+    secret_file = tmp_path / "screenshot-worker.secret"
+    assert secret_file.read_text().strip() == secret
+    assert secret_file.stat().st_mode & 0o777 == 0o600
+    assert module.read_control_plane_values(tmp_path)["SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET"] == secret
+    clients["screenshot-worker"]["grants"] = {}
+    values["SERVICE_AUTH_CLIENTS_JSON"] = json.dumps(clients)
+    module.ensure_screenshot_caller(values)
+    assert json.loads(values["SERVICE_AUTH_CLIENTS_JSON"])["screenshot-worker"]["grants"] == {}
+
+
+def test_screenshot_caller_rejects_missing_or_mismatched_remote_secret():
+    import json
+    import pytest
+
+    module = load_script()
+    values = {"SERVICE_AUTH_CLIENTS_JSON": json.dumps({
+        "screenshot-worker": {"secret_sha256": "b" * 64, "grants": {}}
+    })}
+    with pytest.raises(RuntimeError, match="screenshot-worker"):
+        module.ensure_screenshot_caller(values)
+    values["SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET"] = "wrong-secret"
+    with pytest.raises(RuntimeError, match="screenshot-worker"):
+        module.ensure_screenshot_caller(values)
+
+
+def test_screenshot_config_separates_runtime_from_local_mounts():
+    module = load_script()
+    values = {"TWEET_SCREENSHOT_ENABLED": False, "TWEET_SCREENSHOT_RETRY_SECONDS": 60}
+    module.ensure_screenshot_defaults(values)
+    assert values == {
+        "TWEET_SCREENSHOT_ENABLED": False,
+        "TWEET_SCREENSHOT_MAX_ATTEMPTS": 3,
+        "TWEET_SCREENSHOT_RETRY_SECONDS": 60,
+        "TWEET_SCREENSHOT_SCAN_INTERVAL_SECONDS": 5,
+    }
+    assert set(values) <= module.RUNTIME_CONFIG_KEYS
+    assert {
+        "TWEET_SCREENSHOT_DIR", "TWEET_SCREENSHOT_VOLUME", "TWEET_SCREENSHOT_CLIENT_SECRET_FILE"
+    } <= module.EXCLUDED_KEYS
+    assert "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET" in module.CONTROL_PLANE_KEYS
+    assert "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET" not in module.BOOTSTRAP_CACHE_KEYS
+
+
+def test_control_plane_init_seeds_screenshot_secret_without_restoring_grants(tmp_path):
+    import hashlib
+    import json
+
+    root = Path(__file__).parents[2]
+    # Skip key generation: this test verifies client bootstrap and permissions.
+    (tmp_path / "private.pem").write_text("existing-private-key\n")
+    (tmp_path / "public.pem").write_text("existing-public-key\n")
+    original = {
+        "backend": {"secret_sha256": "b" * 64, "grants": {}},
+        "xhs-worker": {"secret_sha256": "x" * 64, "grants": {}},
+    }
+    clients_path = tmp_path / "clients.json"
+    clients_path.write_text(json.dumps(original))
+    command = ["bash", str(root / "infra/scripts/microservices-init.sh"), str(tmp_path)]
+    subprocess.run(command, check=True, capture_output=True, text=True)
+    clients = json.loads(clients_path.read_text())
+    secret_file = tmp_path / "screenshot-worker.secret"
+    secret = secret_file.read_text().strip()
+    assert clients["screenshot-worker"] == {
+        "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+        "grants": {"camoufox-worker": "browser:execute"},
+    }
+    assert secret_file.stat().st_mode & 0o777 == 0o600
+    assert clients["xhs-worker"] == original["xhs-worker"]
+    clients["screenshot-worker"]["grants"] = {}
+    clients_path.write_text(json.dumps(clients))
+    subprocess.run(command, check=True, capture_output=True, text=True)
+    assert secret_file.read_text().strip() == secret
+    assert json.loads(clients_path.read_text())["screenshot-worker"]["grants"] == {}
+
+
 def test_monitor_upgrade_adds_only_selected_browser_and_preserves_remote(monkeypatch, tmp_path):
     import copy
     module = load_script()

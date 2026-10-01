@@ -17,6 +17,8 @@ class FakeClient:
 
     def start(self) -> None:
         self._page = FakePage()
+        self._browser = object()
+        self.tracker.setdefault("threads", []).append(threading.get_ident())
         self.tracker["starts"] += 1
 
     def publish_note(self, **kwargs):
@@ -176,3 +178,123 @@ async def test_cancelled_publish_retires_browser_after_sync_work_finishes(
     assert pool.size == 0
     await pool.close()
     assert tracker["closes"] == 1
+
+
+async def test_capture_reuses_xhs_context_on_same_thread_without_touching_publish_page(
+    tmp_path, monkeypatch
+) -> None:
+    tracker = make_tracker()
+    install_fake_factory(monkeypatch, tracker)
+    pool = XiaohongshuBrowserPool(root=tmp_path, max_browsers=1, max_concurrency=1)
+    await publish(pool, 7, 1, "first")
+    lease = pool._leases[7]
+    original_page = lease.client._page
+
+    def capture(context, **kwargs):
+        assert context is lease.client._browser
+        assert threading.get_ident() == tracker["threads"][0]
+        return {"tweet_id": kwargs["tweet_id"]}
+
+    monkeypatch.setattr(pool_module, "capture_tweet", capture)
+    assert await pool.capture_tweet(tweet_id="123", username="user", expected_text="hi") == {
+        "tweet_id": "123"
+    }
+    assert lease.client._page is original_page
+    await publish(pool, 7, 1, "second")
+    assert tracker["starts"] == 1
+    assert pool.size == 1
+    await pool.close()
+
+
+async def test_public_capture_has_one_bounded_persistent_session_without_cookies(
+    tmp_path, monkeypatch
+) -> None:
+    tracker = make_tracker(delay=0.02)
+
+    def public_factory(profile):
+        tracker["profiles"].append(profile)
+        return FakeClient(tracker, profile)
+
+    def capture(_context, **kwargs):
+        time.sleep(tracker["delay"])
+        return {"tweet_id": kwargs["tweet_id"]}
+
+    monkeypatch.setattr(pool_module, "_create_public_client", public_factory)
+    monkeypatch.setattr(pool_module, "capture_tweet", capture)
+    pool = XiaohongshuBrowserPool(root=tmp_path, max_browsers=2, max_concurrency=2)
+    await asyncio.gather(*(
+        pool.capture_tweet(tweet_id=str(i), username="user", expected_text="hi")
+        for i in [123, 456]
+    ))
+    assert tracker["starts"] == 1
+    assert tracker["profiles"] == [tmp_path / "public" / "browser-profile"]
+    assert pool.size == 1
+    await pool.close()
+
+
+async def test_capture_and_publish_share_business_capacity(tmp_path, monkeypatch) -> None:
+    tracker = make_tracker(delay=0.03)
+    install_fake_factory(monkeypatch, tracker)
+    pool = XiaohongshuBrowserPool(root=tmp_path, max_browsers=2, max_concurrency=1)
+    await publish(pool, 7, 1, "first")
+
+    def capture(_context, **_kwargs):
+        with tracker["lock"]:
+            tracker["active"] += 1
+            tracker["max_active"] = max(tracker["max_active"], tracker["active"])
+        time.sleep(tracker["delay"])
+        with tracker["lock"]:
+            tracker["active"] -= 1
+        return {}
+
+    monkeypatch.setattr(pool_module, "capture_tweet", capture)
+    await asyncio.gather(
+        pool.capture_tweet(tweet_id="123", username="user", expected_text="hi"),
+        publish(pool, 8, 1, "second"),
+    )
+    assert tracker["max_active"] == 1
+    await pool.close()
+
+
+async def test_capture_identity_failure_preserves_xhs_browser(tmp_path, monkeypatch) -> None:
+    tracker = make_tracker()
+    install_fake_factory(monkeypatch, tracker)
+    pool = XiaohongshuBrowserPool(root=tmp_path)
+    await publish(pool, 7, 1, "first")
+
+    def fail(_context, **_kwargs):
+        raise pool_module.TweetCaptureError("Post unavailable")
+
+    monkeypatch.setattr(pool_module, "capture_tweet", fail)
+    with pytest.raises(pool_module.TweetCaptureError):
+        await pool.capture_tweet(tweet_id="123", username="user", expected_text="hi")
+    assert pool.size == 1
+    assert pool.busy_count == 0
+    assert tracker["closes"] == 0
+    await pool.close()
+
+
+async def test_cancelled_capture_waits_for_sync_thread_and_retires_session(
+    tmp_path, monkeypatch
+) -> None:
+    tracker = make_tracker()
+    install_fake_factory(monkeypatch, tracker)
+    pool = XiaohongshuBrowserPool(root=tmp_path)
+    await publish(pool, 7, 1, "first")
+    finished = threading.Event()
+
+    def slow_capture(_context, **_kwargs):
+        time.sleep(0.04)
+        finished.set()
+        return {}
+
+    monkeypatch.setattr(pool_module, "capture_tweet", slow_capture)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(
+            pool.capture_tweet(tweet_id="123", username="user", expected_text="hi"),
+            timeout=0.01,
+        )
+    assert finished.is_set()
+    assert pool.size == 0
+    assert tracker["closes"] == 1
+    await pool.close()

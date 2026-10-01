@@ -113,6 +113,20 @@ export interface TweetAuthor {
 export type TweetType = 'original' | 'reply' | 'retweet'
 export type QQListenMode = 'all' | TweetType
 
+export interface TweetScreenshot {
+  status: 'pending' | 'running' | 'succeeded' | 'failed'
+  attempts: number
+  last_error?: string | null
+  next_attempt_at?: string | null
+  captured_at?: string | null
+  author_username?: string | null
+  canonical_url?: string | null
+  width?: number | null
+  height?: number | null
+  sha256?: string | null
+  image_url?: string | null
+}
+
 export interface Tweet {
   tweet_type: TweetType
   display_name?: string | null
@@ -136,6 +150,7 @@ export interface Tweet {
   referenced_tweets: Array<Record<string, unknown>> | null
   raw_payload?: Record<string, unknown> | null
   fetched_at: string
+  screenshot?: TweetScreenshot | null
 }
 
 export interface TweetQuery extends PaginationQuery {

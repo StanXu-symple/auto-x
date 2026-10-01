@@ -175,3 +175,23 @@ def test_camoufox_owns_browser_image_profiles_and_two_gib_limit():
     assert 'NACOS_SERVICE_NAME: xsentinel-camoufox-worker' in browser_micro
     assert 'NACOS_SERVICE_PORT: ${CAMOUFOX_WORKER_HOST_PORT:-8007}' in browser_micro
     assert 'SERVICE_AUTH_URL:' in browser_micro
+
+
+def test_screenshot_storage_and_caller_secret_are_scoped_to_owners():
+    base = (REPOSITORY_ROOT / "docker-compose.yml").read_text()
+    backend = _service_block(base, "backend")
+    worker = _service_block(base, "worker")
+    browser = _service_block(base, "camoufox-worker")
+    mount = "${TWEET_SCREENSHOT_VOLUME:-tweet_screenshots}:${TWEET_SCREENSHOT_DIR:-/var/lib/xsentinel/tweet-screenshots}"
+    assert mount + ":ro" in backend
+    assert mount in worker
+    assert mount + ":ro" not in worker
+    assert "screenshot-worker.secret:/run/xsentinel/screenshot-worker.secret:ro" in worker
+    assert "TWEET_SCREENSHOT_CLIENT_SECRET_FILE: /run/xsentinel/screenshot-worker.secret" in worker
+    assert "screenshot-worker.secret" not in backend
+    assert "tweet_screenshots:" not in browser
+    assert "screenshot-worker.secret" not in browser
+    prod = (REPOSITORY_ROOT / "docker-compose.prod.yml").read_text()
+    assert mount + ":ro" in _service_block(prod, "backend")
+    micro = (REPOSITORY_ROOT / "docker-compose.microservices.yml").read_text()
+    assert "screenshot-worker.secret:/run/xsentinel/screenshot-worker.secret:ro" in _service_block(micro, "worker")

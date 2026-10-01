@@ -23,14 +23,18 @@ path = sys.argv[1]
 with open(path, encoding="utf-8") as stream:
     clients = json.load(stream)
 clients.setdefault("backend", {}).setdefault("grants", {})["xhs-worker"] = "xhs:execute"
-secret_path = Path(path).with_name("xhs-worker.secret")
-if "xhs-worker" not in clients:
-    secret = secret_path.read_text().strip() if secret_path.is_file() else secrets.token_hex(32)
-    secret_path.write_text(secret + "\n")
-    clients["xhs-worker"] = {
-        "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
-        "grants": {"camoufox-worker": "browser:execute"},
-    }
+for client_id in ("xhs-worker", "screenshot-worker"):
+    secret_path = Path(path).with_name(client_id + ".secret")
+    client = clients.get(client_id)
+    # Placeholders exist only in the bundled example used by a new install.
+    # Preserve an existing client's credentials and deliberately revoked grants.
+    if client is None or client.get("secret_sha256") == "REPLACE_WITH_SHA256":
+        secret = secret_path.read_text().strip() if secret_path.is_file() else secrets.token_hex(32)
+        secret_path.write_text(secret + "\n")
+        clients[client_id] = {
+            "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+            "grants": {"camoufox-worker": "browser:execute"},
+        }
 
 with open(path, "w", encoding="utf-8") as stream:
     json.dump(clients, stream, ensure_ascii=False, indent=2)

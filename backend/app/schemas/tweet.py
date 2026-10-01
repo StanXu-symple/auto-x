@@ -1,8 +1,22 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from app.schemas.common import APIModel
 from app.services.tweet_types import TweetType
+
+
+class TweetScreenshotOut(APIModel):
+    status: Literal["pending", "running", "succeeded", "failed"]
+    attempts: int
+    last_error: str | None = None
+    next_attempt_at: datetime
+    captured_at: datetime | None = None
+    author_username: str | None = None
+    canonical_url: str | None = None
+    width: int | None = None
+    height: int | None = None
+    sha256: str | None = None
+    image_url: str | None = None
 
 
 class TweetOut(APIModel):
@@ -28,3 +42,4 @@ class TweetOut(APIModel):
     referenced_tweets: list[dict[str, Any]] | None
     raw_payload: dict[str, Any] | None = None
     fetched_at: datetime
+    screenshot: TweetScreenshotOut | None = None

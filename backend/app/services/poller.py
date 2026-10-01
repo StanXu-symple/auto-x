@@ -27,6 +27,7 @@ from app.services.ai_jobs import enqueue_jobs_for_x_tweet_ids
 from app.services.metrics import POLL_DURATION, POLL_RUNS, TWEETS_INGESTED
 from app.services.qq_notifications import create_tweet_deliveries, enqueue_qq_delivery_ids
 from app.services.settings_service import effective_interval, get_polling_settings
+from app.services.tweet_screenshots import enqueue_tweet_screenshots
 from app.services.tweet_types import classify_tweet
 from app.services.x_client import TweetBatch, XAPIError, XRateLimitError, XUser
 from app.services.x_source_client import XSourceClient
@@ -429,6 +430,8 @@ class PollingService:
             # The generation job is an idempotent DB outbox row committed atomically
             # with tweet ingestion; a crash cannot leave a persisted tweet half-enqueued.
             await enqueue_jobs_for_x_tweet_ids(session, newly_inserted_x_ids)
+            if self.settings.tweet_screenshot_enabled:
+                await enqueue_tweet_screenshots(session, newly_inserted_x_ids)
             qq_delivery_ids = await create_tweet_deliveries(
                 session,
                 newly_inserted_x_ids,
@@ -680,11 +683,13 @@ class PollingService:
         fetched_at: datetime,
     ) -> dict[str, Any]:
         public_metrics = payload.get("public_metrics") or {}
+        note = payload.get("note_tweet")
+        note = note if isinstance(note, dict) else {}
         return {
             "tweet_id": str(payload["id"]),
             "monitored_user_id": monitored_user_id,
             "author_id": str(payload.get("author_id") or x_user_id),
-            "text": str(payload.get("text") or ""),
+            "text": str(note.get("text") or payload.get("text") or ""),
             "tweet_type": classify_tweet(payload),
             "lang": payload.get("lang"),
             "conversation_id": payload.get("conversation_id"),
@@ -695,7 +700,7 @@ class PollingService:
             "quote_count": int(public_metrics.get("quote_count", 0)),
             "bookmark_count": int(public_metrics.get("bookmark_count", 0)),
             "impression_count": int(public_metrics.get("impression_count", 0)),
-            "entities": payload.get("entities"),
+            "entities": note.get("entities") or payload.get("entities"),
             "attachments": payload.get("attachments"),
             "referenced_tweets": payload.get("referenced_tweets"),
             "raw_payload": dict(payload),

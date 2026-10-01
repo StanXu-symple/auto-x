@@ -58,6 +58,17 @@ def test_invalid_x_datetime_falls_back_to_utc_now() -> None:
     assert parsed.tzinfo == UTC
 
 
+def test_long_post_uses_note_text_and_entities_for_screenshot_identity() -> None:
+    payload = {
+        "id": "123", "text": "Truncated body…",
+        "note_tweet": {"text": "The complete long post", "entities": {"urls": []}},
+    }
+    values = PollingService._tweet_values(8, "42", payload, datetime.now(UTC))
+    assert values["text"] == "The complete long post"
+    assert values["entities"] == {"urls": []}
+    assert values["raw_payload"]["text"] == "Truncated body…"
+
+
 @pytest.mark.asyncio
 async def test_distributed_lock_prevents_duplicate_poll() -> None:
     class LockedRedis:

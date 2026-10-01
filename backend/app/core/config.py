@@ -45,6 +45,8 @@ _NACOS_BOOTSTRAP_FIELDS = {
 # coordinates remain eligible for Nacos Config.
 _NACOS_LOCAL_ONLY_FIELDS = {
     "service_client_secret_file",
+    "tweet_screenshot_client_secret_file",
+    "tweet_screenshot_dir",
     "service_auth_public_key_file",
     "nacos_service_name",
     "nacos_advertise_ip",
@@ -448,6 +450,13 @@ class Settings(BaseSettings):
     camoufox_max_concurrency: int = Field(default=1, ge=1, le=32)
     camoufox_job_timeout_seconds: float = Field(default=290.0, ge=30, le=600)
     camoufox_job_result_ttl_seconds: int = Field(default=600, ge=60, le=3600)
+
+    tweet_screenshot_enabled: bool = True
+    tweet_screenshot_max_attempts: int = Field(default=3, ge=1, le=10)
+    tweet_screenshot_retry_seconds: float = Field(default=30.0, ge=5, le=3600)
+    tweet_screenshot_scan_interval_seconds: float = Field(default=5.0, ge=1, le=60)
+    tweet_screenshot_client_secret_file: str = "/etc/xsentinel/secrets/screenshot-worker.secret"
+    tweet_screenshot_dir: str = "/var/lib/xsentinel/tweet-screenshots"
 
     xhs_job_timeout_seconds: float = Field(default=300.0, ge=30, le=600)
     xhs_job_result_ttl_seconds: int = Field(default=300, ge=60, le=3600)

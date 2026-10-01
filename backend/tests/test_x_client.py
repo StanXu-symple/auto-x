@@ -97,7 +97,8 @@ async def test_max_pages_returns_checkpoint_and_accepts_initial_token() -> None:
 
 @pytest.mark.asyncio
 async def test_includes_are_attached_only_to_related_tweet() -> None:
-    async def handler(_: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert "note_tweet" in request.url.params["tweet.fields"].split(",")
         return httpx.Response(
             200,
             json={

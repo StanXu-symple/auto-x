@@ -181,12 +181,14 @@ async def test_content_stream_filters_type_and_exposes_it_in_detail():
     from app.db.base import Base
     from app.models.monitored_user import MonitoredUser
     from app.models.tweet import Tweet
+    from app.models.tweet_screenshot import TweetScreenshot
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(
             lambda connection: Base.metadata.create_all(
-                connection, tables=[MonitoredUser.__table__, Tweet.__table__]
+                connection,
+                tables=[MonitoredUser.__table__, Tweet.__table__, TweetScreenshot.__table__],
             )
         )
     async with async_sessionmaker(engine, expire_on_commit=False)() as db:

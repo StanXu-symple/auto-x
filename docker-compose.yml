@@ -92,6 +92,11 @@ x-backend: &backend-common
     CAMOUFOX_MAX_CONCURRENCY: ${CAMOUFOX_MAX_CONCURRENCY:-1}
     CAMOUFOX_JOB_TIMEOUT_SECONDS: ${CAMOUFOX_JOB_TIMEOUT_SECONDS:-290}
     CAMOUFOX_JOB_RESULT_TTL_SECONDS: ${CAMOUFOX_JOB_RESULT_TTL_SECONDS:-600}
+    TWEET_SCREENSHOT_ENABLED: ${TWEET_SCREENSHOT_ENABLED:-true}
+    TWEET_SCREENSHOT_MAX_ATTEMPTS: ${TWEET_SCREENSHOT_MAX_ATTEMPTS:-3}
+    TWEET_SCREENSHOT_RETRY_SECONDS: ${TWEET_SCREENSHOT_RETRY_SECONDS:-30}
+    TWEET_SCREENSHOT_SCAN_INTERVAL_SECONDS: ${TWEET_SCREENSHOT_SCAN_INTERVAL_SECONDS:-5}
+    TWEET_SCREENSHOT_DIR: ${TWEET_SCREENSHOT_DIR:-/var/lib/xsentinel/tweet-screenshots}
     XHS_BROWSER_POOL_SIZE: ${XHS_BROWSER_POOL_SIZE:-1}
     XHS_BROWSER_MAX_CONCURRENCY: ${XHS_BROWSER_MAX_CONCURRENCY:-1}
     XHS_WORKER_HEARTBEAT_TTL_SECONDS: ${XHS_WORKER_HEARTBEAT_TTL_SECONDS:-30}
@@ -338,6 +343,7 @@ services:
     volumes:
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
       - article_uploads:/var/lib/xsentinel/article-uploads
+      - ${TWEET_SCREENSHOT_VOLUME:-tweet_screenshots}:${TWEET_SCREENSHOT_DIR:-/var/lib/xsentinel/tweet-screenshots}:ro
       - runtime_logs:/var/log/xsentinel
     command:
       - uvicorn
@@ -381,9 +387,13 @@ services:
     environment:
       <<: *backend-environment
       SERVICE_NAME: worker
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
+      TWEET_SCREENSHOT_CLIENT_SECRET_FILE: /run/xsentinel/screenshot-worker.secret
       NACOS_SERVICE_NAME: xsentinel-worker
       NACOS_SERVICE_PORT: "${WORKER_HOST_PORT:-8201}"
     volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/screenshot-worker.secret:/run/xsentinel/screenshot-worker.secret:ro
+      - ${TWEET_SCREENSHOT_VOLUME:-tweet_screenshots}:${TWEET_SCREENSHOT_DIR:-/var/lib/xsentinel/tweet-screenshots}
       - runtime_logs:/var/log/xsentinel
     command:
       - python
@@ -826,6 +836,7 @@ volumes:
   runtime_logs:
   xhs_uploads:
   article_uploads:
+  tweet_screenshots:
   xhs_home:
   camoufox_uploads:
   postgres_data:

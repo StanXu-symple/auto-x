@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.services.x_tweet_capture import TweetBrowserError, TweetCaptureError, capture_tweet
 from app.xhs_cli_compat import publish_note_compat
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,31 @@ def _create_persistent_client(
     return PersistentXhsClient(cookie_dict)
 
 
+def _create_public_client(profile_dir: Path) -> Any:
+    """A cookie-free public session, used only when no XHS session is available."""
+    from camoufox.sync_api import Camoufox
+
+    class PublicClient:
+        def start(self) -> None:
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            profile_dir.chmod(0o700)
+            self._camoufox_ctx = Camoufox(
+                headless=True,
+                persistent_context=True,
+                user_data_dir=str(profile_dir),
+            )
+            self._browser = self._camoufox_ctx.__enter__()
+
+        def close(self) -> None:
+            context = getattr(self, "_camoufox_ctx", None)
+            self._camoufox_ctx = None
+            self._browser = None
+            if context is not None:
+                context.__exit__(None, None, None)
+
+    return PublicClient()
+
+
 @dataclass(slots=True)
 class _BrowserLease:
     admin_id: int
@@ -112,7 +138,7 @@ class _BrowserLease:
 
 
 class XiaohongshuBrowserPool:
-    """Bounded persistent Camoufox sessions for Xiaohongshu publishing."""
+    """Bounded persistent Camoufox sessions shared by XHS and X screenshots."""
 
     def __init__(
         self,
@@ -183,6 +209,36 @@ class XiaohongshuBrowserPool:
         if client is not None:
             await asyncio.get_running_loop().run_in_executor(lease.executor, _close_client, client)
         lease.executor.shutdown(wait=False, cancel_futures=True)
+
+    async def _acquire_capture(self) -> _BrowserLease:
+        async with self._condition:
+            while True:
+                if self._closed:
+                    raise RuntimeError("浏览器池已关闭")
+                idle = [lease for lease in self._leases.values() if not lease.busy]
+                if idle:
+                    # Reuse a running XHS context first; the capture owns only a
+                    # temporary page and never changes its publishing page/cookies.
+                    lease = max(
+                        idle,
+                        key=lambda item: (item.client is not None, item.admin_id != 0,
+                                          item.last_used),
+                    )
+                    lease.busy = True
+                    return lease
+                if len(self._leases) < self.max_browsers and 0 not in self._leases:
+                    lease = _BrowserLease(
+                        admin_id=0,
+                        cookie_version=0,
+                        profile_dir=self.root / "public" / "browser-profile",
+                        executor=ThreadPoolExecutor(
+                            max_workers=1, thread_name_prefix="public-browser"
+                        ),
+                        busy=True,
+                    )
+                    self._leases[0] = lease
+                    return lease
+                await self._condition.wait()
 
     async def _release(self, lease: _BrowserLease) -> None:
         async with self._condition:
@@ -305,3 +361,50 @@ class XiaohongshuBrowserPool:
             *(self._close_lease(lease) for lease in leases),
             return_exceptions=True,
         )
+
+    async def capture_tweet(
+        self,
+        *,
+        tweet_id: str,
+        username: str,
+        expected_text: str,
+        expected_media_count: int = 0,
+    ) -> dict[str, Any]:
+        async with self._business_slots:
+            lease = await self._acquire_capture()
+            try:
+                def execute() -> dict[str, Any]:
+                    if lease.client is None:
+                        lease.client = _create_public_client(lease.profile_dir)
+                        lease.client.start()
+                    return capture_tweet(
+                        lease.client._browser,
+                        tweet_id=tweet_id,
+                        username=username,
+                        expected_text=expected_text,
+                        expected_media_count=expected_media_count,
+                    )
+
+                future = asyncio.get_running_loop().run_in_executor(lease.executor, execute)
+                try:
+                    return await asyncio.shield(future)
+                except asyncio.CancelledError:
+                    # Sync Playwright cannot be interrupted. Retain capacity until
+                    # it settles, then retire the context on its original thread.
+                    with suppress(BaseException):
+                        await asyncio.shield(future)
+                    await self._discard(lease)
+                    raise
+            except TweetBrowserError:
+                await self._discard(lease)
+                raise
+            except TweetCaptureError:
+                # A deleted post or failed identity check does not invalidate the
+                # XHS account's otherwise healthy persistent browser.
+                raise
+            except Exception:
+                await self._discard(lease)
+                raise
+            finally:
+                if self._leases.get(lease.admin_id) is lease:
+                    await self._release(lease)

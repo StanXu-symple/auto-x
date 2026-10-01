@@ -180,7 +180,7 @@ class XClient:
                 "max_results": self.page_size,
                 "tweet.fields": (
                     "id,text,author_id,created_at,public_metrics,entities,attachments,"
-                    "referenced_tweets,lang,conversation_id"
+                    "referenced_tweets,lang,conversation_id,note_tweet"
                 ),
                 "expansions": "attachments.media_keys,attachments.poll_ids,referenced_tweets.id",
                 "media.fields": "media_key,type,url,preview_image_url,width,height,duration_ms",

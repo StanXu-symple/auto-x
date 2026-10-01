@@ -24,6 +24,8 @@ from app.models.monitored_user import MonitoredUser
 from app.services.metrics import POLL_QUEUE_DUE, WORKER_HEARTBEAT
 from app.services.poller import GLOBAL_X_GATE_KEY, PollingService
 from app.services.settings_service import get_polling_settings
+from app.services.tweet_screenshot_client import TweetScreenshotClient
+from app.services.tweet_screenshots import TweetScreenshotProcessor
 from app.services.x_source_client import XSourceClient
 
 logger = logging.getLogger(__name__)
@@ -53,6 +55,8 @@ class PollingWorker:
         self.stop_event = asyncio.Event()
         self.active_tasks = 0
         self.process_stats = ProcessStatsSampler()
+        self.screenshot_client: TweetScreenshotClient | None = None
+        self.screenshot_processor: TweetScreenshotProcessor | None = None
 
     def request_stop(self) -> None:
         self.stop_event.set()
@@ -69,6 +73,7 @@ class PollingWorker:
         )
         logger.info("X Sentinel polling worker started", extra={"worker_id": self.worker_id})
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        screenshot_task = asyncio.create_task(self._screenshot_loop())
         try:
             while not self.stop_event.is_set():
                 try:
@@ -84,6 +89,9 @@ class PollingWorker:
                 except TimeoutError:
                     pass
         finally:
+            screenshot_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await screenshot_task
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
@@ -91,6 +99,8 @@ class PollingWorker:
                 await nacos_registration.aclose()
             logger.info("X Sentinel polling worker stopping", extra={"worker_id": self.worker_id})
             await self.x_client.aclose()
+            if self.screenshot_client is not None:
+                await self.screenshot_client.aclose()
             await self.redis.aclose()
             await engine.dispose()
 
@@ -186,6 +196,33 @@ class PollingWorker:
                 logger.exception("Worker heartbeat failed", extra={"worker_id": self.worker_id})
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=interval)
+            except TimeoutError:
+                pass
+
+    async def _screenshot_loop(self) -> None:
+        while not self.stop_event.is_set():
+            processed = False
+            if self.settings.tweet_screenshot_enabled:
+                try:
+                    if self.screenshot_processor is None:
+                        # Missing browser service credentials must leave X polling
+                        # operational while durable screenshots await configuration.
+                        self.screenshot_client = TweetScreenshotClient(self.settings)
+                        self.screenshot_processor = TweetScreenshotProcessor(
+                            AsyncSessionFactory, self.settings, self.screenshot_client
+                        )
+                    processed = await self.screenshot_processor.run_once()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Screenshot outbox scan failed")
+            if processed:
+                continue
+            try:
+                await asyncio.wait_for(
+                    self.stop_event.wait(),
+                    timeout=self.settings.tweet_screenshot_scan_interval_seconds,
+                )
             except TimeoutError:
                 pass
 

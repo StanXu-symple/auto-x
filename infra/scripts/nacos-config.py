@@ -107,6 +107,9 @@ EXCLUDED_KEYS = {
     "LOG_DIR",
     "HOME",
     "ARTICLE_UPLOAD_DIR",
+    "TWEET_SCREENSHOT_DIR",
+    "TWEET_SCREENSHOT_VOLUME",
+    "TWEET_SCREENSHOT_CLIENT_SECRET_FILE",
 }
 
 # Publish only settings that the application or control plane actually knows
@@ -189,6 +192,10 @@ RUNTIME_CONFIG_KEYS = {
     "CAMOUFOX_MAX_CONCURRENCY",
     "CAMOUFOX_JOB_TIMEOUT_SECONDS",
     "CAMOUFOX_JOB_RESULT_TTL_SECONDS",
+    "TWEET_SCREENSHOT_ENABLED",
+    "TWEET_SCREENSHOT_MAX_ATTEMPTS",
+    "TWEET_SCREENSHOT_RETRY_SECONDS",
+    "TWEET_SCREENSHOT_SCAN_INTERVAL_SECONDS",
     "XHS_BROWSER_MAX_CONCURRENCY",
     "XHS_WORKER_HEARTBEAT_TTL_SECONDS",
     "CORS_ORIGINS",
@@ -214,6 +221,7 @@ CONTROL_PLANE_KEYS = {
     "SERVICE_CLIENT_MONITOR_SECRET",
     "SERVICE_CLIENT_AGENT_SECRET",
     "SERVICE_CLIENT_XHS_WORKER_SECRET",
+    "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET",
 }
 RUNTIME_CONFIG_KEYS.update(CONTROL_PLANE_KEYS)
 
@@ -401,6 +409,40 @@ def ensure_camoufox_caller(values: dict) -> None:
         raise RuntimeError("Nacos 中 xhs-worker 服务凭据缺失或不匹配，请恢复原服务密钥")
 
 
+def ensure_screenshot_defaults(values: dict) -> None:
+    """Seed screenshot tuning without changing existing operator choices."""
+    defaults = {
+        "TWEET_SCREENSHOT_ENABLED": True,
+        "TWEET_SCREENSHOT_MAX_ATTEMPTS": 3,
+        "TWEET_SCREENSHOT_RETRY_SECONDS": 30,
+        "TWEET_SCREENSHOT_SCAN_INTERVAL_SECONDS": 5,
+    }
+    for key, value in defaults.items():
+        values.setdefault(key, value)
+
+
+def ensure_screenshot_caller(values: dict) -> None:
+    """Seed a new caller; never restore a revoked grant on an existing one."""
+    import hashlib
+    import secrets
+
+    raw = values.get("SERVICE_AUTH_CLIENTS_JSON")
+    if not raw:
+        return
+    clients = json.loads(str(raw))
+    secret = str(values.get("SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET") or "")
+    if "screenshot-worker" not in clients:
+        secret = secret or secrets.token_hex(32)
+        clients["screenshot-worker"] = {
+            "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+            "grants": {"camoufox-worker": "browser:execute"},
+        }
+        values["SERVICE_AUTH_CLIENTS_JSON"] = json.dumps(clients, ensure_ascii=False)
+        values["SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET"] = secret
+    elif not secret or clients["screenshot-worker"]["secret_sha256"] != hashlib.sha256(secret.encode()).hexdigest():
+        raise RuntimeError("Nacos 中 screenshot-worker 服务凭据缺失或不匹配，请恢复原服务密钥")
+
+
 def read_control_plane_values(path: Path) -> dict[str, str]:
     names = {
         "private.pem": "SERVICE_AUTH_PRIVATE_KEY_PEM",
@@ -410,6 +452,7 @@ def read_control_plane_values(path: Path) -> dict[str, str]:
         "monitor.secret": "SERVICE_CLIENT_MONITOR_SECRET",
         "agent.secret": "SERVICE_CLIENT_AGENT_SECRET",
         "xhs-worker.secret": "SERVICE_CLIENT_XHS_WORKER_SECRET",
+        "screenshot-worker.secret": "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET",
     }
     values: dict[str, str] = {}
     for filename, key in names.items():
@@ -431,6 +474,7 @@ def write_control_plane_values(path: Path, values: Mapping[str, object]) -> int:
         "SERVICE_CLIENT_MONITOR_SECRET": "monitor.secret",
         "SERVICE_CLIENT_AGENT_SECRET": "agent.secret",
         "SERVICE_CLIENT_XHS_WORKER_SECRET": "xhs-worker.secret",
+        "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET": "screenshot-worker.secret",
     }
     written = 0
     path.mkdir(parents=True, exist_ok=True)
@@ -977,6 +1021,8 @@ def main() -> int:
     merged.update(remote)
     ensure_camoufox_defaults(merged)
     ensure_camoufox_caller(merged)
+    ensure_screenshot_defaults(merged)
+    ensure_screenshot_caller(merged)
     # Nacos remains authoritative by default.  An explicit command-line
     # override is the only supported way to supersede an existing remote value,
     # and it is applied before production validation and publication.

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   ExportOutlined as ExternalLinkOutlined,
   ExperimentOutlined as SparklesOutlined,
@@ -11,7 +11,14 @@ import {
 import { message } from 'ant-design-vue'
 import { aiApi, monitoredUsersApi, qqApi, tweetsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
-import type { MonitoredUser, QQBotAccount, QQJoinedGroup, Tweet, TweetType } from '@/types'
+import type {
+  MonitoredUser,
+  QQBotAccount,
+  QQJoinedGroup,
+  Tweet,
+  TweetScreenshot,
+  TweetType,
+} from '@/types'
 import { formatDateTime, formatNumber, formatRelative, tweetTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 const tweets = ref<Tweet[]>([])
@@ -46,16 +53,52 @@ const detailOpen = ref(false)
 const detailLoading = ref(false)
 const detail = ref<Tweet | null>(null)
 const detailError = ref('')
+const screenshotUrl = ref('')
+const screenshotError = ref('')
+const screenshotLoading = ref(false)
+const screenshotQueuing = ref(false)
+const screenshotLabels = {
+  pending: '等待截图',
+  running: '截图中',
+  succeeded: '已保存',
+  failed: '截图失败',
+}
+function screenshotLabel(item?: TweetScreenshot | null) {
+  return item ? screenshotLabels[item.status] : '尚未截图'
+}
+function releaseScreenshot() {
+  if (screenshotUrl.value) URL.revokeObjectURL(screenshotUrl.value)
+  screenshotUrl.value = ''
+}
 let detailRequest = 0
+async function loadScreenshot(tweet: Tweet, request: number) {
+  if (tweet.screenshot?.status !== 'succeeded') return
+  screenshotLoading.value = true
+  try {
+    const blob = await tweetsApi.screenshot(tweet.tweet_id)
+    if (request === detailRequest && detailOpen.value)
+      screenshotUrl.value = URL.createObjectURL(blob)
+  } catch (e) {
+    if (request === detailRequest) screenshotError.value = getErrorMessage(e, '读取截图失败')
+  } finally {
+    if (request === detailRequest) screenshotLoading.value = false
+  }
+}
 async function showDetail(tweet: Tweet) {
   const request = ++detailRequest
   detailOpen.value = true
   detailLoading.value = true
   detail.value = null
   detailError.value = ''
+  screenshotError.value = ''
+  screenshotLoading.value = false
+  releaseScreenshot()
   try {
     const result = await tweetsApi.detail(tweet.tweet_id)
-    if (request === detailRequest) detail.value = result
+    if (request === detailRequest) {
+      detail.value = result
+      void loadScreenshot(result, request)
+    }
   } catch (e) {
     if (request === detailRequest)
       detailError.value = getErrorMessage(e, '读取内容详情失败，请关闭后重试')
@@ -63,6 +106,31 @@ async function showDetail(tweet: Tweet) {
     if (request === detailRequest) detailLoading.value = false
   }
 }
+async function queueScreenshot() {
+  if (!detail.value) return
+  const tweet = detail.value
+  screenshotQueuing.value = true
+  try {
+    await tweetsApi.captureScreenshot(tweet.tweet_id)
+    message.success('截图任务已提交')
+    if (detail.value?.tweet_id === tweet.tweet_id) await showDetail(tweet)
+    void load()
+  } catch (e) {
+    message.error(getErrorMessage(e, '无法提交截图任务'))
+  } finally {
+    screenshotQueuing.value = false
+  }
+}
+watch(detailOpen, (open) => {
+  if (!open) {
+    detailRequest++
+    releaseScreenshot()
+  }
+})
+onUnmounted(() => {
+  detailRequest++
+  releaseScreenshot()
+})
 const hasFilters = computed(() =>
   Boolean(
     filters.search ||
@@ -268,6 +336,22 @@ watch(
               {{ formatNumber(record.retweet_count) }}</span
             ></template
           ></a-table-column
+        ><a-table-column title="截图" :width="100">
+          <template #default="{ record }">
+            <a-tooltip :title="record.screenshot?.last_error">
+              <a-tag
+                :color="
+                  record.screenshot?.status === 'succeeded'
+                    ? 'green'
+                    : record.screenshot?.status === 'failed'
+                      ? 'red'
+                      : undefined
+                "
+              >
+                {{ screenshotLabel(record.screenshot) }}
+              </a-tag>
+            </a-tooltip>
+          </template> </a-table-column
         ><a-table-column title="采集时间"
           ><template #default="{ record }"
             ><span class="muted">{{ formatDateTime(record.fetched_at) }}</span></template
@@ -337,6 +421,46 @@ watch(
                 formatNumber(detail.impression_count)
               }}</a-descriptions-item>
             </a-descriptions>
+            <section class="tweet-screenshot" aria-label="帖子截图">
+              <a-space wrap>
+                <strong>帖子截图</strong>
+                <a-tag>{{ screenshotLabel(detail.screenshot) }}</a-tag>
+                <span v-if="detail.screenshot?.captured_at" class="muted">{{
+                  formatDateTime(detail.screenshot.captured_at)
+                }}</span>
+                <a-button size="small" :loading="detailLoading" @click="showDetail(detail)"
+                  ><ReloadOutlined /> 刷新</a-button
+                >
+                <a-button
+                  v-if="
+                    !detail.screenshot || detail.screenshot.status === 'failed' || screenshotError
+                  "
+                  size="small"
+                  :loading="screenshotQueuing"
+                  @click="queueScreenshot"
+                >
+                  {{ detail.screenshot ? '重试截图' : '生成截图' }}
+                </a-button>
+                <a v-if="screenshotUrl" :href="screenshotUrl" :download="`${detail.tweet_id}.png`"
+                  >下载 PNG</a
+                >
+              </a-space>
+              <a-alert
+                v-if="detail.screenshot?.last_error || screenshotError"
+                class="tweet-screenshot__error"
+                type="warning"
+                show-icon
+                :message="screenshotError || detail.screenshot?.last_error"
+              />
+              <a-spin :spinning="screenshotLoading">
+                <a-image
+                  v-if="screenshotUrl"
+                  :src="screenshotUrl"
+                  :alt="`@${detail.username} 的帖子截图`"
+                  :width="'100%'"
+                />
+              </a-spin>
+            </section>
             <a
               class="tweet-detail__link"
               :href="`https://x.com/${detail.username}/status/${detail.tweet_id}`"
@@ -421,5 +545,14 @@ watch(
   align-items: center;
   gap: 6px;
   margin-top: 20px;
+}
+.tweet-screenshot {
+  margin-top: 20px;
+}
+.tweet-screenshot__error {
+  margin: 12px 0;
+}
+.tweet-screenshot :deep(.ant-image) {
+  margin-top: 12px;
 }
 </style>

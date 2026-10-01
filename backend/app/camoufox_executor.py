@@ -128,6 +128,13 @@ class CamoufoxExecutor:
     async def execute(self, job):
         admin_id = job["admin_id"]
         payload = job["payload"]
+        if job["operation"] == "x_screenshot":
+            return await self.browser_pool.capture_tweet(
+                tweet_id=payload["tweet_id"],
+                username=payload["username"],
+                expected_text=payload["expected_text"],
+                expected_media_count=payload.get("expected_media_count", 0),
+            )
         cookies = {
             "a1": decrypt_token(payload["encrypted_a1"], self.settings),
             "web_session": decrypt_token(payload["encrypted_web_session"], self.settings),

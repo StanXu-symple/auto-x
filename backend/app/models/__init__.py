@@ -36,6 +36,7 @@ from app.models.service_auth import (
 )
 from app.models.setting import AppSetting
 from app.models.tweet import Tweet
+from app.models.tweet_screenshot import TweetScreenshot
 from app.models.x_credential import XCredential
 from app.models.xhs_credential import XiaohongshuCredential
 
@@ -72,6 +73,7 @@ __all__ = [
     "ServiceAuthSession",
     "ServiceAuthSigningKey",
     "Tweet",
+    "TweetScreenshot",
     "XCredential",
     "XiaohongshuCredential",
 ]
