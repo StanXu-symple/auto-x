@@ -790,3 +790,15 @@ bash kejilion.sh app auto-x
 - 两主机与 13 项监控健康，tc-1 Nacos 正常；已有截图卷保留。本轮日志升级不代表此前悬浮标题截图问题已修复。
 
 出现新问题先报告用户确认。认证失败先检查 auth-center 是否已重新加载安装器同步的 clients.json 并导入新身份，再检查 Nacos 中该身份的密钥摘要匹配和数据库授权；不输出真实 secret/JWT，也不临时放宽 Worker 鉴权。源码与镜像版本必须对应本次发布；回退同样使用备份版本与原安装器菜单 2。
+
+### 2026-10-01 实际发布与验收
+
+运行版本 `c207dc6dbe8119c169b607724508cdda83ac730a` 已推 dev、快进合入 main，[Actions 36822905387](https://github.com/StanXu-symple/auto-x/actions/runs/36822905387)成功，包含用户本地 `1aba6df`。82 项针对性测试通过，1 项因本机缺少 Docker 跳过；前端类型检查和生产构建通过。两节点官方 GHCR 镜像无超时预拉退出 0、revision 全部正确，浏览器大层复用缓存。
+
+备份：tc-2 `/home/docker/auto-x/backups/pre-runtime-logs-20261001T060907Z/`，hn-1 `/home/docker/auto-x/backups/pre-runtime-logs-20261001T060906Z/`；tc-2 database.dump 为 539,843 字节，pg_restore --list 可读取 332 行归档清单。临时备份工具首次未设置 parse_env(include_excluded=True)，导致没有读到 Nacos 引导字段；仅创建了不完整备份目录，没有改业务配置或容器。修正工具调用后已完整备份。记录为 UTC 时间戳。
+
+按上述菜单 2 完成 tc-2 认证中心→hn-1 完整四项→tc-2 backend/frontend 三阶段更新。tc-2 的 backend、frontend、auth-center、monitor-agent，以及 hn-1 四项服务均 healthy、revision=c207dc6；tc-2 原 worker、ai-worker、qq-worker 容器 ID 与升级前一致。migrate 退出 0，数据库保持 `0031_tweet_screenshots`。两节点完整服务清单与备份逐字一致。
+
+从 tc-2 backend 经 frontend 的原 `/api/v1/system/logs/stream` 请求验收：xhs-worker 和 camoufox-worker 均 HTTP 200、ready 各返回 200 行，分别在 8.3 秒和 9.6 秒收到实时 log 事件；本地 worker 也返回 200 行并在 2.1 秒收到追加。匿名页面接口返回 401；两 Worker 直接匿名日志请求返回 401，日志只读令牌提交 `/v1/jobs` 同样返回 401。文章列表的两条记录均有有效 `https://x.com/` 原文链接，HTTP 200。
+
+首次验收登录的注销请求曾返回 503；随后复测登录、me、logout 均返回 200，认证中心未复现异常，未修改认证配置。首次验收的残留会话按精确登录时间与来源唯一定位，通过认证中心既有 revoke_session 方法清理；没有影响用户其他会话。XHS online、installed=true；两主机及 13 个监控实例全部 healthy，tc-1 Nacos 持续运行。Nacos 逐项对比保留全部既有值与既有身份，只新增 runtime-logs 及其 secret；两份监控 JSON 不变，两节点 secret 文件与 Nacos 一致。hn-1 Cookie 摘要保留、浏览器 Memory=2147483648、ShmSize=536870912，无 OOM 或重启；8007 公网规则仍只有一条。已有截图卷保留，悬浮标题遮挡仍是另一项待确认修复。
