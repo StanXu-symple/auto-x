@@ -89,7 +89,42 @@ def choose_tweet_article(
     return matched[0] if matched else None
 
 
+_ARTICLE_DOM_HELPERS = r"""
+  const xURL = value => {
+    try {
+      const u = new URL(value, location.href);
+      return u.protocol === 'https:' && !u.username && !u.password && !u.port
+        && ['x.com','www.x.com','twitter.com','www.twitter.com'].includes(u.hostname)
+        ? u : null;
+    } catch (_) { return null; }
+  };
+  const statusURL = a => {
+    const u = xURL(a.href);
+    return u && /^\/[A-Za-z0-9_]{1,15}\/status\/[0-9]{1,32}\/?$/.test(u.pathname)
+      ? u.href : null;
+  };
+  const own = (article, el) => {
+    if (el.closest('article') !== article) return false;
+    for (let node = el; node && node !== article; node = node.parentElement) {
+      if (node.dataset.testid === 'quoteTweet' || node.hasAttribute('data-engagement-action')
+          || (node.getAttribute('role') === 'link' && node.tagName !== 'A')) return false;
+      // A linked quote/card can wrap its own author, text and timestamp.
+      if (node !== el && node.tagName === 'A' && statusURL(node)) return false;
+    }
+    return true;
+  };
+  const textOf = el => {
+    const clone = el.cloneNode(true);
+    for (const node of clone.querySelectorAll('script,style,svg')) node.remove();
+    for (const br of clone.querySelectorAll('br')) br.replaceWith('\n');
+    for (const img of clone.querySelectorAll('img[alt]')) img.replaceWith(img.alt);
+    return clone.textContent || '';
+  };
+"""
+
+
 _ARTICLE_METADATA = r"""() => {
+""" + _ARTICLE_DOM_HELPERS + r"""
   const outbound = a => {
     try {
       const u = new URL(a.href);
@@ -100,48 +135,65 @@ _ARTICLE_METADATA = r"""() => {
   return [...document.querySelectorAll('article')].map((article, index) => {
     if (article.parentElement?.closest('article'))
       return {index, username: '', time_urls: [], text: ''};
-    const own = el => {
-      if (el.closest('article') !== article) return false;
-      for (let parent = el.parentElement; parent && parent !== article;
-           parent = parent.parentElement) {
-        if (parent.dataset.testid === 'quoteTweet'
-            || (parent.getAttribute('role') === 'link' && parent.tagName !== 'A')) return false;
-      }
-      return true;
-    };
-    const elements = selector => [...article.querySelectorAll(selector)].filter(own);
+    const elements = selector => [...article.querySelectorAll(selector)]
+      .filter(el => own(article, el));
+    const legacyText = elements('[data-testid="tweetText"]');
+    // The public server-rendered page has no data-testid or <time> nodes.
+    // A standalone dir=auto block is its body; nested blocks must not repeat it.
+    const publicText = elements('div[dir="auto"]').filter(el =>
+      !el.closest('a,button,[data-testid="User-Name"]')
+      && !el.parentElement?.closest('div[dir="auto"]'));
+    const textNodes = legacyText.length ? legacyText : publicText;
     const name = elements('[data-testid="User-Name"]')[0];
     let username = '';
     if (name) {
-      for (const a of [...name.querySelectorAll('a[href]')].filter(own)) {
-        const match = new URL(a.href).pathname.match(/^\/([A-Za-z0-9_]{1,15})\/?$/);
+      for (const a of [...name.querySelectorAll('a[href]')].filter(el => own(article, el))) {
+        const match = xURL(a.href)?.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/?$/);
         if (match) { username = match[1]; break; }
       }
+    } else {
+      for (const a of elements('a[href]')) {
+        if (textNodes.some(el => el.contains(a))) continue;
+        const match = xURL(a.href)?.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/?$/);
+        if (match && textOf(a).trim().toLowerCase() === '@' + match[1].toLowerCase()) {
+          username = match[1]; break;
+        }
+      }
     }
-    const text = elements('[data-testid="tweetText"]').map(el => {
+    const text = textNodes.map(el => {
       const clone = el.cloneNode(true);
       for (const a of clone.querySelectorAll('a[href]')) if (outbound(a)) a.remove();
-      for (const img of clone.querySelectorAll('img[alt]')) img.replaceWith(img.alt);
-      return clone.textContent || '';
+      return textOf(clone);
     }).join('\n');
-    const time_urls = elements('a[href]').filter(a => a.querySelector('time')).map(a => a.href);
+    const time_urls = elements('a[href]').filter(a => statusURL(a)
+      && !textNodes.some(el => el.contains(a))
+      && (a.querySelector('time') || (a.hasAttribute('data-base-ui-tooltip-trigger')
+        && !a.hasAttribute('data-status') && textOf(a).trim()
+        && !a.querySelector('img,svg')))).map(a => a.href);
     return {index, username, time_urls, text};
   });
 }"""
 
 _MEDIA_READY = r"""article => {
-  const ownMedia = el => el.closest('article') === article;
-  const photos = [...article.querySelectorAll('[data-testid="tweetPhoto"] img')].filter(ownMedia);
-  const images = [...article.querySelectorAll('img[src]')].filter(ownMedia);
-  const videos = [...article.querySelectorAll('video')].filter(ownMedia);
-  const mainMedia = el => {
-    for (let parent = el.parentElement; parent && parent !== article;
-         parent = parent.parentElement) {
-      if (parent.dataset.testid === 'quoteTweet'
-          || (parent.getAttribute('role') === 'link' && parent.tagName !== 'A')) return false;
+""" + _ARTICLE_DOM_HELPERS + r"""
+  // Every visible image in the captured article, including quotes, must settle.
+  const images = [...article.querySelectorAll('img[src]')];
+  const videos = [...article.querySelectorAll('video')];
+  const photos = images.filter(img => {
+    if (!own(article, img)) return false;
+    if (img.closest('[data-testid="tweetPhoto"]')) return true;
+    const link = img.closest('a[href]');
+    if (link) {
+      const url = xURL(link.href);
+      if (!url || !/^\/[A-Za-z0-9_]{1,15}\/status\/[0-9]+\/photo\/[1-4]$/.test(url.pathname))
+        return false;
     }
-    return true;
-  };
+    try {
+      const url = new URL(img.currentSrc || img.src);
+      return url.protocol === 'https:' && url.hostname === 'pbs.twimg.com'
+        && url.pathname.startsWith('/media/');
+    } catch (_) { return false; }
+  });
   const videoReady = video => {
     video.pause();
     if (video.readyState >= 2) return true;
@@ -154,7 +206,7 @@ _MEDIA_READY = r"""article => {
   };
   // Wait for quoted images too, but they cannot satisfy the target's media count.
   return {
-    media_count: photos.filter(mainMedia).length + videos.filter(mainMedia).length,
+    media_count: photos.length + videos.filter(el => own(article, el)).length,
     ready: images.every(img => img.complete && img.naturalWidth > 0)
       && videos.every(videoReady),
     fonts_ready: !document.fonts || document.fonts.status === 'loaded'
