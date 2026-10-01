@@ -842,3 +842,13 @@ bash kejilion.sh app auto-x
 ### 用户重新上传复测
 
 先在 `/runtime-logs` 连接“浏览器 Worker”日志，然后由用户在 `/xhs` 重新发起上传；部署验收不自行调用真实上传或发布。若再次失败，保留任务 ID、北京时间和上述阶段日志，用具体 `failure`、HTTP/预检结果和页面状态继续定位。升级完成及诊断日志可读取不代表原上传故障已经修复，实际业务结果以此次用户复测为准。出现新的部署问题先报告用户确认，保留现场后再处理。
+
+### 2026-10-01 实际升级记录
+
+诊断提交 `8f33ac17b38f1075cb769cf4bcb8490b7f46cb48` 已推 dev、快进合入 main，[Actions 36827068979](https://github.com/StanXu-symple/auto-x/actions/runs/36827068979)成功。52 项针对性测试及 Ruff 检查通过。hn-1 官方三镜像无超时预拉退出 0、revision 全部正确，大浏览器层复用缓存；任务记录为 `/root/auto-x-xhs-upload-diagnostics-pull.log`、`.pid`、`.exit`。
+
+备份位于 `/home/docker/auto-x/backups/pre-xhs-upload-diagnostics-20261001T065125Z/`，时间戳为 UTC，包含 20 个文件。更新前经 Nacos 与 JWT 只读确认浏览器 online、installed=true、active_tasks=0、browser_pool_busy=0。已发布镜像在无网络、无业务卷的短命隔离容器中以假请求验证：`NS_ERROR_NET_RESET` 能进入诊断文件日志，签名参数不出现，四类监听器完整移除；这是诊断回归，不是真实上传结果。
+
+随后通过本节原安装器菜单 2 更新成功。hn-1 四项均 healthy、revision=8f33ac1，无重启或 OOM；migrate 退出 0。原完整清单、Cookie 摘要、浏览器所有持久挂载来源、Memory=2147483648、ShmSize=536870912 保留；8007 公网规则仍只有一条。三份 Nacos JSON 与升级前备份完全相同。
+
+tc-2 经当前 backend 的既有 Nacos 发现及 JWT 日志读取流程验收，两 Worker 各返回 200 行最近日志；XHS online、installed=true。两主机与 13 个监控实例全部 healthy。tc-2 本轮没有升级，数据库保持 `0031_tweet_screenshots`。尚未重新执行真实图片上传或发布，等待用户从页面重新发起并提供结果。
