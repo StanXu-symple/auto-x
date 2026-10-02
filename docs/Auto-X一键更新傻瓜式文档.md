@@ -962,3 +962,11 @@ bash kejilion.sh app auto-x
 ### 2026-10-03 恢复升级
 
 用户随后授权继续升级。发布前重新核对 dev/main 同为 `c0a42c396298462e207f3ae5da3653feabcfa41b`，待提交范围只有上述前端修复与本部署文档，独立复核通过。重新保存 tc-2 当前状态至 `/home/docker/auto-x/backups/pre-article-xhs-qr-20261002T164259Z/`（UTC 时间戳），包含原七项服务清单和全部 11 个容器记录。本次验收以该目录为对照基线。
+
+### 实际升级与验收
+
+修复提交 `915e4715130cc00e7f520aa95b79ccd26075179b` 已推 dev 并快进合入 main，[Actions 37036744025](https://github.com/StanXu-symple/auto-x/actions/runs/37036744025) 成功。tc-2 从官方 GHCR 后台预拉该固定 SHA 的 frontend 镜像，退出 0、revision 校验一致；镜像摘要为 `sha256:d6ee349214f42c757117ad784f56901f2d0a810ba7eae2e9f459df07767ae325`。预拉及安装器记录分别为 `/root/auto-x-article-qr-915e471-pull.{log,pid,exit}` 和 `/root/auto-x-article-qr-915e471-update.{log,pid,exit}`。
+
+通过原安装器菜单 2 的等价 frontend-only 入口升级，退出码 0，前端容器 healthy、revision 为目标 SHA、restart=0、OOM=false。HTTP 入口、实际入口脚本、ArticlesView、XhsView 和 XhsVerificationModal 资源与容器文件逐字一致，两个页面均引用验证组件和接口，二维码文案及串行轮询代码存在；frontend `/healthz` 和 backend 就绪接口均 HTTP 200，数据库与 Redis 检查通过。只读查询数据库迁移仍为 `0031_tweet_screenshots`。
+
+其余 10 个容器的 ID、镜像、启动及退出时间均与本次备份一致，原七项服务清单和 Compose 覆盖逐字一致，`.env` 仅改变 `FRONTEND_IMAGE_TAG`。hn-1 未执行更新。本次未提交真实图片或笔记；用户刷新文章管理后重新发起发布，平台要求安全验证时会显示二维码。以上验收记录以文档提交单独推送，不重新构建运行镜像。
