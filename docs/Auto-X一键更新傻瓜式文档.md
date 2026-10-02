@@ -930,3 +930,15 @@ bash kejilion.sh app auto-x
 本次更新前备份为 `/home/docker/auto-x/backups/pre-xhs-image-input-wait-20261002T152523Z/`（UTC 时间戳），含 20 个文件，保存配置、原清单、控制面、容器信息、三份 Nacos JSON、Cookie 摘要和防火墙记录。更新后对比这些状态，检查四项服务健康、浏览器 2 GB 内存与 512 MB 共享内存，以及跨节点状态和日志。通过临时 profile 注入相同凭据只读验证新版等待函数可以找到上传控件；实际图片上传和笔记发布仍由用户复测。
 
 发布前 79 项针对性测试通过（47 项发布兼容测试、32 项浏览器池/Worker/API/任务/验证图测试），改动文件 Ruff 和 `git diff --check` 通过。新增测试用虚拟时钟覆盖 21 秒后就绪、快速返回、45 秒超时、主页面/iframe 异步登录跳转、日志脱敏、停止上传和监听器清理。
+
+### 2026-10-02 实际升级与验收
+
+修复提交 `f16fa1799244f0c16b35ef6b79dece9b090987a6` 已推 dev、快进合入 main，[Actions 37028295933](https://github.com/StanXu-symple/auto-x/actions/runs/37028295933) 全部成功。hn-1 官方三个镜像后台预拉退出 0，revision 均为目标 SHA，大浏览器层复用缓存。Camoufox 镜像摘要为 `sha256:dd6a66dc713aded0a6499f51ca45cd795a912fdf2fa53a8a190d939bad2022e0`；预拉记录为 `/root/auto-x-xhs-image-input-wait-f16fa17-pull.log`、`.pid`、`.exit`。
+
+进度查询期间直连 SSH 被关闭，改经 `tc-2` 跳板确认后台下载已完成，没有重启下载。第一次安装器启动连接在 SSH 握手阶段超时，检查目标更新日志不存在后重新连接，成功启动唯一更新任务。后续通过 SSH 连接复用完成验收。这些连接问题未导致容器更新失败，也未修改服务配置。
+
+确认浏览器 `active_tasks=0`、`browser_pool_busy=0` 后，使用原安装器菜单 2 的等价入口更新原完整四项服务。更新记录为 `/root/auto-x-xhs-image-input-wait-f16fa17-update.log`、`.pid`、`.exit`，退出码 0。四项服务均 healthy、revision 为目标 SHA、restart=0、OOM=false；migrate 退出 0，数据库仍为 `0031_tweet_screenshots`。
+
+原四项清单、Cookie 文件摘要、所有浏览器持久挂载来源保持，三份 Nacos JSON 与备份一致，浏览器仍限制 2 GB 内存、512 MB 共享内存，8007 公网规则仍为一条。tc-2 经既有 Nacos 和 JWT 调用 XHS 状态为 online、installed=true，两 Worker 日志各返回 200 行；两主机及 13 个监控实例全部 healthy。tc-2 本轮未更新。
+
+在新版容器内使用同一数据库凭据和包含缓存的临时 profile 副本，调用实际客户端及发布前等待函数：创作页导航 10.948 秒，`image_input_wait_started` 显示 45 秒上限；等待 20.441 秒后成功找到 `accept=.jpg,.jpeg,.png,.webp` 的上传输入框，账号接口返回 200。检查只读，未提交图片或发布笔记；临时浏览器与 profile 已清理。此结果验证了原 15 秒窗口不足和本次等待修复，实际 CDN 上传及发布结果仍以用户业务复测为准。
