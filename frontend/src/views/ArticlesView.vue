@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { usePagedTable } from '@/composables/usePagedTable'
+import { useXhsVerification } from '@/composables/useXhsVerification'
 import { onMounted, reactive, ref, watch } from 'vue'
 import {
   DeleteOutlined,
@@ -12,7 +13,7 @@ import {
   UploadOutlined,
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
-import { articlesApi, qqApi } from '@/services/api'
+import { articlesApi, qqApi, xhsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import type {
   Article,
@@ -27,6 +28,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import ArticleMediaGallery from '@/components/ArticleMediaGallery.vue'
 import ArticlePreview from '@/components/ArticlePreview.vue'
+import XhsVerificationModal from '@/components/XhsVerificationModal.vue'
 const saving = ref(false)
 const uploading = ref(false)
 const open = ref(false)
@@ -37,6 +39,12 @@ const editing = ref<Article | null>(null)
 const publishing = ref<Article | null>(null)
 const previewing = ref<Article | null>(null)
 const publishSubmitting = ref(false)
+const {
+  open: verifyOpen,
+  image: verifyImage,
+  start: startVerification,
+  stop: stopVerification,
+} = useXhsVerification(xhsApi.verification)
 const publishChannelLoading = ref(false)
 let channelRequest = 0
 const bots = ref<QQBotAccount[]>([])
@@ -145,6 +153,7 @@ function remove(article: Article) {
   })
 }
 async function preparePublish(article: Article) {
+  if (publishSubmitting.value) return
   const request = ++channelRequest
   publishing.value = article
   publishForm.channel = 'qq'
@@ -191,18 +200,21 @@ async function submitPublish() {
   if (publishForm.channel === 'qq' && (!publishForm.bot_id || !publishForm.group_openids.length))
     return message.warning('请选择 QQ 机器人和发送群')
   publishSubmitting.value = true
+  const channel = publishForm.channel
+  if (channel === 'xhs') startVerification()
   try {
     await articlesApi.publish(publishing.value.id, {
-      channel: publishForm.channel,
-      bot_id: publishForm.channel === 'qq' ? publishForm.bot_id || undefined : undefined,
-      group_openids: publishForm.channel === 'qq' ? publishForm.group_openids : undefined,
+      channel,
+      bot_id: channel === 'qq' ? publishForm.bot_id || undefined : undefined,
+      group_openids: channel === 'qq' ? [...publishForm.group_openids] : undefined,
     })
     publishOpen.value = false
-    await load()
-    message.success('发布任务已提交')
+    message.success(channel === 'xhs' ? '小红书发布成功' : 'QQ 发布任务已提交')
   } catch (e) {
     message.error(getErrorMessage(e, '发布失败'))
   } finally {
+    stopVerification()
+    await load()
     publishSubmitting.value = false
   }
 }
@@ -372,6 +384,10 @@ watch(
       width="760px"
       :body-style="{ maxHeight: '70vh', overflowY: 'auto' }"
       :confirm-loading="publishSubmitting"
+      :closable="!publishSubmitting"
+      :mask-closable="!publishSubmitting"
+      :keyboard="!publishSubmitting"
+      :cancel-button-props="{ disabled: publishSubmitting }"
       @ok="submitPublish"
       ><ArticlePreview
         v-if="publishOpen && publishing"
@@ -379,19 +395,21 @@ watch(
         :channel="publishForm.channel" />
       <a-form layout="vertical"
         ><a-form-item label="发布渠道"
-          ><a-radio-group v-model:value="publishForm.channel"
+          ><a-radio-group v-model:value="publishForm.channel" :disabled="publishSubmitting"
             ><a-radio value="qq">QQ</a-radio><a-radio value="xhs">小红书</a-radio></a-radio-group
           ></a-form-item
         ><template v-if="publishForm.channel === 'qq'"
           ><a-form-item label="机器人"
             ><a-select
               v-model:value="publishForm.bot_id"
+              :disabled="publishSubmitting"
               :loading="publishChannelLoading"
               :options="bots.map((bot) => ({ label: bot.name, value: bot.id }))"
               @change="changeBot" /></a-form-item
           ><a-form-item label="发送群"
             ><a-select
               v-model:value="publishForm.group_openids"
+              :disabled="publishSubmitting"
               :loading="publishChannelLoading"
               mode="multiple"
               :options="
@@ -401,6 +419,7 @@ watch(
                 }))
               " /></a-form-item></template></a-form
     ></a-modal>
+    <XhsVerificationModal :open="verifyOpen" :image="verifyImage" />
     <a-modal v-model:open="historyOpen" title="发布历史" :footer="null"
       ><a-list
         :data-source="history"

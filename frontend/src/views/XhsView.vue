@@ -4,7 +4,9 @@ import { message } from 'ant-design-vue'
 import { xhsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import { XHS_NOTE_CONTENT_MAX_LENGTH, XHS_NOTE_TITLE_MAX_LENGTH } from '@/constants/xhs'
+import { useXhsVerification } from '@/composables/useXhsVerification'
 import PageHeader from '@/components/PageHeader.vue'
+import XhsVerificationModal from '@/components/XhsVerificationModal.vue'
 const loading = ref(false)
 const statusLoading = ref(true)
 const status = ref<{
@@ -13,10 +15,12 @@ const status = ref<{
   installed: boolean
   worker_status?: string
 } | null>(null)
-const verifyOpen = ref(false)
-const verifyImage = ref('')
-const verifyVersion = ref('')
-let verifyTimer: number | undefined
+const {
+  open: verifyOpen,
+  image: verifyImage,
+  start: startVerification,
+  stop: stopVerification,
+} = useXhsVerification(xhsApi.verification)
 const form = reactive({
   a1: '',
   web_session: '',
@@ -36,6 +40,7 @@ async function refresh() {
   }
 }
 async function login() {
+  if (loading.value) return
   if (!form.a1.trim() || !form.web_session.trim())
     return message.warning(
       status.value?.saved ? '更新登录态请同时填写 a1 与 web_session' : '请填写 a1 与 web_session',
@@ -60,6 +65,7 @@ async function pasteImages(event: ClipboardEvent) {
   if (files.length) await upload({ target: { files, value: '' } })
 }
 async function upload(event: any) {
+  if (loading.value) return
   const files = Array.from(event.target.files || []) as File[]
   event.target.value = ''
   if (!files.length) return
@@ -81,19 +87,8 @@ function remove(index: number) {
   form.previews.splice(index, 1)
   form.images.splice(index, 1)
 }
-async function checkVerification() {
-  try {
-    const result = await xhsApi.verification(verifyVersion.value || undefined)
-    if (!result.required) {
-      verifyOpen.value = false
-      return
-    }
-    verifyOpen.value = true
-    if (result.image) verifyImage.value = result.image
-    if (result.version) verifyVersion.value = result.version
-  } catch {}
-}
 async function publish() {
+  if (loading.value) return
   if (!form.title || !form.content || !form.images.length)
     return message.warning('请填写标题、正文并上传图片')
   if (
@@ -102,23 +97,19 @@ async function publish() {
   )
     return message.warning('标题或正文超出长度限制')
   loading.value = true
-  verifyImage.value = ''
-  verifyVersion.value = ''
-  verifyTimer = window.setInterval(() => void checkVerification(), 1000)
+  startVerification()
   try {
     await xhsApi.post({ title: form.title, content: form.content, images: form.images })
-    verifyOpen.value = false
     message.success('发布成功')
   } catch (e) {
     message.error(getErrorMessage(e, '发布失败'))
   } finally {
-    window.clearInterval(verifyTimer)
+    stopVerification()
     loading.value = false
   }
 }
 onMounted(refresh)
 onBeforeUnmount(() => {
-  window.clearInterval(verifyTimer)
   form.previews.forEach((url) => URL.revokeObjectURL(url))
 })
 </script>
@@ -198,13 +189,6 @@ onBeforeUnmount(() => {
           ></a-card
         >
       </div></a-spin
-    ><a-modal v-model:open="verifyOpen" title="完成小红书安全验证" :footer="null"
-      ><p class="muted">请使用已登录当前账号的小红书 App 扫描二维码，验证完成后会继续发布。</p>
-      <div class="verify-image">
-        <img v-if="verifyImage" :src="verifyImage" alt="小红书安全验证二维码" /><span v-else
-          >正在获取验证二维码…</span
-        >
-      </div></a-modal
-    >
+    ><XhsVerificationModal :open="verifyOpen" :image="verifyImage" />
   </div>
 </template>
