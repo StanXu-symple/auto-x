@@ -866,3 +866,15 @@ tc-2 经当前 backend 的既有 Nacos 发现及 JWT 日志读取流程验收，
 按第十八节备份 hn-1 配置、原完整清单、三份 Nacos JSON、Cookie 摘要、卷挂载及防火墙记录，官方 GHCR 无超时预拉目标完整 SHA 的 backend、xhs-worker、camoufox-worker 三镜像。校验退出码 0、revision 正确，确认浏览器无运行中任务后，使用第十八节的 `KJ_APP_ACTION=update` 原菜单 2 入口；服务仍选 `xhs-worker,camoufox-worker,monitor-center,monitor-agent`，镜像标签替换为本次修复 SHA。更新后验收四项健康、原配置与登录态保留、2 GB 内存、跨节点状态与日志、两主机 13 项监控。
 
 可在已发布镜像的隔离临时 profile 中验证初始化不依赖首页，并只读访问创作页；不挂载业务登录卷，不提交图片或笔记。实际带登录态的图片上传由用户重新发起，原 CDN 上传失败需结合本次上传诊断继续确认。
+
+### 2026-10-02 实际升级与验收
+
+修复提交 `9cac292aee96d0ea2525c8ebcd57daad1c66a809` 已推 dev 并快进合入 main，[Actions 37000415481](https://github.com/StanXu-symple/auto-x/actions/runs/37000415481)成功。备份目录为 `/home/docker/auto-x/backups/pre-xhs-creator-navigation-20261002T112004Z/`，含 20 个文件，时间戳为 UTC。
+
+本次目标镜像基础层发生变化，除约 133 MB 依赖层外，还需完整下载 923,029,575 字节的浏览器层；不能假设每次代码更新均命中大层缓存。官方 GHCR 无超时预拉记录为 `/root/auto-x-xhs-creator-navigation-pull.log`、`.pid`、`.exit`。观察进度的 SSH 曾被远端关闭，但独立后台下载继续运行；重连确认进度增长，没有重启下载。最终三镜像退出 0、revision 全部正确，Camoufox 镜像摘要为 `sha256:370c86477548eb71ef76e921ec1725ae53b2cfcafe240321f5299d9e32ce97d6`。
+
+已发布镜像的空登录态隔离验证通过：调用实际持久客户端初始化后页面为 `about:blank`，初始化约 12.92 秒；随后调用实际创作页导航函数，主文档 HTTP 200、导航约 16.73 秒，`creator_navigation_started` 和 `page_ready` 均写入文件日志。没有提供业务 Cookie、挂载业务卷、上传图片或发布笔记；此验证不代表账号登录或实际图片上传成功。
+
+确认旧浏览器 active_tasks=0、browser_pool_busy=0 后，通过原菜单 2 更新成功。hn-1 四项均为目标 revision、healthy、restart=0、OOM=false；migrate 退出 0。原完整清单、Cookie 摘要、所有浏览器挂载来源、2 GB 内存、512 MB 共享内存及唯一 8007 公网规则保留。三份 Nacos JSON 与备份完全相同。
+
+tc-2 backend 经 Nacos 与认证中心读取 XHS 状态为 online、installed=true，两个 Worker 日志各返回 200 行；两主机及 13 项监控均 healthy。tc-2 没有更新，数据库仍为 `0031_tweet_screenshots`。等待用户重新发起实际上传复测。
