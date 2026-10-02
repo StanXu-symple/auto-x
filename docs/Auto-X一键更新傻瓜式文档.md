@@ -878,3 +878,41 @@ tc-2 经当前 backend 的既有 Nacos 发现及 JWT 日志读取流程验收，
 确认旧浏览器 active_tasks=0、browser_pool_busy=0 后，通过原菜单 2 更新成功。hn-1 四项均为目标 revision、healthy、restart=0、OOM=false；migrate 退出 0。原完整清单、Cookie 摘要、所有浏览器挂载来源、2 GB 内存、512 MB 共享内存及唯一 8007 公网规则保留。三份 Nacos JSON 与备份完全相同。
 
 tc-2 backend 经 Nacos 与认证中心读取 XHS 状态为 online、installed=true，两个 Worker 日志各返回 200 行；两主机及 13 项监控均 healthy。tc-2 没有更新，数据库仍为 `0031_tweet_screenshots`。等待用户重新发起实际上传复测。
+
+
+## 二十、AI 生成 Skills 多选与监听配置顺序更新
+
+2026-10-02，用户提交 `a3e41e4`（内容流 AI 生成支持多选 Skills）与 `6b3d728`（AI 创作的“监听配置”Tab 前移并默认选中）一并升级。固定发布 SHA 为 `6b3d728099679c3027c734ead8d1809858910c83`，已推 dev/main，[Actions 37021408877](https://github.com/StanXu-symple/auto-x/actions/runs/37021408877)成功。两项只修改前端；当前 backend 已支持 Skills 分页、启用状态筛选和生成请求的 `skill_ids`，无需升级后端或迁移数据库。
+
+发布前使用固定 SHA 的源码快照执行 `npm run build`，前端类型检查与生产构建通过。发布及部署始终使用已核对的完整 SHA；共享开发目录出现新提交时，应另行核对范围，不能在发布部署记录时顺带推送未经核对的业务提交。
+
+### 备份与安装器更新
+
+本次 tc-2 备份目录为 `/home/docker/auto-x/backups/pre-frontend-skills-tabs-20261002T143843Z/`（UTC 时间戳），包含 `.env`、原七项服务清单、Compose 覆盖文件和全部 11 个容器记录，目录权限 700、文件权限 600。该次仅前端更新不会执行迁移，因此未额外备份数据库。
+
+从官方 GHCR 无超时预拉 `ghcr.io/stanxu-symple/auto-x-frontend:sha-6b3d728099679c3027c734ead8d1809858910c83`，退出码 0、revision 与目标 SHA 相同。镜像摘要为 `sha256:693f2f25610b82bf3f1c0c2dae482f71a752fb9745abec1c49c2adb350510995`，下载记录位于 `/home/docker/auto-x/backups/pull-frontend-6b3d728099679c3027c734ead8d1809858910c83/`。
+
+核对 `/root/apps` 为已有 frontend-only 模式的 `24016c6`、工作区干净后，通过原菜单 `2. 更新` 的等价入口执行：
+
+```bash
+ssh tc-2
+cd /root
+TERM=xterm COMPOSE_PROGRESS=plain \
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-6b3d728099679c3027c734ead8d1809858910c83 \
+KJ_AUTO_X_UPDATE_FRONTEND_ONLY=1 KJ_AUTO_X_SKIP_PULL=1 \
+AUTO_X_SERVICES=frontend \
+bash kejilion.sh app auto-x
+```
+
+`KJ_APPS_SKIP_REFRESH=1` 仅用于已核对安装定义的本次更新；`KJ_AUTO_X_SKIP_PULL=1` 仅用于目标镜像已经完整下载并校验的情况。
+
+### 实际验收
+
+安装器输出 frontend 更新成功。新容器 `b7fb9d89d6ed` 的 revision 为目标 SHA、状态 healthy；frontend 8080 与 backend 就绪接口均 HTTP 200。通过 HTTP 获取的 `TweetsView-KNg_sFS3.js`、`AiWritingView-D16WVWu4.js` 与新容器内资源逐字一致，包含 Skills 多选及监听配置相关代码。本次完成构建、版本及静态资源验收，未提交真实 AI 生成或上传任务。
+
+其余 10 个容器（含 backend、认证中心、监控 agent、三个 Worker、PostgreSQL、Redis、migrate 和 log-init）的 ID、镜像、启动及退出时间均与备份一致。数据库仍为 `0031_tweet_screenshots`，migrate 保持原 `Exited (0)`；一次性任务验收应检查退出码，不将其遗留的 Health 状态当作运行服务健康状态。
+
+原七项 `.auto-x-services` 和 `docker-compose.kejilion.yml` 与备份逐字一致；`.env` 仅改变 `FRONTEND_IMAGE_TAG`，全局 `IMAGE_TAG` 保留。安装器未执行 Nacos 同步，hn-1 本轮无需更新。
