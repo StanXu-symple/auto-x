@@ -30,7 +30,7 @@ import MetricCard from '@/components/MetricCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
 const route = useRoute()
-const tab = ref(typeof route.query.tab === 'string' ? route.query.tab : 'jobs')
+const tab = ref(typeof route.query.tab === 'string' ? route.query.tab : 'context')
 const draftOpen = ref(false)
 const draftSaving = ref(false)
 const binding = ref<AiUserSkillBinding | null>(null)
@@ -339,6 +339,42 @@ onMounted(async () => {
         ><a-button @click="loadJobs"><ReloadOutlined /> 刷新任务</a-button></template
       ></PageHeader
     ><a-tabs v-model:activeKey="tab" class="workspace-tabs"
+      ><a-tab-pane key="context" tab="监听配置"
+        ><a-card :bordered="false"
+          ><a-form layout="inline"
+            ><a-form-item label="监听账号"
+              ><a-select
+                v-model:value="selectedUser"
+                allow-clear
+                style="width: 220px"
+                :options="users.map((user) => ({ label: `@${user.username}`, value: user.id }))"
+                @change="loadContext" /></a-form-item
+            ><a-form-item label="功能点"
+              ><a-select
+                v-model:value="feature"
+                style="width: 220px"
+                :options="[
+                  { label: '文章生成', value: 'article_generation' },
+                  { label: '内容摘要', value: 'content_summary' },
+                  { label: '标题优化', value: 'title_optimization' },
+                ]"
+                @change="loadContext" /></a-form-item></a-form
+          ><a-descriptions v-if="profile" bordered :column="1" style="margin-top: 20px"
+            ><a-descriptions-item label="作者">@{{ profile.username }}</a-descriptions-item
+            ><a-descriptions-item label="身份">{{ profile.identity_summary }}</a-descriptions-item
+            ><a-descriptions-item label="近期关注">{{ profile.focus_summary }}</a-descriptions-item
+            ><a-descriptions-item label="长期主题">{{
+              profile.recurring_topics.join('、') || '暂无'
+            }}</a-descriptions-item></a-descriptions
+          ><a-space v-if="binding" direction="vertical" style="width: 100%; margin-top: 20px"
+            ><span class="muted">绑定 Skills</span
+            ><a-checkbox-group
+              v-model:value="bindingIds"
+              :options="skills.map((skill) => ({ label: skill.name, value: skill.id }))"
+            /><a-button type="primary" :loading="bindingLoading" @click="saveBinding"
+              >保存绑定</a-button
+            ></a-space
+          ><a-empty v-else description="选择账号后查看画像" /></a-card></a-tab-pane
       ><a-tab-pane key="jobs" tab="生成任务"
         ><div class="metric-grid">
           <MetricCard label="运行中" :value="running" detail="当前页队列 / 执行中" /><MetricCard
@@ -539,43 +575,7 @@ onMounted(async () => {
               ><a-button :loading="loading.source" @click="testSource">测试连接</a-button></a-space
             ></a-form
           ></a-card
-        ></a-tab-pane
-      ><a-tab-pane key="context" tab="用户上下文"
-        ><a-card :bordered="false"
-          ><a-form layout="inline"
-            ><a-form-item label="监听账号"
-              ><a-select
-                v-model:value="selectedUser"
-                allow-clear
-                style="width: 220px"
-                :options="users.map((user) => ({ label: `@${user.username}`, value: user.id }))"
-                @change="loadContext" /></a-form-item
-            ><a-form-item label="功能点"
-              ><a-select
-                v-model:value="feature"
-                style="width: 220px"
-                :options="[
-                  { label: '文章生成', value: 'article_generation' },
-                  { label: '内容摘要', value: 'content_summary' },
-                  { label: '标题优化', value: 'title_optimization' },
-                ]"
-                @change="loadContext" /></a-form-item></a-form
-          ><a-descriptions v-if="profile" bordered :column="1" style="margin-top: 20px"
-            ><a-descriptions-item label="作者">@{{ profile.username }}</a-descriptions-item
-            ><a-descriptions-item label="身份">{{ profile.identity_summary }}</a-descriptions-item
-            ><a-descriptions-item label="近期关注">{{ profile.focus_summary }}</a-descriptions-item
-            ><a-descriptions-item label="长期主题">{{
-              profile.recurring_topics.join('、') || '暂无'
-            }}</a-descriptions-item></a-descriptions
-          ><a-space v-if="binding" direction="vertical" style="width: 100%; margin-top: 20px"
-            ><span class="muted">绑定 Skills</span
-            ><a-checkbox-group
-              v-model:value="bindingIds"
-              :options="skills.map((skill) => ({ label: skill.name, value: skill.id }))"
-            /><a-button type="primary" :loading="bindingLoading" @click="saveBinding"
-              >保存绑定</a-button
-            ></a-space
-          ><a-empty v-else description="选择账号后查看画像" /></a-card></a-tab-pane></a-tabs
+        ></a-tab-pane></a-tabs
     ><a-modal
       v-model:open="skillOpen"
       :title="editingSkill ? '编辑 Skill' : '新建 Skill'"
