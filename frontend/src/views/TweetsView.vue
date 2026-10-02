@@ -12,6 +12,8 @@ import { message } from 'ant-design-vue'
 import { aiApi, monitoredUsersApi, qqApi, tweetsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import type {
+  AiSkill,
+  EntityId,
   MonitoredUser,
   QQBotAccount,
   QQJoinedGroup,
@@ -27,6 +29,29 @@ const total = ref(0)
 const loading = ref(false)
 const selected = ref<number[]>([])
 const generating = ref<string | null>(null)
+const generateOpen = ref(false)
+const generateTweet = ref<Tweet | null>(null)
+const generationSkills = ref<AiSkill[]>([])
+const selectedSkillIds = ref<EntityId[]>([])
+const generationSkillsLoading = ref(false)
+const generationSkillsError = ref('')
+const maxGenerationSkills = 20
+const generationSkillOptions = computed(() =>
+  generationSkills.value.map((skill) => ({
+    label: skill.name,
+    value: skill.id,
+    disabled:
+      selectedSkillIds.value.length >= maxGenerationSkills &&
+      !selectedSkillIds.value.includes(skill.id),
+  })),
+)
+const selectedGenerationSkills = computed(() =>
+  selectedSkillIds.value.flatMap((id) => {
+    const skill = generationSkills.value.find((item) => item.id === id)
+    return skill ? [skill] : []
+  }),
+)
+let generationSkillsRequest = 0
 const pushOpen = ref(false)
 const sending = ref(false)
 const bots = ref<QQBotAccount[]>([])
@@ -129,6 +154,7 @@ watch(detailOpen, (open) => {
 })
 onUnmounted(() => {
   detailRequest++
+  generationSkillsRequest++
   releaseScreenshot()
 })
 const hasFilters = computed(() =>
@@ -203,12 +229,56 @@ async function sendBatch() {
     sending.value = false
   }
 }
-async function generate(tweet: Tweet) {
+async function loadGenerationSkills() {
+  const request = ++generationSkillsRequest
+  generationSkillsLoading.value = true
+  generationSkillsError.value = ''
+  generationSkills.value = []
+  try {
+    const all: AiSkill[] = []
+    let page = 1
+    while (true) {
+      const result = await aiApi.skillPage({ page, page_size: 100, active: true })
+      if (request !== generationSkillsRequest) return
+      all.push(...result.items)
+      if (all.length >= result.total || !result.items.length) break
+      page++
+    }
+    generationSkills.value = all
+    selectedSkillIds.value = selectedSkillIds.value.filter((id) =>
+      all.some((skill) => skill.id === id),
+    )
+  } catch (e) {
+    if (request === generationSkillsRequest)
+      generationSkillsError.value = getErrorMessage(e, '无法加载 Skills，请重试')
+  } finally {
+    if (request === generationSkillsRequest) generationSkillsLoading.value = false
+  }
+}
+function openGenerate(tweet: Tweet) {
+  if (generating.value) return
+  generateTweet.value = tweet
+  selectedSkillIds.value = []
+  generateOpen.value = true
+  void loadGenerationSkills()
+}
+watch(generateOpen, (open) => {
+  if (!open) generationSkillsRequest++
+})
+async function generate() {
+  const tweet = generateTweet.value
+  if (!tweet || generating.value || generationSkillsLoading.value || generationSkillsError.value)
+    return
+  if (!selectedSkillIds.value.length) return message.warning('请至少选择一个 Skill')
+  if (selectedSkillIds.value.length > maxGenerationSkills)
+    return message.warning(`最多选择 ${maxGenerationSkills} 个 Skills`)
   generating.value = String(tweet.id)
   try {
     await aiApi.generateFromTweet(tweet.tweet_id, {
+      skill_ids: [...selectedSkillIds.value],
       idempotency_key: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${tweet.tweet_id}`,
     })
+    generateOpen.value = false
     message.success('AI 创作任务已提交')
   } catch (e) {
     message.error(getErrorMessage(e, '无法创建 AI 任务'))
@@ -370,7 +440,7 @@ watch(
                 type="link"
                 size="small"
                 :loading="generating === String(record.id)"
-                @click="generate(record)"
+                @click="openGenerate(record)"
                 ><SparklesOutlined /> AI 生成</a-button
               ><a
                 :href="`https://x.com/${record.username}/status/${record.tweet_id}`"
@@ -378,7 +448,72 @@ watch(
                 rel="noreferrer"
                 ><a-button type="text" size="small"
                   ><ExternalLinkOutlined /></a-button></a></a-space></template></a-table-column></a-table></a-card
-    ><a-modal v-model:open="detailOpen" title="内容详情" :footer="null" :width="760">
+    ><a-modal
+      v-model:open="generateOpen"
+      title="AI 生成"
+      ok-text="开始生成"
+      cancel-text="取消"
+      :width="600"
+      :confirm-loading="Boolean(generating)"
+      :ok-button-props="{
+        disabled:
+          generationSkillsLoading || Boolean(generationSkillsError) || !selectedSkillIds.length,
+      }"
+      :cancel-button-props="{ disabled: Boolean(generating) }"
+      :closable="!generating"
+      :mask-closable="!generating"
+      :keyboard="!generating"
+      @ok="generate"
+    >
+      <div v-if="generateTweet" class="generation-source">
+        <strong>{{ generateTweet.display_name?.trim() || `@${generateTweet.username}` }}</strong>
+        <p class="tweet-preview">{{ generateTweet.text }}</p>
+      </div>
+      <a-form layout="vertical">
+        <a-form-item
+          label="生成约束 Skills（可多选）"
+          required
+          :extra="`生成时将应用全部选中 Skills 的指令，最多选择 ${maxGenerationSkills} 个。`"
+        >
+          <a-select
+            v-model:value="selectedSkillIds"
+            mode="multiple"
+            placeholder="请选择本次生成使用的 Skills"
+            allow-clear
+            option-filter-prop="label"
+            :options="generationSkillOptions"
+            :loading="generationSkillsLoading"
+            :disabled="
+              generationSkillsLoading || Boolean(generationSkillsError) || Boolean(generating)
+            "
+          />
+        </a-form-item>
+      </a-form>
+      <a-alert v-if="generationSkillsError" type="error" show-icon :message="generationSkillsError">
+        <template #action>
+          <a-button size="small" @click="loadGenerationSkills">重试</a-button>
+        </template>
+      </a-alert>
+      <a-alert
+        v-else-if="!generationSkillsLoading && !generationSkills.length"
+        type="info"
+        show-icon
+        message="暂无启用的 Skills，请先新增或启用 Skill。"
+      />
+      <ul v-if="selectedGenerationSkills.length" class="generation-skills">
+        <li v-for="skill in selectedGenerationSkills" :key="skill.id">
+          <strong>{{ skill.name }}</strong>
+          <p v-if="skill.description" class="muted">{{ skill.description }}</p>
+        </li>
+      </ul>
+      <p class="generation-skills-link muted">
+        Skills 与 AI 创作页面同步，仅显示已启用项。
+        <router-link v-if="!generating" :to="{ path: '/ai-writing', query: { tab: 'skills' } }">
+          管理 Skills
+        </router-link>
+      </p>
+    </a-modal>
+    <a-modal v-model:open="detailOpen" title="内容详情" :footer="null" :width="760">
       <a-spin :spinning="detailLoading">
         <div class="tweet-detail">
           <a-alert v-if="detailError" type="error" show-icon :message="detailError" />
@@ -499,6 +634,25 @@ watch(
 </template>
 
 <style scoped>
+.generation-source {
+  margin-bottom: 20px;
+}
+.generation-skills {
+  max-height: 200px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  padding-left: 20px;
+}
+.generation-skills li + li {
+  margin-top: 10px;
+}
+.generation-skills p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+.generation-skills-link {
+  margin: 16px 0 0;
+}
 .tweet-author {
   display: flex;
   align-items: baseline;
