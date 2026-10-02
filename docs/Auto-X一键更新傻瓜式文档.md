@@ -916,3 +916,17 @@ bash kejilion.sh app auto-x
 其余 10 个容器（含 backend、认证中心、监控 agent、三个 Worker、PostgreSQL、Redis、migrate 和 log-init）的 ID、镜像、启动及退出时间均与备份一致。数据库仍为 `0031_tweet_screenshots`，migrate 保持原 `Exited (0)`；一次性任务验收应检查退出码，不将其遗留的 Health 状态当作运行服务健康状态。
 
 原七项 `.auto-x-services` 和 `docker-compose.kejilion.yml` 与备份逐字一致；`.env` 仅改变 `FRONTEND_IMAGE_TAG`，全局 `IMAGE_TAG` 保留。安装器未执行 Nacos 同步，hn-1 本轮无需更新。
+
+## 二十一、小红书上传控件慢加载修复
+
+2026-10-02 23:04:52（北京时间），任务 `c976c517ded741039b35fcdd62958cf9` 报“找不到图文图片上传控件，页面结构可能已更新”。完整日志显示浏览器启动及创作页导航成功，失败发生在提交图片前。hn-1 无重启或 OOM。
+
+使用同一账号的数据库凭据、包含缓存的临时 profile 副本和实际持久客户端只读复测：导航耗时 8.703 秒；原 15 秒控件等待在 15.901 秒返回空；继续等待至累计 21.183 秒，原选择器成功找到 `accept=.jpg,.jpeg,.png,.webp` 的文件输入框。账号接口 `/api/galaxy/user/info` 返回 200，页面未跳转登录。证明该环境下导航完成与上传组件挂载之间存在超过 15 秒的延迟。首次仅复制 profile 的检查未包含运行时注入的会话 Cookie，产生的 401 不作为本次账号失效证据。
+
+修复将图片控件等待上限改为 45 秒，控件出现即继续；等待期间检查主页面和创作中心 iframe 的登录跳转，并补充限长、脱敏的超时状态日志。`page_ready` 文案明确导航完成后仍需等待组件。保持原上传、发布和登录态注入方式，不增加自动上传或发布重试。
+
+升级沿用第十八节流程：测试通过后 push dev、快进 main，等待完整 SHA 对应的 Actions 成功；hn-1 从官方 GHCR 无超时预拉 backend、xhs-worker、camoufox-worker 三镜像，逐项验证 revision。确认浏览器无任务后，通过 `bash kejilion.sh app auto-x` 原菜单 2 更新原四项服务，保留完整清单；tc-2 无需更新。本次无新增迁移、Nacos 配置或授权，数据库预期仍为 `0031_tweet_screenshots`。
+
+本次更新前备份为 `/home/docker/auto-x/backups/pre-xhs-image-input-wait-20261002T152523Z/`（UTC 时间戳），含 20 个文件，保存配置、原清单、控制面、容器信息、三份 Nacos JSON、Cookie 摘要和防火墙记录。更新后对比这些状态，检查四项服务健康、浏览器 2 GB 内存与 512 MB 共享内存，以及跨节点状态和日志。通过临时 profile 注入相同凭据只读验证新版等待函数可以找到上传控件；实际图片上传和笔记发布仍由用户复测。
+
+发布前 79 项针对性测试通过（47 项发布兼容测试、32 项浏览器池/Worker/API/任务/验证图测试），改动文件 Ruff 和 `git diff --check` 通过。新增测试用虚拟时钟覆盖 21 秒后就绪、快速返回、45 秒超时、主页面/iframe 异步登录跳转、日志脱敏、停止上传和监听器清理。

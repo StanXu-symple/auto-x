@@ -8,6 +8,7 @@ import pytest
 from app.core.logging import JsonFormatter
 from app.services.xhs_verification import verification_image_path
 from app.xhs_cli_compat import (
+    IMAGE_INPUT_TIMEOUT_SECONDS,
     PUBLISH_URL,
     _arm_image_upload_tracker,
     _arm_publish_diagnostics,
@@ -26,6 +27,7 @@ from app.xhs_cli_compat import (
     _publish_page_feedback,
     _save_verification_screenshot,
     _security_verification_visible,
+    _wait_for_image_input,
     _wait_for_image_uploads,
     _wait_for_publish_button,
     publish_note_compat,
@@ -170,6 +172,232 @@ class FakePage(FakeRoot):
         return ""
 
 
+@pytest.fixture
+def input_wait_clock(monkeypatch):
+    clock = SimpleNamespace(now=0.0, on_sleep=None)
+
+    def sleep(seconds):
+        clock.now += seconds
+        if clock.on_sleep is not None:
+            clock.on_sleep()
+
+    monkeypatch.setattr("app.xhs_cli_compat.time.monotonic", lambda: clock.now)
+    monkeypatch.setattr("app.xhs_cli_compat.time.sleep", sleep)
+    return clock
+
+
+@pytest.mark.parametrize("ready_at", [0, 21])
+def test_image_input_wait_returns_as_soon_as_component_is_ready(
+    ready_at, input_wait_clock, monkeypatch,
+) -> None:
+    image = FakeElement(attributes={"accept": "image/*"})
+    page = FakePage({'input[type="file"]': [image]})
+    page.url = PUBLISH_URL
+    original_query = page.query_selector_all
+    monkeypatch.setattr(
+        page, "query_selector_all",
+        lambda selector: original_query(selector) if input_wait_clock.now >= ready_at else [],
+    )
+
+    assert _wait_for_image_input(page, IMAGE_INPUT_TIMEOUT_SECONDS) is image
+    assert ready_at <= input_wait_clock.now <= ready_at + 0.3
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_image_input_timeout_logs_bounded_metadata_without_page_content(
+    input_wait_clock, caplog, capsys,
+) -> None:
+    page = FakePage()
+    page.url = "https://user:password-secret@creator.xiaohongshu.com/publish?token=page-secret"
+    page.evaluate_result = "interactive"
+    frame = FakePage()
+    frame.url = "https://creator.xiaohongshu.com/frame?session=frame-secret#fragment-secret"
+    frame.evaluate_result = "complete"
+    data_frame = FakePage()
+    data_frame.url = "data:text/html,private-page-content"
+    data_frame.evaluate_result = "loading"
+    page.frames.extend([frame, data_frame])
+
+    def emit_network_events():
+        input_wait_clock.on_sleep = None
+        for _ in range(20):
+            page.listeners["response"][0](SimpleNamespace(
+                request=SimpleNamespace(resource_type="xhr"), status=401,
+                url="https://creator.xiaohongshu.com/api/account?token=auth-secret",
+            ))
+            page.listeners["requestfailed"][0](SimpleNamespace(
+                method="GET", resource_type="script",
+                url="https://fe-static.xhscdn.com/script.js?signature=signed-secret",
+                failure="NS_ERROR_NET_RESET authorization: Bearer bearer-secret "
+                "Cookie: session=cookie-secret" + "x" * 600,
+            ))
+
+    input_wait_clock.on_sleep = emit_network_events
+    with caplog.at_level(logging.INFO):
+        assert _wait_for_image_input(page, IMAGE_INPUT_TIMEOUT_SECONDS, admin_id=7) is None
+    assert input_wait_clock.now == IMAGE_INPUT_TIMEOUT_SECONDS
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "image_input_wait_failed")
+    assert record.admin_id == 7
+    assert record.reason == "timeout"
+    assert record.elapsed_seconds == IMAGE_INPUT_TIMEOUT_SECONDS
+    assert record.page_state == {
+        "frame_count": 3,
+        "frames": [
+            {"index": 0, "main_frame": True,
+             "url": "https://creator.xiaohongshu.com/publish",
+             "ready_state": "interactive", "file_input_count": 0},
+            {"index": 1, "main_frame": False,
+             "url": "https://creator.xiaohongshu.com/frame",
+             "ready_state": "complete", "file_input_count": 0},
+            {"index": 2, "main_frame": False, "url": "data:",
+             "ready_state": "loading", "file_input_count": 0},
+        ],
+    }
+    assert len(record.document_or_auth_responses) == 12
+    assert record.document_or_auth_responses[0]["status"] == 401
+    assert len(record.failed_requests) == 12
+    assert "NS_ERROR_NET_RESET" in record.failed_requests[0]["failure"]
+    assert len(record.failed_requests[0]["failure"]) <= 500
+    output = capsys.readouterr().err + JsonFormatter().format(record)
+    assert "secret" not in output
+    assert "private-page-content" not in output
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+@pytest.mark.parametrize("redirect_in", ["page", "iframe"])
+def test_image_input_wait_stops_on_async_creator_login_redirect(
+    redirect_in, input_wait_clock, caplog, capsys,
+) -> None:
+    page = FakePage()
+    page.url = PUBLISH_URL
+    frame = FakePage()
+    frame.url = "about:blank"
+    page.frames.append(frame)
+
+    def redirect():
+        if input_wait_clock.now >= 2:
+            target = page if redirect_in == "page" else frame
+            target.url = "https://creator.xiaohongshu.com/login?token=redirect-secret"
+
+    input_wait_clock.on_sleep = redirect
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError, match="登录态已失效"):
+        _wait_for_image_input(page, IMAGE_INPUT_TIMEOUT_SECONDS)
+    assert 2 <= input_wait_clock.now < 3
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "image_input_wait_failed")
+    assert record.reason == "login_redirect"
+    assert "redirect-secret" not in capsys.readouterr().err
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+@pytest.mark.parametrize("failure", ["timeout", "login"])
+def test_component_wait_failure_stops_publish_before_upload(
+    failure, input_wait_clock, tmp_path, monkeypatch, caplog,
+) -> None:
+    page = FakePage()
+    page.url = PUBLISH_URL
+    image = tmp_path / "image.png"
+    image.write_bytes(b"test-image")
+    monkeypatch.setattr("app.xhs_cli_compat._open_creator_publish_page", lambda *a, **kw: None)
+
+    def unexpected_upload(*args, **kwargs):
+        pytest.fail("Upload tracking must not start before the component is ready")
+
+    monkeypatch.setattr("app.xhs_cli_compat._arm_image_upload_tracker", unexpected_upload)
+    if failure == "login":
+        input_wait_clock.on_sleep = lambda: setattr(
+            page, "url", "https://creator.xiaohongshu.com/login",
+        )
+    expected_error = "上传控件超时（45 秒）" if failure == "timeout" else "登录态已失效"
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError, match=expected_error):
+        publish_note_compat(SimpleNamespace(_page=page), "title", [str(image)])
+    assert all(getattr(r, "stage", "") != "image_upload_started" for r in caplog.records)
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_image_input_wait_cleans_up_if_browser_query_fails(input_wait_clock, monkeypatch) -> None:
+    page = FakePage()
+    page.url = PUBLISH_URL
+
+    def browser_error(*args, **kwargs):
+        raise RuntimeError("Browser closed")
+
+    monkeypatch.setattr("app.xhs_cli_compat._find_image_input", browser_error)
+    with pytest.raises(RuntimeError, match="Browser closed"):
+        _wait_for_image_input(page, IMAGE_INPUT_TIMEOUT_SECONDS)
+    assert input_wait_clock.now == 0
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_image_input_wait_diagnostics_preserve_error_if_page_closes(
+    input_wait_clock, monkeypatch, caplog,
+) -> None:
+    page = FakePage()
+    page.url = PUBLISH_URL
+
+    def closed_frames(*args, **kwargs):
+        raise ValueError("frames unavailable")
+
+    def browser_error(*args, **kwargs):
+        monkeypatch.setattr("app.xhs_cli_compat._roots", closed_frames)
+        raise RuntimeError("Browser closed")
+
+    monkeypatch.setattr("app.xhs_cli_compat._find_image_input", browser_error)
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError, match="Browser closed"):
+        _wait_for_image_input(page, IMAGE_INPUT_TIMEOUT_SECONDS)
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "image_input_wait_failed")
+    assert record.reason == "browser_error"
+    assert record.page_state == {"snapshot_error": "ValueError"}
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+@pytest.mark.parametrize("failure", ["browser", "login", "timeout"])
+def test_image_input_wait_preserves_outcome_if_failure_logging_raises(
+    failure, input_wait_clock, monkeypatch,
+) -> None:
+    page = FakePage()
+    page.url = PUBLISH_URL
+
+    def broken_log(stage, *args, **kwargs):
+        if stage == "image_input_wait_failed":
+            raise OSError("log pipe unavailable")
+
+    def browser_error(*args, **kwargs):
+        raise RuntimeError("Browser closed")
+
+    monkeypatch.setattr("app.xhs_cli_compat._log_stage", broken_log)
+    if failure == "browser":
+        monkeypatch.setattr("app.xhs_cli_compat._find_image_input", browser_error)
+    elif failure == "login":
+        page.url = "https://creator.xiaohongshu.com/login"
+    if failure == "timeout":
+        assert _wait_for_image_input(page, IMAGE_INPUT_TIMEOUT_SECONDS) is None
+    else:
+        error = "Browser closed" if failure == "browser" else "登录态已失效"
+        with pytest.raises(RuntimeError, match=error):
+            _wait_for_image_input(page, IMAGE_INPUT_TIMEOUT_SECONDS)
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_image_input_wait_detects_login_redirect_during_selector_query(
+    input_wait_clock, monkeypatch,
+) -> None:
+    page = FakePage()
+    page.url = PUBLISH_URL
+
+    def find_then_redirect(*args, **kwargs):
+        page.url = "https://creator.xiaohongshu.com/login"
+        return FakeElement(attributes={"accept": "image/*"})
+
+    monkeypatch.setattr("app.xhs_cli_compat._find_image_input", find_then_redirect)
+    with pytest.raises(RuntimeError, match="登录态已失效"):
+        _wait_for_image_input(page, IMAGE_INPUT_TIMEOUT_SECONDS)
+    assert input_wait_clock.now == 0
+    assert all(not listeners for listeners in page.listeners.values())
+
+
 def test_image_publish_url_requires_image_target() -> None:
     assert _is_image_publish_url(
         "https://creator.xiaohongshu.com/publish/publish?from=tab_switch&target=image"
@@ -201,6 +429,7 @@ def test_creator_navigation_uses_sdk_checks_and_removes_listeners(caplog) -> Non
     assert record.admin_id == 7
     assert record.document_responses[0]["status"] == 200
     assert record.elapsed_seconds >= 0
+    assert "导航完成，等待上传组件" in record.message
     assert all(not listeners for listeners in page.listeners.values())
 
 

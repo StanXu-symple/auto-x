@@ -53,6 +53,7 @@ PUBLISH_BUTTON_SELECTORS = (
     "xhs-publish-btn:not([is-publish])",
 )
 IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
+IMAGE_INPUT_TIMEOUT_SECONDS = 45
 IMAGE_UPLOAD_TIMEOUT_SECONDS = 120
 IMAGE_UPLOAD_SETTLE_SECONDS = 3
 IMAGE_UPLOAD_DIAGNOSTIC_LIMIT = 12
@@ -147,14 +148,125 @@ def _find_image_input(page: Any) -> Any | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _wait_for_image_input(page: Any, timeout_seconds: float) -> Any | None:
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        element = _find_image_input(page)
-        if element is not None:
-            return element
-        time.sleep(0.3)
-    return None
+def _creator_login_redirect(page: Any) -> bool:
+    for root in _roots(page):
+        parsed = urlparse(str(getattr(root, "url", "") or ""))
+        if (
+            parsed.hostname == "creator.xiaohongshu.com"
+            and re.search(r"/login(?:/|$)", parsed.path, re.IGNORECASE)
+        ):
+            return True
+    return False
+
+
+def _image_input_page_snapshot(page: Any) -> dict[str, Any]:
+    frames = []
+    roots = list(_roots(page))
+    for index, root in enumerate(roots[:IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]):
+        try:
+            url = str(getattr(root, "url", "") or "")
+            # A data: or javascript: frame URL can contain page content.
+            scheme = urlparse(url).scheme.lower()
+            safe_url = (
+                _diagnostic_url(url) if scheme in ("http", "https") else f"{scheme}:"
+            )
+        except Exception:
+            safe_url = "unavailable"
+        try:
+            state = root.evaluate("() => document.readyState")
+            ready_state = state if state in ("loading", "interactive", "complete") else "unknown"
+        except Exception:
+            ready_state = "unavailable"
+        try:
+            file_input_count = len(root.query_selector_all('input[type="file"]'))
+        except Exception:
+            file_input_count = None
+        frames.append({
+            "index": index, "main_frame": root is page, "url": safe_url,
+            "ready_state": ready_state, "file_input_count": file_input_count,
+        })
+    return {"frame_count": len(roots), "frames": frames}
+
+
+def _wait_for_image_input(
+    page: Any, timeout_seconds: float, *, admin_id: int | None = None,
+) -> Any | None:
+    started = time.monotonic()
+    deadline = started + timeout_seconds
+    responses: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    failure_reason = "browser_error"
+
+    def record_response(response: Any) -> None:
+        try:
+            request = response.request
+            status = int(response.status)
+            if request.resource_type != "document" and status not in (401, 403):
+                return
+            responses.append({"status": status, "url": _diagnostic_url(str(response.url))})
+            del responses[:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+        except Exception:
+            pass
+
+    def record_failure(request: Any) -> None:
+        try:
+            failures.append({
+                "method": str(request.method), "resource_type": str(request.resource_type),
+                "url": _diagnostic_url(str(request.url)),
+                "failure": _safe_network_text(request.failure or "unknown"),
+            })
+            del failures[:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+        except Exception:
+            pass
+
+    def log_failure(reason: str) -> None:
+        try:
+            page_state = _image_input_page_snapshot(page)
+        except Exception as exc:
+            page_state = {"snapshot_error": type(exc).__name__}
+        try:
+            _log_stage(
+                "image_input_wait_failed", "小红书图片上传控件尚未就绪", level="WARNING",
+                admin_id=admin_id, reason=reason, timeout_seconds=timeout_seconds,
+                elapsed_seconds=round(time.monotonic() - started, 3),
+                page_state=page_state,
+                document_or_auth_responses=responses, failed_requests=failures,
+            )
+        except Exception:
+            # Diagnostics are best effort, including logger/stderr I/O failures.
+            pass
+
+    handlers = (("response", record_response), ("requestfailed", record_failure))
+    try:
+        for event, handler in handlers:
+            page.on(event, handler)
+        _log_stage(
+            "image_input_wait_started", "等待小红书图文图片上传组件就绪",
+            admin_id=admin_id, timeout_seconds=timeout_seconds,
+        )
+        while time.monotonic() < deadline:
+            if _creator_login_redirect(page):
+                failure_reason = "login_redirect"
+                raise RuntimeError("小红书创作中心登录态已失效，请更新登录态")
+            element = _find_image_input(page)
+            # Selector calls pump browser events, including asynchronous redirects.
+            if _creator_login_redirect(page):
+                failure_reason = "login_redirect"
+                raise RuntimeError("小红书创作中心登录态已失效，请更新登录态")
+            if element is not None:
+                return element
+            time.sleep(min(0.3, max(0, deadline - time.monotonic())))
+        log_failure("timeout")
+        return None
+    except Exception:
+        log_failure(failure_reason)
+        raise
+    finally:
+        for event, handler in handlers:
+            try:
+                page.remove_listener(event, handler)
+            except Exception:
+                pass
 
 
 def _is_image_upload_request(request: Any) -> bool:
@@ -1093,7 +1205,7 @@ def _open_creator_publish_page(client: Any, *, admin_id: int | None = None) -> N
             except Exception:
                 pass
     _log_stage(
-        "page_ready", "小红书图文发布页面进入成功",
+        "page_ready", "小红书图文创作页导航完成，等待上传组件就绪",
         admin_id=admin_id, url=_diagnostic_url(page.url or PUBLISH_URL),
         elapsed_seconds=round(time.monotonic() - started, 3), document_responses=responses,
     )
@@ -1122,9 +1234,14 @@ def publish_note_compat(
     )
     _open_creator_publish_page(client, admin_id=admin_id)
 
-    image_input = _wait_for_image_input(page, timeout_seconds=15)
+    image_input = _wait_for_image_input(
+        page, timeout_seconds=IMAGE_INPUT_TIMEOUT_SECONDS, admin_id=admin_id,
+    )
     if image_input is None:
-        raise RuntimeError("找不到图文图片上传控件，页面结构可能已更新")
+        raise RuntimeError(
+            f"等待图文图片上传控件超时（{IMAGE_INPUT_TIMEOUT_SECONDS} 秒），"
+            "创作页组件尚未就绪，请检查页面加载或网络诊断日志"
+        )
     _log_stage(
         "element_ready",
         "图片上传元素捕获成功",
