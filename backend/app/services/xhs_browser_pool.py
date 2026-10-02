@@ -82,13 +82,9 @@ def _create_persistent_client(
                     self._page.context.add_cookies(cookies)
                 version_path.write_text(str(cookie_version), encoding="ascii")
                 version_path.chmod(0o600)
-            self._goto(
-                "https://www.xiaohongshu.com",
-                timeout=20000,
-                wait_min=1,
-                wait_max=2,
-                context="establishing persistent browser session",
-            )
+            # Cookies apply to the creator subdomain immediately. The publish
+            # flow opens that page and performs the SDK's risk/login checks;
+            # loading the unrelated feed here can fail before publishing starts.
 
         def close(self) -> None:
             context = getattr(self, "_camoufox_ctx", None)

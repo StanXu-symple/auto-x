@@ -852,3 +852,17 @@ bash kejilion.sh app auto-x
 随后通过本节原安装器菜单 2 更新成功。hn-1 四项均 healthy、revision=8f33ac1，无重启或 OOM；migrate 退出 0。原完整清单、Cookie 摘要、浏览器所有持久挂载来源、Memory=2147483648、ShmSize=536870912 保留；8007 公网规则仍只有一条。三份 Nacos JSON 与升级前备份完全相同。
 
 tc-2 经当前 backend 的既有 Nacos 发现及 JWT 日志读取流程验收，两 Worker 各返回 200 行最近日志；XHS online、installed=true。两主机与 13 个监控实例全部 healthy。tc-2 本轮没有升级，数据库保持 `0031_tweet_screenshots`。尚未重新执行真实图片上传或发布，等待用户从页面重新发起并提供结果。
+
+## 十九、发布前首页预访问超时修复
+
+2026-10-01 15:04:31（北京时间），任务 `f94ad3100b344bc78bd6573921b93acb` 在持久浏览器初始化时访问 `https://www.xiaohongshu.com/`，等待 `DOMContentLoaded` 超过固定 20 秒，尚未进入图片上传阶段。hn-1 宿主机与容器的 DNS、TCP/TLS、HTTP 均正常，容器无重启或 OOM。隔离无登录态 Camoufox 复测首页一次等待 60 秒仍超时，另一次 11.7 秒成功；创作页约 8.7 秒完成。确认首页加载存在波动，不能把 HTTP 200 当成页面脚本就绪，也不能据此认定上一轮 CDN 上传失败已解决。
+
+2026-10-02 用户确认修复：持久浏览器只负责创建 profile、恢复或注入 Cookie，发布流程直接进入带 `target=image` 的创作页。Cookie 的 `.xiaohongshu.com` 域覆盖创作中心；沿用 SDK `_goto` 中的风控检查，并继续校验登录跳转、图文模式和图片上传控件。无需访问内容首页建立发布前置条件。原登录态版本管理、浏览器复用及 X 截图共享并发保持原逻辑。
+
+新增 `creator_navigation_started`、`creator_navigation_failed` 阶段日志，成功时沿用 `page_ready`。导航诊断包含管理员 ID、耗时、主文档 HTTP 响应、`document.readyState` 和最近 12 项失败请求；移除查询参数、认证凭据，不记录页面正文或 Cookie。成功和失败均清理导航监听器；导航失败、风控拒绝或登录失效不会自动重试或进入上传。
+
+本次 59 项针对性测试和 Ruff 检查通过，覆盖初始化不访问首页、Cookie 注入/保留、创作页导航及登录/风控/超时失败停止、诊断脱敏和监听器清理。发布顺序仍是 dev→main→Actions；没有新增数据库迁移、Nacos 配置或授权，tc-2 无需升级。
+
+按第十八节备份 hn-1 配置、原完整清单、三份 Nacos JSON、Cookie 摘要、卷挂载及防火墙记录，官方 GHCR 无超时预拉目标完整 SHA 的 backend、xhs-worker、camoufox-worker 三镜像。校验退出码 0、revision 正确，确认浏览器无运行中任务后，使用第十八节的 `KJ_APP_ACTION=update` 原菜单 2 入口；服务仍选 `xhs-worker,camoufox-worker,monitor-center,monitor-agent`，镜像标签替换为本次修复 SHA。更新后验收四项健康、原配置与登录态保留、2 GB 内存、跨节点状态与日志、两主机 13 项监控。
+
+可在已发布镜像的隔离临时 profile 中验证初始化不依赖首页，并只读访问创作页；不挂载业务登录卷，不提交图片或笔记。实际带登录态的图片上传由用户重新发起，原 CDN 上传失败需结合本次上传诊断继续确认。

@@ -1,12 +1,65 @@
 import asyncio
+import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from app.services import xhs_browser_pool as pool_module
 from app.services.xhs_browser_pool import XiaohongshuBrowserPool
+
+
+@pytest.mark.parametrize("existing_version", [None, 3])
+def test_persistent_start_seeds_cookies_without_homepage_navigation(
+    tmp_path, monkeypatch, existing_version
+) -> None:
+    profile = tmp_path / "browser-profile"
+    version_file = tmp_path / ".browser-profile-cookie-version"
+    if existing_version is not None:
+        version_file.write_text(str(existing_version))
+    cookie_rows = [
+        {"name": "a1", "value": "existing-a1", "domain": ".xiaohongshu.com"},
+        {"name": "web_session", "value": "existing-session", "domain": ".xiaohongshu.com"},
+    ] if existing_version else []
+    added = []
+    options = {}
+    browser = SimpleNamespace(cookies=lambda: cookie_rows, add_cookies=added.extend)
+    browser.new_page = lambda: SimpleNamespace(context=browser)
+
+    class Context:
+        def __init__(self, **kwargs):
+            options.update(kwargs)
+
+        def __enter__(self):
+            return browser
+
+        def __exit__(self, *_args):
+            pass
+
+    class SDKClient:
+        def __init__(self, cookies):
+            self.cookies = cookies
+
+        def _goto(self, *_args, **_kwargs):
+            raise AssertionError("Browser initialization must not depend on feed navigation")
+
+    monkeypatch.setitem(sys.modules, "camoufox.sync_api", SimpleNamespace(Camoufox=Context))
+    monkeypatch.setitem(sys.modules, "xhs_cli.client", SimpleNamespace(XhsClient=SDKClient))
+    client = pool_module._create_persistent_client(
+        {"a1": "new-a1", "web_session": "new-session"}, profile, 3
+    )
+    client.start()
+    assert options["persistent_context"] is True
+    assert options["user_data_dir"] == str(profile)
+    assert version_file.read_text() == "3"
+    if existing_version:
+        assert added == []
+    else:
+        assert {c["name"] for c in added} == {"a1", "web_session"}
+        assert all(c["domain"] == ".xiaohongshu.com" and c["path"] == "/" for c in added)
+    client.close()
 
 
 class FakeClient:

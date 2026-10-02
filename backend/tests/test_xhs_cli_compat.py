@@ -8,6 +8,7 @@ import pytest
 from app.core.logging import JsonFormatter
 from app.services.xhs_verification import verification_image_path
 from app.xhs_cli_compat import (
+    PUBLISH_URL,
     _arm_image_upload_tracker,
     _arm_publish_diagnostics,
     _click_element,
@@ -20,12 +21,14 @@ from app.xhs_cli_compat import (
     _is_image_upload_request,
     _log_stage,
     _log_upload_diagnostics,
+    _open_creator_publish_page,
     _publish_diagnostics_snapshot,
     _publish_page_feedback,
     _save_verification_screenshot,
     _security_verification_visible,
     _wait_for_image_uploads,
     _wait_for_publish_button,
+    publish_note_compat,
 )
 
 
@@ -174,6 +177,78 @@ def test_image_publish_url_requires_image_target() -> None:
     assert not _is_image_publish_url(
         "https://creator.xiaohongshu.com/publish/publish?source=official&from=tab_switch"
     )
+
+
+def test_creator_navigation_uses_sdk_checks_and_removes_listeners(caplog) -> None:
+    page = FakePage()
+    calls = []
+
+    def goto(url, **kwargs):
+        calls.append((url, kwargs))
+        page.url = url
+        response = SimpleNamespace(
+            request=SimpleNamespace(resource_type="document", frame=page),
+            url=url, status=200,
+        )
+        page.listeners["response"][0](response)
+
+    with caplog.at_level(logging.INFO):
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=goto), admin_id=7)
+    assert len(calls) == 1
+    assert calls[0][0] == PUBLISH_URL
+    assert calls[0][1]["context"] == "loading creator publish page"
+    record = next(r for r in caplog.records if getattr(r, "stage", "") == "page_ready")
+    assert record.admin_id == 7
+    assert record.document_responses[0]["status"] == 200
+    assert record.elapsed_seconds >= 0
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+@pytest.mark.parametrize("failure", ["timeout", "risk", "login", "wrong_target"])
+def test_creator_navigation_failures_stop_before_upload_and_log_safely(
+    failure, tmp_path, caplog, capsys
+) -> None:
+    page = FakePage()
+    page.url = PUBLISH_URL
+    page.evaluate_result = "interactive"
+    image = tmp_path / "image.png"
+    image.write_bytes(b"test-image")
+    calls = []
+
+    def goto(url, **kwargs):
+        calls.append(url)
+        if failure == "timeout":
+            page.listeners["requestfailed"][0](SimpleNamespace(
+                method="GET", resource_type="script",
+                url="https://fe-static.xhscdn.com/script.js?signature=signed-secret",
+                failure="NS_ERROR_NET_RESET authorization: Bearer bearer-secret",
+            ))
+            raise TimeoutError("Page.goto: Timeout 30000ms exceeded")
+        if failure == "risk":
+            raise RuntimeError("SDK risk-control check rejected page")
+        page.url = (
+            "https://creator.xiaohongshu.com/login?token=redirect-secret"
+            if failure == "login" else "https://creator.xiaohongshu.com/publish?token=redirect-secret"
+        )
+
+    with caplog.at_level(logging.INFO), pytest.raises((TimeoutError, RuntimeError)):
+        publish_note_compat(
+            SimpleNamespace(_page=page, _goto=goto), "title", [str(image)], admin_id=7,
+        )
+    assert calls == [PUBLISH_URL]
+    stages = [getattr(r, "stage", "") for r in caplog.records]
+    assert "creator_navigation_failed" in stages
+    assert "image_upload_started" not in stages
+    assert "page_ready" not in stages
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "creator_navigation_failed")
+    assert record.ready_state == "interactive"
+    if failure == "timeout":
+        assert "NS_ERROR_NET_RESET" in record.failed_requests[0]["failure"]
+    output = capsys.readouterr().err + "".join(JsonFormatter().format(r) for r in caplog.records)
+    for secret in ("signed-secret", "bearer-secret", "redirect-secret"):
+        assert secret not in output
+    assert all(not listeners for listeners in page.listeners.values())
 
 
 def test_stage_log_is_structured_and_written_to_stderr(capsys) -> None:

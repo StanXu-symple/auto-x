@@ -1018,6 +1018,87 @@ def _publish_page_feedback(page: Any) -> str:
     return "；".join(str(item) for item in feedback if item)
 
 
+def _open_creator_publish_page(client: Any, *, admin_id: int | None = None) -> None:
+    page = client._page
+    started = time.monotonic()
+    responses: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+
+    def record_response(response: Any) -> None:
+        try:
+            request = response.request
+            if request.resource_type != "document" or request.frame != page.main_frame:
+                return
+            responses.append({
+                "status": int(response.status),
+                "url": _diagnostic_url(str(response.url)),
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+            })
+            del responses[:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+        except Exception:
+            pass
+
+    def record_failure(request: Any) -> None:
+        try:
+            failures.append({
+                "method": str(request.method),
+                "resource_type": str(request.resource_type),
+                "url": _diagnostic_url(str(request.url)),
+                "failure": _safe_network_text(request.failure or "unknown"),
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+            })
+            del failures[:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+        except Exception:
+            pass
+
+    page.on("response", record_response)
+    page.on("requestfailed", record_failure)
+    _log_stage(
+        "creator_navigation_started", "开始加载小红书图文创作页",
+        admin_id=admin_id, url=_diagnostic_url(PUBLISH_URL), timeout_seconds=30,
+    )
+    try:
+        # Keep the SDK's block/risk checks after navigation. No automatic retry:
+        # a login redirect or platform rejection must stop before uploading.
+        client._goto(
+            PUBLISH_URL, timeout=30000, wait_min=2, wait_max=3,
+            context="loading creator publish page",
+        )
+        if "/login" in (page.url or "").lower():
+            raise RuntimeError("小红书创作中心登录态已失效，请更新登录态")
+        if not _is_image_publish_url(page.url or ""):
+            raise RuntimeError(
+                "未进入小红书图文发布模式：URL 缺少 target=image；"
+                f"当前页面：{_diagnostic_url(page.url or '')}"
+            )
+    except Exception as exc:
+        # Capture state only; page text may contain account data or user content.
+        try:
+            state = page.evaluate("() => document.readyState")
+            ready_state = state if state in ("loading", "interactive", "complete") else "unknown"
+        except Exception:
+            ready_state = "unavailable"
+        _log_stage(
+            "creator_navigation_failed", "小红书图文创作页加载失败", level="WARNING",
+            admin_id=admin_id, elapsed_seconds=round(time.monotonic() - started, 3),
+            error_type=type(exc).__name__, error=_safe_network_text(exc),
+            page_url=_diagnostic_url(str(getattr(page, "url", ""))),
+            ready_state=ready_state, document_responses=responses, failed_requests=failures,
+        )
+        raise
+    finally:
+        for event, handler in (("response", record_response), ("requestfailed", record_failure)):
+            try:
+                page.remove_listener(event, handler)
+            except Exception:
+                pass
+    _log_stage(
+        "page_ready", "小红书图文发布页面进入成功",
+        admin_id=admin_id, url=_diagnostic_url(page.url or PUBLISH_URL),
+        elapsed_seconds=round(time.monotonic() - started, 3), document_responses=responses,
+    )
+
+
 def publish_note_compat(
     client: Any,
     title: str,
@@ -1039,25 +1120,7 @@ def publish_note_compat(
         "虚拟浏览器启动成功",
         browser="Camoufox/Firefox",
     )
-    client._goto(
-        PUBLISH_URL,
-        timeout=30000,
-        wait_min=2,
-        wait_max=3,
-        context="loading creator publish page",
-    )
-    if "/login" in (page.url or "").lower():
-        raise RuntimeError("小红书创作中心登录态已失效，请更新登录态")
-    if not _is_image_publish_url(page.url or ""):
-        raise RuntimeError(
-            "未进入小红书图文发布模式：URL 缺少 target=image；"
-            f"当前页面：{page.url or ''}"
-        )
-    _log_stage(
-        "page_ready",
-        "小红书图文发布页面进入成功",
-        url=_diagnostic_url(page.url or PUBLISH_URL),
-    )
+    _open_creator_publish_page(client, admin_id=admin_id)
 
     image_input = _wait_for_image_input(page, timeout_seconds=15)
     if image_input is None:
