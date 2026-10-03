@@ -986,3 +986,56 @@ bash kejilion.sh app auto-x
 用户明确要求修改完成后等待升级指令，随后授权将此次代码、测试和文档提交到本地 dev 仓库。本次仅本地提交，不推送、发布镜像或升级服务；线上仍为上一节记录的版本。后续授权升级时应重新核对提交范围和线上任务状态，按第二十一节 hn-1 原四项服务流程备份、发布和固定 SHA 更新，再验收配置、Cookie 摘要、浏览器资源及跨节点健康；tc-2 本次无前端或数据库改动。
 
 本次 103 项针对性测试通过（75 项发布兼容测试及 28 项浏览器池、Camoufox 服务/Worker、验证图片测试），两个改动 Python 文件 Ruff 和 `git diff --check` 通过。新增回归包括 35 秒后正常导航、60 秒空白页超时、SDK 检查超时、主文档重定向、请求完成与失败、非 HTTP 内容脱敏、迟到事件与 SPA 路由变化、故障日志及监听器清理。此次修改范围仅为 `backend/app/xhs_cli_compat.py`、`backend/tests/test_xhs_cli_compat.py` 和本部署文档。共享工作区另有并行的文章截图等业务修改，后续发布必须分别核对，不能将其默认视作本次已验证范围。
+
+
+## 二十四、创作页导航与文章原帖截图升级
+
+2026-10-04（北京时间），将本地 dev 的三个提交发布并升级：`6133fb3` 修复 hn-1 创作页导航等待与诊断；`a491c8d` 使 tc-2 文章自动关联、预览并在 QQ/小红书发布时附带原帖截图，同时由 ai-worker 保留副本引用；`48aca12` 只提供 AI 监听任务设计文档及静态原型，设计中的业务功能尚未实现。固定运行版本为 `48aca12ed3054608aa86190c7765359fbff59910`，已快进推送 dev/main，[Actions 37135166202](https://github.com/StanXu-symple/auto-x/actions/runs/37135166202) 成功。
+
+本轮没有新增 Alembic、Compose、Nacos 配置或授权。先更新 tc-2 的原七项服务，再更新 hn-1 的原四项服务。`ai-worker` 必须与 backend 同步升级，否则旧生成流程可能覆盖 `source_screenshot_images` 副本引用。tc-2 设置 `KJ_AUTO_X_CAMOUFOX_REMOTE=1`，避免安装器自动在本机加入第二个浏览器。完整服务清单更新避免 `--remove-orphans` 影响原服务。
+
+### 发布前验证与备份
+
+本地 `backend/tests/test_article_screenshots.py`、`test_ai_article_media.py`、`test_xhs_cli_compat.py` 针对性测试通过；改动 Python 文件 Ruff、文章媒体组件 5 项测试、前端类型检查与生产构建及 `git diff --check` 通过。部署前确认 AI 生成、文章发布、截图任务和浏览器任务均无运行中实例，XHS 在线、13 项监控实例及两台主机健康。
+
+备份目录：tc-2 为 `/home/docker/auto-x/backups/pre-three-fixes-tc-2-20261003T155806Z/`，hn-1 为 `/home/docker/auto-x/backups/pre-three-fixes-hn-1-20261003T155807Z/`，目录名使用 UTC 时间。两处均保存 `.env`、完整清单、Compose 覆盖、安装定义、控制面、容器记录、三份 Nacos 文档及 SHA256 清单，权限限制为目录 700、文件 600。tc-2 另保存 777812 字节 PostgreSQL custom dump、`tweet_screenshots` 与 `article_uploads` 两个卷的归档；已用容器内 `pg_restore --list` 和 `tar -tzf` 校验可读。hn-1 另保存 Cookie 文件及摘要、防火墙规则。两台备份中的三份 Nacos 文档摘要一致。
+
+目标 SHA 的官方 GHCR 镜像均无超时后台预拉，拉取退出 0 且 revision 等于固定 SHA。tc-2 拉取 backend、frontend；hn-1 拉取 backend、xhs-worker、camoufox-worker。拉取任务记录分别在两节点的 `/root/auto-x-three-fixes-48aca12ed3054608aa86190c7765359fbff59910-pull.{log,pid,exit}`。设置 `KJ_AUTO_X_SKIP_PULL=1` 前须确认全部所需镜像已存在且 revision 正确。
+
+### 通过安装器菜单 2 更新
+
+以下是本次执行的原菜单 `2. 更新` 等价入口；两节点 `/root/apps` 均为已核对的 `24016c6`，所以跳过重复应用列表刷新。先在 tc-2 执行并完成验收，再在 hn-1 执行：
+
+```bash
+# tc-2
+cd /root
+TERM=xterm COMPOSE_PROGRESS=plain \
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-48aca12ed3054608aa86190c7765359fbff59910 \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1 \
+AUTO_X_SERVICES=backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend \
+bash kejilion.sh app auto-x
+
+# hn-1
+cd /root
+TERM=xterm COMPOSE_PROGRESS=plain \
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-48aca12ed3054608aa86190c7765359fbff59910 \
+KJ_AUTO_X_SKIP_PULL=1 \
+AUTO_X_SERVICES=xhs-worker,camoufox-worker,monitor-center,monitor-agent \
+bash kejilion.sh app auto-x
+```
+
+后台更新记录分别在两节点的 `/root/auto-x-three-fixes-48aca12ed3054608aa86190c7765359fbff59910-update.{log,pid,exit}`，退出码均为 0。
+
+### 实际验收与业务复测边界
+
+两节点源码及所选容器的镜像 revision 均为目标完整 SHA；tc-2 七项、hn-1 四项全部 healthy，migrate 在两节点退出 0，tc-2 数据库仍为 `0031_tweet_screenshots`。tc-2 PostgreSQL/Redis 容器保持原 ID；两节点原完整服务清单、Compose 覆盖及 Nacos 三份 JSON 内容与备份一致。tc-2 `.env` 只变更 `IMAGE_TAG`、`FRONTEND_IMAGE_TAG`，hn-1 只变更 `IMAGE_TAG`。hn-1 Cookie 摘要、浏览器持久挂载、2 GB 内存与 512 MB 共享内存限制保持，8007 相关防火墙规则数量保持为 3。
+
+前端、backend、认证中心 HTTP 均返回 200；线上 ArticlesView 资源与新容器内文件逐字一致，并包含原帖截图展示代码。新 backend 从现有四篇文章中识别到三篇带成功原帖截图的文章，三篇均正确返回 `source_screenshot`。XHS 和浏览器在线，远程日志均可读取 200 行，两主机和 13 个监控实例全部健康。一次 hn-1 SSH 在连接阶段关闭，重连只读检查成功，未重新运行安装器；此时浏览器无活动任务，空闲池 `browser_pool_size=0` 属于按需启动状态。
+
+本次未触发真实 QQ 消息或小红书图片上传/发布。截图副本发送顺序与 18 张上限已有针对性测试；实际平台投递和扫码需由用户从页面发起后结合任务记录验证。创作页导航上限已改为 60 秒并补充阶段诊断；平台返回 461 或要求重新登录时仍需按登录态处理，延长等待不能解除平台验证。
