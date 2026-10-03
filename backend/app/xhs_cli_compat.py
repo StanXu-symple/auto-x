@@ -53,6 +53,7 @@ PUBLISH_BUTTON_SELECTORS = (
     "xhs-publish-btn:not([is-publish])",
 )
 IMAGE_ACCEPT_MARKERS = ("image/", ".jpg", ".jpeg", ".png", ".webp", ".heic")
+CREATOR_NAVIGATION_TIMEOUT_SECONDS = 60
 IMAGE_INPUT_TIMEOUT_SECONDS = 45
 IMAGE_UPLOAD_TIMEOUT_SECONDS = 120
 IMAGE_UPLOAD_SETTLE_SECONDS = 3
@@ -1133,47 +1134,153 @@ def _publish_page_feedback(page: Any) -> str:
 def _open_creator_publish_page(client: Any, *, admin_id: int | None = None) -> None:
     page = client._page
     started = time.monotonic()
+    requests: list[dict[str, Any]] = []
     responses: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    commits: list[dict[str, Any]] = []
+    pending: dict[int, tuple[Any, dict[str, Any]]] = {}
+    domcontentloaded_seconds: float | None = None
+
+    def elapsed() -> float:
+        return round(time.monotonic() - started, 3)
+
+    def safe_url(url: Any) -> str:
+        value = str(url or "")
+        if value == "about:blank":
+            return value
+        scheme = urlparse(value).scheme.lower()
+        # Non-HTTP URLs can contain page content instead of an endpoint.
+        return _diagnostic_url(value) if scheme in ("http", "https") else f"{scheme}:"
+
+    def page_url() -> str:
+        try:
+            return safe_url(page.url)
+        except Exception:
+            return "unavailable"
+
+    def safe_error(value: Any) -> str:
+        # A data/javascript URL can include whitespace and entire private documents.
+        # Omit the whole diagnostic text instead of attempting to split its payload.
+        if re.search(r"(?i)\b(?:data|javascript|file):", str(value)):
+            return "包含非 HTTP 地址，已省略详细信息"
+        return _safe_network_text(value)
+
+    def append(entries: list[dict[str, Any]], entry: dict[str, Any]) -> None:
+        entries.append(entry)
+        del entries[:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+
+    def is_main_document(request: Any) -> bool:
+        return request.resource_type == "document" and request.frame == page.main_frame
+
+    def record_request(request: Any) -> None:
+        try:
+            if not is_main_document(request):
+                return
+            entry = {
+                "method": str(request.method), "url": safe_url(request.url),
+                "elapsed_seconds": elapsed(),
+            }
+            append(requests, entry)
+            # Keep the Request alive so its identity cannot be reused while pending.
+            pending[id(request)] = (request, {**entry, "response_received": False})
+            if len(pending) > IMAGE_UPLOAD_DIAGNOSTIC_LIMIT:
+                pending.pop(next(iter(pending)))
+        except Exception:
+            pass
 
     def record_response(response: Any) -> None:
         try:
             request = response.request
-            if request.resource_type != "document" or request.frame != page.main_frame:
+            if not is_main_document(request):
                 return
-            responses.append({
+            append(responses, {
                 "status": int(response.status),
-                "url": _diagnostic_url(str(response.url)),
-                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "url": safe_url(response.url),
+                "elapsed_seconds": elapsed(),
             })
-            del responses[:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
+            if id(request) in pending:
+                # A response does not mean the document finished downloading.
+                pending[id(request)][1]["response_received"] = True
         except Exception:
             pass
+
+    def record_finished(request: Any) -> None:
+        pending.pop(id(request), None)
 
     def record_failure(request: Any) -> None:
+        record_finished(request)
         try:
-            failures.append({
+            append(failures, {
                 "method": str(request.method),
                 "resource_type": str(request.resource_type),
-                "url": _diagnostic_url(str(request.url)),
-                "failure": _safe_network_text(request.failure or "unknown"),
-                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "url": safe_url(request.url),
+                "failure": safe_error(request.failure or "unknown"),
+                "elapsed_seconds": elapsed(),
             })
-            del failures[:-IMAGE_UPLOAD_DIAGNOSTIC_LIMIT]
         except Exception:
             pass
 
-    page.on("response", record_response)
-    page.on("requestfailed", record_failure)
-    _log_stage(
-        "creator_navigation_started", "开始加载小红书图文创作页",
-        admin_id=admin_id, url=_diagnostic_url(PUBLISH_URL), timeout_seconds=30,
+    def record_commit(frame: Any) -> None:
+        try:
+            if frame != page.main_frame or urlparse(str(frame.url)).scheme not in ("http", "https"):
+                return
+            append(commits, {"url": safe_url(frame.url), "elapsed_seconds": elapsed()})
+            # framenavigated also fires for SPA history/hash updates; it is not
+            # evidence that an already observed DOMContentLoaded was undone.
+        except Exception:
+            pass
+
+    def record_domcontentloaded() -> None:
+        nonlocal domcontentloaded_seconds
+        try:
+            # about:blank's readyState can be complete before navigation starts.
+            if urlparse(str(page.url)).scheme in ("http", "https"):
+                domcontentloaded_seconds = elapsed()
+        except Exception:
+            pass
+
+    def diagnostics() -> dict[str, Any]:
+        now = elapsed()
+        return {
+            "document_requests": [dict(entry) for entry in requests],
+            "document_responses": [dict(entry) for entry in responses],
+            "failed_requests": [dict(entry) for entry in failures],
+            "navigation_commits": [dict(entry) for entry in commits],
+            "domcontentloaded_seconds": domcontentloaded_seconds,
+            "navigation_state": (
+                "domcontentloaded" if domcontentloaded_seconds is not None
+                else "waiting_for_domcontentloaded" if commits else "waiting_for_document"
+            ),
+            "pending_document_requests": [
+                {**entry, "pending_seconds": round(max(0, now - entry["elapsed_seconds"]), 3)}
+                for _, entry in pending.values()
+            ],
+        }
+
+    handlers = (
+        ("request", record_request), ("response", record_response),
+        ("requestfinished", record_finished), ("requestfailed", record_failure),
+        ("framenavigated", record_commit), ("domcontentloaded", record_domcontentloaded),
     )
+    registered = []
     try:
+        for event, handler in handlers:
+            # Some adapters can attach a listener before raising; always remove it.
+            registered.append((event, handler))
+            page.on(event, handler)
+        try:
+            _log_stage(
+                "creator_navigation_started", "开始加载小红书图文创作页",
+                admin_id=admin_id, url=_diagnostic_url(PUBLISH_URL),
+                timeout_seconds=CREATOR_NAVIGATION_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            pass
         # Keep the SDK's block/risk checks after navigation. No automatic retry:
         # a login redirect or platform rejection must stop before uploading.
         client._goto(
-            PUBLISH_URL, timeout=30000, wait_min=2, wait_max=3,
+            PUBLISH_URL, timeout=CREATOR_NAVIGATION_TIMEOUT_SECONDS * 1000,
+            wait_until="domcontentloaded", wait_min=2, wait_max=3,
             context="loading creator publish page",
         )
         if "/login" in (page.url or "").lower():
@@ -1181,34 +1288,57 @@ def _open_creator_publish_page(client: Any, *, admin_id: int | None = None) -> N
         if not _is_image_publish_url(page.url or ""):
             raise RuntimeError(
                 "未进入小红书图文发布模式：URL 缺少 target=image；"
-                f"当前页面：{_diagnostic_url(page.url or '')}"
+                f"当前页面：{page_url()}"
             )
     except Exception as exc:
+        # Sampling readyState pumps browser events. Freeze the failure phase first
+        # so a late DOMContentLoaded cannot reclassify a Page.goto timeout.
+        failure_elapsed = elapsed()
+        failure_url = page_url()
+        load_finished = domcontentloaded_seconds is not None
+        failure_diagnostics = diagnostics()
         # Capture state only; page text may contain account data or user content.
         try:
             state = page.evaluate("() => document.readyState")
             ready_state = state if state in ("loading", "interactive", "complete") else "unknown"
         except Exception:
             ready_state = "unavailable"
-        _log_stage(
-            "creator_navigation_failed", "小红书图文创作页加载失败", level="WARNING",
-            admin_id=admin_id, elapsed_seconds=round(time.monotonic() - started, 3),
-            error_type=type(exc).__name__, error=_safe_network_text(exc),
-            page_url=_diagnostic_url(str(getattr(page, "url", ""))),
-            ready_state=ready_state, document_responses=responses, failed_requests=failures,
+        try:
+            _log_stage(
+                "creator_navigation_failed", "小红书图文创作页加载失败", level="WARNING",
+                admin_id=admin_id, elapsed_seconds=failure_elapsed,
+                timeout_seconds=CREATOR_NAVIGATION_TIMEOUT_SECONDS,
+                error_type=type(exc).__name__, error=safe_error(exc),
+                page_url=failure_url, ready_state=ready_state,
+                ready_state_sample_seconds=elapsed(), **failure_diagnostics,
+            )
+        except Exception:
+            # Diagnostic failures must not hide the navigation/risk exception.
+            pass
+        is_timeout = isinstance(exc, TimeoutError) or any(
+            cls.__name__ == "TimeoutError" and cls.__module__.startswith("playwright.")
+            for cls in type(exc).__mro__
         )
+        if is_timeout:
+            message = (
+                f"小红书创作页加载超时（{CREATOR_NAVIGATION_TIMEOUT_SECONDS} 秒）"
+                if not load_finished else "小红书创作页检查超时"
+            )
+            raise RuntimeError(f"{message}，尚未开始上传，请检查网络或稍后重试") from exc
         raise
     finally:
-        for event, handler in (("response", record_response), ("requestfailed", record_failure)):
+        for event, handler in registered:
             try:
                 page.remove_listener(event, handler)
             except Exception:
                 pass
-    _log_stage(
-        "page_ready", "小红书图文创作页导航完成，等待上传组件就绪",
-        admin_id=admin_id, url=_diagnostic_url(page.url or PUBLISH_URL),
-        elapsed_seconds=round(time.monotonic() - started, 3), document_responses=responses,
-    )
+    try:
+        _log_stage(
+            "page_ready", "小红书图文创作页导航完成，等待上传组件就绪",
+            admin_id=admin_id, url=page_url(), elapsed_seconds=elapsed(), **diagnostics(),
+        )
+    except Exception:
+        pass
 
 
 def publish_note_compat(

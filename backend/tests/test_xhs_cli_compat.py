@@ -168,6 +168,10 @@ class FakePage(FakeRoot):
     def remove_listener(self, event: str, callback: object) -> None:
         self.listeners[event].remove(callback)
 
+    def emit(self, event: str, *args: object) -> None:
+        for callback in self.listeners.get(event, []):
+            callback(*args)
+
     def text_content(self, _selector: str) -> str:
         return ""
 
@@ -425,6 +429,8 @@ def test_creator_navigation_uses_sdk_checks_and_removes_listeners(caplog) -> Non
     assert len(calls) == 1
     assert calls[0][0] == PUBLISH_URL
     assert calls[0][1]["context"] == "loading creator publish page"
+    assert calls[0][1]["timeout"] == 60_000
+    assert calls[0][1]["wait_until"] == "domcontentloaded"
     record = next(r for r in caplog.records if getattr(r, "stage", "") == "page_ready")
     assert record.admin_id == 7
     assert record.document_responses[0]["status"] == 200
@@ -460,7 +466,7 @@ def test_creator_navigation_failures_stop_before_upload_and_log_safely(
             if failure == "login" else "https://creator.xiaohongshu.com/publish?token=redirect-secret"
         )
 
-    with caplog.at_level(logging.INFO), pytest.raises((TimeoutError, RuntimeError)):
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError) as error:
         publish_note_compat(
             SimpleNamespace(_page=page, _goto=goto), "title", [str(image)], admin_id=7,
         )
@@ -473,10 +479,437 @@ def test_creator_navigation_failures_stop_before_upload_and_log_safely(
                   "creator_navigation_failed")
     assert record.ready_state == "interactive"
     if failure == "timeout":
+        assert "小红书创作页加载超时（60 秒）" in str(error.value)
+        assert isinstance(error.value.__cause__, TimeoutError)
         assert "NS_ERROR_NET_RESET" in record.failed_requests[0]["failure"]
     output = capsys.readouterr().err + "".join(JsonFormatter().format(r) for r in caplog.records)
     for secret in ("signed-secret", "bearer-secret", "redirect-secret"):
         assert secret not in output
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_creator_navigation_accepts_slow_domcontentloaded_without_waiting_for_load(
+    input_wait_clock, caplog,
+) -> None:
+    page = FakePage()
+    page.url = "about:blank"
+    page.evaluate_result = "complete"
+    calls = []
+    request = SimpleNamespace(method="GET", resource_type="document", frame=page, url=PUBLISH_URL)
+
+    def goto(url, **kwargs):
+        calls.append((url, kwargs))
+        page.emit("request", request)
+        input_wait_clock.now = 30
+        page.emit("response", SimpleNamespace(request=request, url=url, status=200))
+        input_wait_clock.now = 32
+        page.url = url
+        page.emit("framenavigated", page)
+        input_wait_clock.now = 35
+        page.evaluate_result = "interactive"
+        page.emit("domcontentloaded")
+        page.emit("requestfinished", request)
+
+    with caplog.at_level(logging.INFO):
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=goto), admin_id=7)
+    assert len(calls) == 1
+    assert calls[0][1]["timeout"] == 60_000
+    assert calls[0][1]["wait_until"] == "domcontentloaded"
+    record = next(r for r in caplog.records if getattr(r, "stage", "") == "page_ready")
+    assert record.elapsed_seconds == 35
+    assert record.document_requests[0]["elapsed_seconds"] == 0
+    assert record.document_responses[0]["elapsed_seconds"] == 30
+    assert record.navigation_commits[0]["elapsed_seconds"] == 32
+    assert record.domcontentloaded_seconds == 35
+    assert record.navigation_state == "domcontentloaded"
+    assert record.pending_document_requests == []
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+@pytest.mark.parametrize("progress", ["request", "response", "commit"])
+def test_creator_navigation_timeout_identifies_actual_document_progress(
+    progress, input_wait_clock, tmp_path, caplog,
+) -> None:
+    page = FakePage()
+    page.url = "about:blank"
+    page.evaluate_result = "complete"
+    image = tmp_path / "image.png"
+    image.write_bytes(b"test-image")
+    request = SimpleNamespace(method="GET", resource_type="document", frame=page, url=PUBLISH_URL)
+    original_error = TimeoutError("Page.goto: Timeout 60000ms exceeded")
+    calls = []
+
+    def goto(url, **kwargs):
+        calls.append(url)
+        page.emit("request", request)
+        if progress in ("response", "commit"):
+            input_wait_clock.now = 10
+            page.emit("response", SimpleNamespace(request=request, url=url, status=200))
+        if progress == "commit":
+            input_wait_clock.now = 12
+            page.url = url
+            page.evaluate_result = "loading"
+            page.emit("framenavigated", page)
+        input_wait_clock.now = 60
+        raise original_error
+
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError) as error:
+        publish_note_compat(SimpleNamespace(_page=page, _goto=goto), "title", [str(image)])
+    assert "小红书创作页加载超时（60 秒）" in str(error.value)
+    assert error.value.__cause__ is original_error
+    assert calls == [PUBLISH_URL]
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "creator_navigation_failed")
+    assert record.elapsed_seconds == 60
+    assert record.domcontentloaded_seconds is None
+    assert record.navigation_state == (
+        "waiting_for_domcontentloaded" if progress == "commit" else "waiting_for_document"
+    )
+    assert record.ready_state == ("loading" if progress == "commit" else "complete")
+    assert len(record.pending_document_requests) == 1
+    assert record.pending_document_requests[0]["url"] == _diagnostic_url(PUBLISH_URL)
+    assert record.pending_document_requests[0]["response_received"] is (progress != "request")
+    assert len(record.document_responses) == (0 if progress == "request" else 1)
+    assert len(record.navigation_commits) == (1 if progress == "commit" else 0)
+    assert not any(getattr(r, "stage", "") in ("image_upload_started", "page_ready")
+                   for r in caplog.records)
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+@pytest.mark.parametrize("after_domcontentloaded", [False, True])
+@pytest.mark.parametrize("timeout_origin", ["builtin", "playwright"])
+def test_creator_navigation_wraps_timeout_with_correct_stage_and_cause(
+    after_domcontentloaded, timeout_origin, input_wait_clock, caplog,
+) -> None:
+    page = FakePage()
+    page.url = "about:blank"
+    timeout_class = TimeoutError if timeout_origin == "builtin" else type(
+        "TimeoutError", (Exception,), {"__module__": "playwright._impl._errors"},
+    )
+    original_error = timeout_class("Operation exceeded deadline")
+
+    def goto(url, **kwargs):
+        if after_domcontentloaded:
+            page.url = url
+            page.emit("framenavigated", page)
+            input_wait_clock.now = 2
+            page.emit("domcontentloaded")
+            input_wait_clock.now = 5
+        else:
+            input_wait_clock.now = 60
+        raise original_error
+
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError) as error:
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=goto))
+    assert error.value.__cause__ is original_error
+    if after_domcontentloaded:
+        assert "创作页检查超时" in str(error.value)
+        assert "60 秒" not in str(error.value)
+    else:
+        assert "小红书创作页加载超时（60 秒）" in str(error.value)
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "creator_navigation_failed")
+    assert record.domcontentloaded_seconds == (2 if after_domcontentloaded else None)
+    assert record.navigation_state == (
+        "domcontentloaded" if after_domcontentloaded else "waiting_for_document"
+    )
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+@pytest.mark.parametrize("url,safe_url", [
+    ("data:text/html,private-page-content", "data:"),
+    ("javascript:private-page-content", "javascript:"),
+    ("file:///private-page-content", "file:"),
+    ("about:blank", "about:blank"),
+])
+@pytest.mark.parametrize("sdk_returns", [False, True])
+def test_creator_navigation_redacts_non_http_document_urls(
+    url, safe_url, sdk_returns, caplog, capsys,
+) -> None:
+    page = FakePage()
+    page.url = "about:blank"
+    request = SimpleNamespace(method="GET", resource_type="document", frame=page, url=url)
+
+    def goto(*args, **kwargs):
+        page.emit("request", request)
+        page.emit("response", SimpleNamespace(request=request, url=url, status=200))
+        page.url = url
+        page.emit("framenavigated", page)
+        page.emit("domcontentloaded")
+        if not sdk_returns:
+            raise RuntimeError("network problem")
+
+    expected_error = "未进入小红书图文发布模式" if sdk_returns else "network problem"
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError, match=expected_error) as error:
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=goto))
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "creator_navigation_failed")
+    assert record.page_url == safe_url
+    for field in ("document_requests", "document_responses", "pending_document_requests"):
+        assert getattr(record, field)[0]["url"] == safe_url
+    assert record.navigation_commits == []
+    assert record.navigation_state == "waiting_for_document"
+    assert record.domcontentloaded_seconds is None
+    output = str(error.value) + capsys.readouterr().err + JsonFormatter().format(record)
+    assert "private-page-content" not in output
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_creator_navigation_freezes_timeout_state_before_ready_state_sampling(
+    input_wait_clock, monkeypatch, caplog,
+) -> None:
+    page = FakePage()
+    page.url = "about:blank"
+    request = SimpleNamespace(method="GET", resource_type="document", frame=page, url=PUBLISH_URL)
+    original_error = TimeoutError("Page.goto: Timeout 60000ms exceeded")
+
+    def goto(*args, **kwargs):
+        page.emit("request", request)
+        input_wait_clock.now = 60
+        raise original_error
+
+    def sample_state(*args, **kwargs):
+        input_wait_clock.now = 60.5
+        page.emit("response", SimpleNamespace(request=request, url=PUBLISH_URL, status=200))
+        page.url = PUBLISH_URL
+        page.emit("framenavigated", page)
+        page.emit("domcontentloaded")
+        page.emit("requestfinished", request)
+        page.emit("requestfailed", SimpleNamespace(
+            method="GET", resource_type="script", url="https://cdn.example/late.js",
+            failure="NS_ERROR_FAILURE",
+        ))
+        input_wait_clock.now = 61
+        return "complete"
+
+    monkeypatch.setattr(page, "evaluate", sample_state)
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError) as error:
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=goto))
+    assert error.value.__cause__ is original_error
+    assert "小红书创作页加载超时（60 秒）" in str(error.value)
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "creator_navigation_failed")
+    assert record.elapsed_seconds == 60
+    assert record.page_url == "about:blank"
+    assert record.ready_state == "complete"
+    assert record.ready_state_sample_seconds == 61
+    assert record.navigation_state == "waiting_for_document"
+    assert record.domcontentloaded_seconds is None
+    assert record.navigation_commits == []
+    assert record.document_responses == []
+    assert record.failed_requests == []
+    assert len(record.document_requests) == 1
+    assert len(record.pending_document_requests) == 1
+    assert record.pending_document_requests[0]["response_received"] is False
+    assert record.pending_document_requests[0]["pending_seconds"] == 60
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_creator_navigation_keeps_domcontentloaded_after_spa_navigation(
+    input_wait_clock, caplog,
+) -> None:
+    page = FakePage()
+    page.url = "about:blank"
+    original_error = TimeoutError("SDK check timeout")
+
+    def goto(url, **kwargs):
+        input_wait_clock.now = 1
+        page.url = url
+        page.emit("framenavigated", page)
+        input_wait_clock.now = 2
+        page.emit("domcontentloaded")
+        input_wait_clock.now = 3
+        page.url = url + "&step=checked"
+        page.emit("framenavigated", page)
+        input_wait_clock.now = 5
+        raise original_error
+
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError) as error:
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=goto))
+    assert error.value.__cause__ is original_error
+    assert "创作页检查超时" in str(error.value)
+    assert "60 秒" not in str(error.value)
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "creator_navigation_failed")
+    assert record.navigation_state == "domcontentloaded"
+    assert record.domcontentloaded_seconds == 2
+    assert len(record.navigation_commits) == 2
+    assert record.elapsed_seconds == 5
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+@pytest.mark.parametrize("scheme", ["data", "javascript", "file"])
+def test_creator_navigation_omits_non_http_content_from_failure_diagnostics(
+    scheme, input_wait_clock, caplog, capsys,
+) -> None:
+    page = FakePage()
+    page.url = "about:blank"
+    private_url = f"{scheme}:private-document\nprivate text with spaces"
+    original_error = TimeoutError(f"Page.goto: {private_url}")
+
+    def goto(*args, **kwargs):
+        page.emit("requestfailed", SimpleNamespace(
+            method="GET", resource_type="document", frame=page, url=private_url,
+            failure=f"Cannot load {private_url}",
+        ))
+        input_wait_clock.now = 60
+        raise original_error
+
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError) as error:
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=goto))
+    assert error.value.__cause__ is original_error
+    record = next(r for r in caplog.records if getattr(r, "stage", "") ==
+                  "creator_navigation_failed")
+    assert record.failed_requests[0]["url"] == f"{scheme}:"
+    output = str(error.value) + capsys.readouterr().err + JsonFormatter().format(record)
+    assert "private" not in output
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+@pytest.mark.parametrize("finish_event", ["requestfinished", "requestfailed"])
+def test_creator_navigation_tracks_redirects_and_removes_only_finished_documents(
+    finish_event, input_wait_clock, caplog, capsys,
+) -> None:
+    page = FakePage()
+    page.url = "about:blank"
+    initial_url = "https://user:password-secret@creator.xiaohongshu.com/entry?token=first-secret"
+    final_url = PUBLISH_URL + "&token=final-secret#fragment-secret"
+    first = SimpleNamespace(method="GET", resource_type="document", frame=page, url=initial_url,
+                            failure="NS_ERROR_NET_RESET Cookie: session=cookie-secret")
+    final = SimpleNamespace(method="GET", resource_type="document", frame=page, url=final_url)
+    child = SimpleNamespace(url="https://creator.xiaohongshu.com/child?token=child-secret")
+    child_request = SimpleNamespace(method="GET", resource_type="document", frame=child,
+                                    url=child.url)
+
+    def goto(url, **kwargs):
+        page.emit("request", first)
+        page.emit("response", SimpleNamespace(request=first, url=first.url, status=302))
+        page.emit(finish_event, first)
+        input_wait_clock.now = 1
+        page.emit("request", child_request)
+        page.emit("response", SimpleNamespace(request=child_request, url=child.url, status=200))
+        page.emit("framenavigated", child)
+        page.emit("request", final)
+        input_wait_clock.now = 2
+        page.emit("response", SimpleNamespace(request=final, url=final.url, status=200))
+        page.url = final.url
+        page.emit("framenavigated", page)
+        input_wait_clock.now = 3
+        page.emit("domcontentloaded")
+
+    with caplog.at_level(logging.INFO):
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=goto))
+    record = next(r for r in caplog.records if getattr(r, "stage", "") == "page_ready")
+    assert [r["url"] for r in record.document_requests] == [
+        _diagnostic_url(initial_url), _diagnostic_url(final_url),
+    ]
+    assert [r["status"] for r in record.document_responses] == [302, 200]
+    assert len(record.navigation_commits) == 1
+    assert record.navigation_commits[0]["url"] == _diagnostic_url(final_url)
+    assert len(record.pending_document_requests) == 1
+    assert record.pending_document_requests[0]["url"] == _diagnostic_url(final_url)
+    assert record.domcontentloaded_seconds == 3
+    assert record.navigation_state == "domcontentloaded"
+    if finish_event == "requestfailed":
+        assert "NS_ERROR_NET_RESET" in record.failed_requests[0]["failure"]
+    output = capsys.readouterr().err + JsonFormatter().format(record)
+    assert "secret" not in output
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_creator_navigation_diagnostics_are_bounded_and_do_not_capture_content(
+    input_wait_clock, caplog, capsys,
+) -> None:
+    page = FakePage()
+    page.url = "about:blank"
+
+    def goto(url, **kwargs):
+        for i in range(20):
+            input_wait_clock.now = i
+            request = SimpleNamespace(method="GET", resource_type="document", frame=page,
+                                      url=f"https://creator.xiaohongshu.com/step/{i}?token=secret")
+            page.emit("request", request)
+            page.emit("response", SimpleNamespace(request=request, url=request.url, status=200))
+            page.url = request.url
+            page.emit("framenavigated", page)
+            page.emit("requestfailed", SimpleNamespace(
+                method="GET", resource_type="script", url="https://cdn.example/script?sig=secret",
+                failure="NS_ERROR_NET_RESET authorization: Bearer bearer-secret",
+            ))
+        page.url = url
+        page.emit("domcontentloaded")
+
+    with caplog.at_level(logging.INFO):
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=goto))
+    record = next(r for r in caplog.records if getattr(r, "stage", "") == "page_ready")
+    for field in ("document_requests", "document_responses", "navigation_commits",
+                  "pending_document_requests", "failed_requests"):
+        entries = getattr(record, field)
+        assert len(entries) == 12
+        assert all(len(entry["url"]) <= 300 for entry in entries)
+    output = capsys.readouterr().err + JsonFormatter().format(record)
+    assert "secret" not in output
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+@pytest.mark.parametrize("diagnostic_failure", ["logger", "closed_page", "closed_url"])
+def test_creator_navigation_diagnostics_preserve_network_failure_and_cleanup(
+    diagnostic_failure, monkeypatch,
+) -> None:
+    class ClosingPage(FakePage):
+        closed = False
+
+        def __getattribute__(self, name):
+            if name == "url" and self.closed:
+                raise OSError("page URL unavailable")
+            return super().__getattribute__(name)
+
+    page = ClosingPage()
+    page.url = "about:blank"
+    original_error = RuntimeError("net::ERR_CONNECTION_RESET")
+    calls = []
+
+    def broken_log(*args, **kwargs):
+        raise OSError("log unavailable")
+
+    def closed_page(*args, **kwargs):
+        raise OSError("page closed")
+
+    def goto(url, **kwargs):
+        calls.append(url)
+        if diagnostic_failure == "closed_page":
+            monkeypatch.setattr(page, "evaluate", closed_page)
+        if diagnostic_failure == "closed_url":
+            page.closed = True
+        raise original_error
+
+    if diagnostic_failure == "logger":
+        monkeypatch.setattr("app.xhs_cli_compat._log_stage", broken_log)
+    with pytest.raises(RuntimeError) as error:
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=goto))
+    assert error.value is original_error
+    assert calls == [PUBLISH_URL]
+    assert all(not listeners for listeners in page.listeners.values())
+
+
+def test_creator_navigation_cleans_partially_registered_listeners(monkeypatch) -> None:
+    page = FakePage()
+    page.url = PUBLISH_URL
+    original_on = page.on
+    count = 0
+
+    def partial_on(event, handler):
+        nonlocal count
+        count += 1
+        original_on(event, handler)
+        if count == 3:
+            raise RuntimeError("listener registration failed")
+
+    monkeypatch.setattr(page, "on", partial_on)
+    try:
+        _open_creator_publish_page(SimpleNamespace(_page=page, _goto=lambda *a, **kw: None))
+    except RuntimeError as error:
+        assert str(error) == "listener registration failed"
     assert all(not listeners for listeners in page.listeners.values())
 
 
