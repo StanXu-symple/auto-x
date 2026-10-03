@@ -734,11 +734,18 @@ export interface UpdateAiDraftPayload {
   revision: number
 }
 
+export interface ArticleSourceScreenshot {
+  tweet_id: string
+  captured_at?: string | null
+  sha256?: string | null
+}
+
 export interface Article {
   id: EntityId
   job_id: EntityId | null
   source_tweet_id: EntityId | null
   source_url?: string | null
+  source_screenshot?: ArticleSourceScreenshot | null
   article_source: ArticleSource
   title: string
   content: string

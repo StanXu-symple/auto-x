@@ -18,6 +18,7 @@ from app.models.ai import AIDraft, ArticlePublishAttempt
 from app.models.monitored_user import MonitoredUser
 from app.models.qq import QQBotAccount, QQDelivery, QQJoinedGroup
 from app.models.tweet import Tweet
+from app.models.tweet_screenshot import TweetScreenshot
 from app.schemas.article import (
     ArticleCreate,
     ArticleOut,
@@ -27,16 +28,22 @@ from app.schemas.article import (
     ArticlePublishHistoryOut,
     ArticlePublishStatus,
     ArticleSource,
+    ArticleSourceScreenshot,
 )
 from app.schemas.common import MessageResponse, Page
 from app.services.article_media import (
     ALLOWED_IMAGE_SUFFIXES,
     MAX_ARTICLE_IMAGE_BYTES,
+    SOURCE_SCREENSHOT_IMAGES_KEY,
     article_image_path,
+    article_screenshot_copies,
     clear_article_images,
+    clear_unreferenced_article_images,
+    snapshot_article_screenshot,
     write_article_image,
 )
 from app.services.qq_notifications import enqueue_qq_delivery_ids, split_qq_text
+from app.services.tweet_screenshot_media import screenshot_path
 from app.services.xhs_credentials import has_xhs_credentials
 from app.services.xhs_jobs import (
     XHSJobTimeoutError,
@@ -53,12 +60,17 @@ router = APIRouter(prefix="/articles", tags=["Article Management"])
 logger = logging.getLogger(__name__)
 
 
-def _article_out(article: AIDraft, source_url: str | None = None) -> ArticleOut:
+def _article_out(
+    article: AIDraft,
+    source_url: str | None = None,
+    source_screenshot: ArticleSourceScreenshot | None = None,
+) -> ArticleOut:
     return ArticleOut(
         id=article.id,
         job_id=article.job_id,
         source_tweet_id=article.source_tweet_id,
         source_url=source_url,
+        source_screenshot=source_screenshot,
         article_source=article.article_source,
         title=article.title,
         content=article.content,
@@ -102,32 +114,67 @@ def _source_url(tweet: Tweet, username: str) -> str | None:
     return f"https://x.com/{username}/status/{tweet.tweet_id}"
 
 
-async def _article_source_urls(db: DbSession, articles: list[AIDraft]) -> dict[int, str | None]:
+async def _article_sources(
+    db: DbSession, articles: list[AIDraft]
+) -> dict[int, tuple[str | None, ArticleSourceScreenshot | None]]:
     tweet_ids = {
         article.source_tweet_id for article in articles if article.source_tweet_id is not None
     }
     if not tweet_ids:
         return {}
     sources = await db.execute(
-        select(Tweet, MonitoredUser.username)
+        select(Tweet, MonitoredUser.username, TweetScreenshot)
         .join(MonitoredUser, Tweet.monitored_user_id == MonitoredUser.id)
+        .outerjoin(TweetScreenshot, TweetScreenshot.tweet_id == Tweet.tweet_id)
         .where(Tweet.id.in_(tweet_ids))
     )
-    return {tweet.id: _source_url(tweet, username) for tweet, username in sources}
+    result = {}
+    for tweet, username, screenshot in sources:
+        source_screenshot = None
+        if screenshot is not None and screenshot.status == "succeeded":
+            path = await asyncio.to_thread(screenshot_path, screenshot.image_path)
+            if path is not None:
+                source_screenshot = ArticleSourceScreenshot(
+                    tweet_id=tweet.tweet_id,
+                    captured_at=screenshot.captured_at,
+                    sha256=screenshot.sha256,
+                )
+        result[tweet.id] = (_source_url(tweet, username), source_screenshot)
+    return result
+
+
+async def _source_screenshot_path(db: DbSession, article: AIDraft) -> Path | None:
+    if article.source_tweet_id is None:
+        return None
+    screenshot = await db.scalar(
+        select(TweetScreenshot)
+        .join(Tweet, Tweet.tweet_id == TweetScreenshot.tweet_id)
+        .where(Tweet.id == article.source_tweet_id, TweetScreenshot.status == "succeeded")
+    )
+    if screenshot is None:
+        return None
+    return await asyncio.to_thread(screenshot_path, screenshot.image_path)
+
+
+async def _snapshot_source_screenshot(
+    article: AIDraft, source: Path | None, admin: CurrentAdmin
+) -> Path | None:
+    if source is None:
+        return None
+    image, path = await asyncio.to_thread(
+        snapshot_article_screenshot, source, article_id=article.id, admin_id=admin.id
+    )
+    article.draft_metadata = {
+        **(article.draft_metadata or {}),
+        SOURCE_SCREENSHOT_IMAGES_KEY: list(
+            dict.fromkeys([*article_screenshot_copies(article), image])
+        ),
+    }
+    return path
 
 
 def _publish_history_out(attempt: ArticlePublishAttempt) -> ArticlePublishHistoryOut:
     return ArticlePublishHistoryOut.model_validate(attempt)
-
-
-async def _clear_unreferenced_images(db: DbSession, candidates: list[str]) -> None:
-    if not candidates:
-        return
-    referenced: set[str] = set()
-    for images in await db.scalars(select(AIDraft.images)):
-        referenced.update(images or [])
-    unused = [image for image in candidates if image not in referenced]
-    await asyncio.to_thread(clear_article_images, unused)
 
 
 @router.get("", response_model=Page[ArticleOut])
@@ -166,10 +213,11 @@ async def list_articles(
             .limit(page_size)
         )
     )
-    source_urls = await _article_source_urls(db, articles)
+    sources = await _article_sources(db, articles)
     return Page(
         items=[
-            _article_out(article, source_urls.get(article.source_tweet_id)) for article in articles
+            _article_out(article, *sources.get(article.source_tweet_id, (None, None)))
+            for article in articles
         ],
         total=total,
         page=page,
@@ -197,8 +245,8 @@ async def create_article(payload: ArticleCreate, db: DbSession, admin: CurrentAd
     db.add(article)
     await db.commit()
     await db.refresh(article)
-    source_urls = await _article_source_urls(db, [article])
-    return _article_out(article, source_urls.get(article.source_tweet_id))
+    sources = await _article_sources(db, [article])
+    return _article_out(article, *sources.get(article.source_tweet_id, (None, None)))
 
 
 @router.patch("/{article_id}", response_model=ArticleOut)
@@ -237,11 +285,11 @@ async def update_article(
     await db.commit()
     await db.refresh(article)
     if "images" in changes:
-        await _clear_unreferenced_images(
+        await clear_unreferenced_article_images(
             db, [image for image in old_images if image not in (article.images or [])]
         )
-    source_urls = await _article_source_urls(db, [article])
-    return _article_out(article, source_urls.get(article.source_tweet_id))
+    sources = await _article_sources(db, [article])
+    return _article_out(article, *sources.get(article.source_tweet_id, (None, None)))
 
 
 @router.delete("/{article_id}", response_model=MessageResponse)
@@ -251,10 +299,10 @@ async def delete_article(article_id: int, db: DbSession, _: CurrentAdmin) -> Mes
         raise APIError(404, "article_not_found", "文章不存在")
     if article.publish_status == "queued":
         raise APIError(409, "article_publish_in_progress", "文章正在推送，暂时不能删除")
-    images = list(article.images or [])
+    images = [*(article.images or []), *article_screenshot_copies(article)]
     await db.delete(article)
     await db.commit()
-    await _clear_unreferenced_images(db, images)
+    await clear_unreferenced_article_images(db, images)
     return MessageResponse(message="文章已删除")
 
 
@@ -339,6 +387,7 @@ async def _publish_to_qq(
     payload: ArticlePublishCreate,
     db: DbSession,
     redis: RedisClient,
+    admin: CurrentAdmin,
 ) -> ArticlePublishAccepted:
     assert payload.bot_id is not None
     bot = await db.get(QQBotAccount, payload.bot_id)
@@ -363,6 +412,10 @@ async def _publish_to_qq(
         if path is None:
             raise APIError(400, "article_image_invalid", "文章包含不存在的图片")
         image_paths.append(path)
+    source = await _source_screenshot_path(db, article)
+    source_copy = await _snapshot_source_screenshot(article, source, admin)
+    if source_copy is not None:
+        image_paths.insert(0, source_copy)
 
     attempt_id = str(uuid.uuid4())
     now = datetime.now(UTC)
@@ -459,10 +512,13 @@ async def publish_article(
     if article.publish_status == "queued":
         raise APIError(409, "article_publish_in_progress", "文章正在推送，请等待本次推送完成")
     if payload.channel == "qq":
-        return await _publish_to_qq(article, payload, db, redis)
+        return await _publish_to_qq(article, payload, db, redis, admin)
 
-    if not article.images:
+    source = await _source_screenshot_path(db, article)
+    if not article.images and source is None:
         raise APIError(422, "xhs_images_required", "小红书图文推送至少需要一张图片")
+    if len(article.images or []) + (source is not None) > 18:
+        raise APIError(422, "too_many_article_images", "含原帖截图在内，小红书最多发布 18 张图片")
     if len(article.title) > XHS_NOTE_TITLE_MAX_LENGTH:
         raise APIError(
             422,
@@ -478,11 +534,14 @@ async def publish_article(
     if not await has_xhs_credentials(db, admin_id=admin.id):
         raise APIError(409, "xhs_credentials_not_configured", "请先保存小红书登录态")
     paths = []
-    for image in article.images:
+    for image in article.images or []:
         path = await asyncio.to_thread(article_image_path, image, admin_id=admin.id)
         if path is None:
             raise APIError(400, "article_image_invalid", "文章包含不存在的图片")
         paths.append(str(path))
+    source_copy = await _snapshot_source_screenshot(article, source, admin)
+    if source_copy is not None:
+        paths.insert(0, str(source_copy))
     attempt_id = str(uuid.uuid4())
     now = datetime.now(UTC)
     article.publish_status = "queued"

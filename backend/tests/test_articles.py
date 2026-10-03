@@ -87,7 +87,9 @@ async def test_article_update_increments_revision() -> None:
     )
     session = MutationSession(article)
     session.execute = AsyncMock(
-        return_value=[(Tweet(id=3, tweet_id="1840000000000000012", raw_payload={}), "original")]
+        return_value=[
+            (Tweet(id=3, tweet_id="1840000000000000012", raw_payload={}), "original", None)
+        ]
     )
 
     result = await update_article(
@@ -131,6 +133,7 @@ async def test_article_list_resolves_sources_in_one_batch() -> None:
                 },
             ),
             "monitored",
+            None,
         )
     ]
 

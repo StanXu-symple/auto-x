@@ -19,8 +19,14 @@ defineProps<{ article: Article; channel?: ArticlePublishChannel }>()
     <a-form-item label="正文">
       <a-textarea :value="article.content" :rows="10" readonly />
     </a-form-item>
-    <a-form-item label="媒体图片">
-      <ArticleMediaGallery :images="article.images || []" />
+    <a-form-item
+      label="媒体图片"
+      :extra="article.source_screenshot ? '原帖截图已自动关联，发布时一并发送。' : undefined"
+    >
+      <ArticleMediaGallery
+        :images="article.images || []"
+        :source-screenshot="article.source_screenshot"
+      />
     </a-form-item>
   </a-form>
 </template>

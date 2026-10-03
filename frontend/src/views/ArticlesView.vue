@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { usePagedTable } from '@/composables/usePagedTable'
 import { useXhsVerification } from '@/composables/useXhsVerification'
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   DeleteOutlined,
   EditOutlined,
@@ -51,6 +51,7 @@ const bots = ref<QQBotAccount[]>([])
 const groups = ref<QQJoinedGroup[]>([])
 const historyArticle = ref<EntityId | null>(null)
 const form = reactive<ArticlePayload>({ title: '', content: '', excerpt: '', images: [] })
+const mediaCount = computed(() => form.images.length + (editing.value?.source_screenshot ? 1 : 0))
 const publishForm = reactive({
   channel: 'qq' as 'qq' | 'xhs',
   bot_id: null as number | null,
@@ -127,7 +128,9 @@ async function save() {
 async function upload(event: Event) {
   const files = Array.from((event.target as HTMLInputElement).files || [])
   ;(event.target as HTMLInputElement).value = ''
-  if (!files.length) return
+  if (!files.length || uploading.value) return
+  if (mediaCount.value + files.length > 18)
+    return message.warning('每篇文章最多 18 张图片（含自动关联的原帖截图）')
   uploading.value = true
   try {
     const result = await articlesApi.upload(files)
@@ -335,22 +338,30 @@ watch(
           ><a-textarea v-model:value="form.excerpt" :rows="2" /></a-form-item
         ><a-form-item label="正文" required
           ><a-textarea v-model:value="form.content" :rows="14" /></a-form-item
-        ><a-form-item label="媒体"
+        ><a-form-item
+          label="媒体"
+          :extra="
+            editing?.source_screenshot
+              ? '原帖截图已自动关联，发布时一并发送。每篇文章最多 18 张图片（含原帖截图）。'
+              : '每篇文章最多 18 张图片。'
+          "
           ><label class="upload-zone"
             ><input
               type="file"
               accept="image/jpeg,image/png,image/webp"
               multiple
+              :disabled="uploading || mediaCount >= 18"
               @change="upload"
             /><strong><UploadOutlined /> {{ uploading ? '上传中…' : '上传媒体' }}</strong
             ><span>支持 JPG、PNG、WebP 图片，随文章保存</span></label
           >
-          <div v-if="form.images.length" class="muted" style="margin-top: 10px">
-            已添加 {{ form.images.length }} 个媒体文件
+          <div v-if="mediaCount" class="muted" style="margin-top: 10px">
+            已添加 {{ mediaCount }} 张图片
           </div>
           <ArticleMediaGallery
-            v-if="open && form.images.length"
+            v-if="open && mediaCount"
             :images="form.images"
+            :source-screenshot="editing?.source_screenshot"
             style="margin-top: 12px"
           /> </a-form-item></a-form
     ></a-modal>

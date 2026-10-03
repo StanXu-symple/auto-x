@@ -1,8 +1,35 @@
 <script setup lang="ts">
-import { onBeforeUnmount, reactive, watch } from 'vue'
-import { articlesApi } from '@/services/api'
+import { computed, onBeforeUnmount, reactive, watch } from 'vue'
+import { articlesApi, tweetsApi } from '@/services/api'
+import type { ArticleSourceScreenshot } from '@/types'
 
-const props = defineProps<{ images: string[] }>()
+const props = defineProps<{
+  images: string[]
+  sourceScreenshot?: ArticleSourceScreenshot | null
+}>()
+type GalleryMedia = { key: string; label: string; alt: string } & (
+  { type: 'screenshot'; tweetId: string } | { type: 'image'; path: string }
+)
+const media = computed<GalleryMedia[]>(() => [
+  ...(props.sourceScreenshot
+    ? [
+        {
+          key: `screenshot:${props.sourceScreenshot.tweet_id}`,
+          type: 'screenshot' as const,
+          tweetId: props.sourceScreenshot.tweet_id,
+          label: '原帖截图 · 自动关联',
+          alt: '原帖截图',
+        },
+      ]
+    : []),
+  ...props.images.map((path, index) => ({
+    key: `image:${path}`,
+    type: 'image' as const,
+    path,
+    label: `图片 ${index + 1}`,
+    alt: `文章图片 ${index + 1}`,
+  })),
+])
 const urls = reactive<Record<string, string>>({})
 const failed = reactive<Record<string, boolean>>({})
 let request = 0
@@ -15,18 +42,20 @@ function releaseUrls() {
 }
 
 watch(
-  () => [...props.images],
-  async (images) => {
+  [media, () => props.sourceScreenshot?.sha256, () => props.sourceScreenshot?.captured_at],
+  async ([items]) => {
     const current = ++request
     releaseUrls()
     for (const path of Object.keys(failed)) delete failed[path]
     await Promise.all(
-      [...new Set(images)].map(async (path) => {
+      [...new Map(items.map((item) => [item.key, item])).values()].map(async (item) => {
         try {
-          const blob = await articlesApi.image(path)
-          if (current === request) urls[path] = URL.createObjectURL(blob)
+          const blob = await (item.type === 'screenshot'
+            ? tweetsApi.screenshot(item.tweetId)
+            : articlesApi.image(item.path))
+          if (current === request) urls[item.key] = URL.createObjectURL(blob)
         } catch {
-          if (current === request) failed[path] = true
+          if (current === request) failed[item.key] = true
         }
       }),
     )
@@ -41,22 +70,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <span v-if="!images.length" class="muted">暂无图片</span>
+  <span v-if="!media.length" class="muted">暂无图片</span>
   <div v-else class="article-media-gallery">
     <div
-      v-for="(path, index) in images"
-      :key="`${path}-${index}`"
+      v-for="(item, index) in media"
+      :key="`${item.key}-${index}`"
       class="article-media-gallery__item"
     >
       <a-image
-        v-if="urls[path]"
-        :src="urls[path]"
-        :alt="`文章图片 ${index + 1}`"
+        v-if="urls[item.key]"
+        :src="urls[item.key]"
+        :alt="item.alt"
         :width="120"
         :height="120"
       />
-      <span v-else class="muted">{{ failed[path] ? '图片加载失败' : '图片加载中…' }}</span>
-      <small class="muted">图片 {{ index + 1 }}</small>
+      <span v-else class="muted">{{ failed[item.key] ? '图片加载失败' : '图片加载中…' }}</span>
+      <small class="muted">{{ item.label }}</small>
     </div>
   </div>
 </template>

@@ -66,11 +66,18 @@ class ArticlePatch(APIModel):
         return value
 
 
+class ArticleSourceScreenshot(APIModel):
+    tweet_id: str
+    captured_at: datetime | None = None
+    sha256: str | None = None
+
+
 class ArticleOut(APIModel):
     id: int
     job_id: int | None
     source_tweet_id: int | None
     source_url: str | None = None
+    source_screenshot: ArticleSourceScreenshot | None = None
     article_source: ArticleSource
     title: str
     content: str

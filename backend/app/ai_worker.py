@@ -33,6 +33,7 @@ from app.services.ai_data_source import (
     get_ai_data_source,
 )
 from app.services.ai_provider import AIProviderClient, AIProviderError, ProviderRequest
+from app.services.article_media import SOURCE_SCREENSHOT_IMAGES_KEY, article_screenshot_copies
 from app.services.metrics import (
     AI_DRAFTS,
     AI_JOB_DURATION,
@@ -623,6 +624,11 @@ class AIGenerationWorker:
                 select(AIDraft).where(AIDraft.job_id == job.id).with_for_update()
             )
             metadata = dict(draft_payload.get("metadata") or {})
+            # Publish copies are managed by the server, never by generated content.
+            metadata.pop(SOURCE_SCREENSHOT_IMAGES_KEY, None)
+            copies = article_screenshot_copies(draft) if draft is not None else []
+            if copies:
+                metadata[SOURCE_SCREENSHOT_IMAGES_KEY] = copies
             metadata.update(
                 {
                     "provider": job.provider,

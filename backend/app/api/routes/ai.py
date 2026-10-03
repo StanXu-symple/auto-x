@@ -48,6 +48,11 @@ from app.services.ai_jobs import (
     resolve_active_skills,
     resolve_context_skills,
 )
+from app.services.article_media import (
+    SOURCE_SCREENSHOT_IMAGES_KEY,
+    article_screenshot_copies,
+    clear_unreferenced_article_images,
+)
 
 router = APIRouter(prefix="/ai", tags=["AI Creation"])
 tweets_router = APIRouter(prefix="/tweets", tags=["AI Creation"])
@@ -560,8 +565,11 @@ async def delete_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> MessageR
             "ai_job_running",
             "正在生成的任务不能删除，请等待任务完成或失败后再删除",
         )
+    draft = await db.scalar(select(AIDraft).where(AIDraft.job_id == job.id).with_for_update())
+    images = [*(draft.images or []), *article_screenshot_copies(draft)] if draft else []
     await db.delete(job)
     await db.commit()
+    await clear_unreferenced_article_images(db, images)
     return MessageResponse(message="AI 生成任务已删除")
 
 
@@ -648,6 +656,14 @@ async def patch_ai_draft(
             {"current_revision": draft.revision},
         )
     changes = payload.model_dump(exclude_unset=True, exclude={"revision"})
+    if "metadata" in changes:
+        metadata = dict(changes["metadata"]) if changes["metadata"] is not None else None
+        if metadata is not None:
+            metadata.pop(SOURCE_SCREENSHOT_IMAGES_KEY, None)
+        copies = article_screenshot_copies(draft)
+        if copies:
+            metadata = {**(metadata or {}), SOURCE_SCREENSHOT_IMAGES_KEY: copies}
+        changes["metadata"] = metadata
     for key, value in changes.items():
         setattr(draft, "draft_metadata" if key == "metadata" else key, value)
     draft.revision += 1
