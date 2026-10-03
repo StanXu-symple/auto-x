@@ -1,0 +1,265 @@
+<div id="ai-listening-design" lang="zh-CN" aria-label="Auto-X AI 监听任务交互方案">
+  <div class="ax-shell">
+    <aside class="ax-side">
+      <div class="ax-brand"><span>a<span>×</span></span><div>Auto-X<small>CONTENT WORKSPACE</small></div></div>
+      <div class="ax-side-label">监听与采集</div><div class="ax-nav">监听账号</div><div class="ax-nav">内容流</div>
+      <div class="ax-side-label">创作与发布</div><div class="ax-nav ax-nav-active">AI 创作</div><div class="ax-nav">文章管理</div><div class="ax-nav">QQ 推送</div>
+      <div class="ax-side-foot">Collect. Create. Connect.</div>
+    </aside>
+    <div class="ax-main">
+      <header class="ax-chrome"><span>工作空间 <span class="ax-muted">/</span> AI 创作</span><span class="ax-demo">交互方案 · 示例数据</span></header>
+      <main class="ax-content">
+        <div class="ax-heading"><div><small>CONTENT / 01</small><h1>AI 创作</h1><p>保存监听规则，让符合条件的内容持续生成文章草稿</p></div></div>
+        <div class="ax-tabs" role="tablist" aria-label="AI 创作功能">
+          <button class="ax-tab cursor-interaction" role="tab" id="ax-list-tab" aria-controls="ax-panel" aria-selected="true" data-tab="tasks">监听任务</button>
+          <button class="ax-tab cursor-interaction" role="tab" id="ax-jobs-tab" aria-controls="ax-panel" aria-selected="false" data-tab="jobs">生成记录</button>
+          <button class="ax-tab cursor-interaction" role="tab" id="ax-skills-tab" aria-controls="ax-panel" aria-selected="false" data-tab="skills">Skills</button>
+          <button class="ax-tab cursor-interaction" role="tab" id="ax-settings-tab" aria-controls="ax-panel" aria-selected="false" data-tab="settings">创作设置</button>
+          <button class="ax-tab cursor-interaction" role="tab" id="ax-source-tab" aria-controls="ax-panel" aria-selected="false" data-tab="source">AI 数据源</button>
+        </div>
+        <section id="ax-panel" role="tabpanel" aria-labelledby="ax-list-tab"></section>
+        <p id="ax-toast" class="ax-toast" aria-live="polite"></p>
+      </main>
+    </div>
+  </div>
+  <section class="ax-editor ax-sheet" id="ax-editor" aria-label="新增或编辑监听任务" hidden>
+    <div class="ax-sheet-head"><h2 id="ax-editor-title">新增监听任务</h2><button class="ax-button cursor-interaction" data-action="close-editor">关闭</button></div>
+    <form id="ax-form">
+      <label class="ax-field">任务名称<input id="ax-name" required maxlength="100" placeholder="例如：AI 产品动态分析"></label>
+      <div class="ax-field"><label for="ax-scope">监听范围</label><select id="ax-scope"><option value="specific">指定账号</option><option value="all">全部监听账号</option></select><div id="ax-accounts" class="ax-choices"></div><small id="ax-account-note">仅使用已保存的监听账号；采集范围由账号设置决定。</small></div>
+      <label class="ax-field">监听模式<select id="ax-mode"><option value="original">原创</option><option value="all">全部</option><option value="reply">回复</option><option value="retweet">转推（含引用）</option></select><small>回复包含串文；转推包含引用。不会扩大账号的采集范围。</small></label>
+      <div class="ax-field"><span>生成 Skills · 可多选</span><div id="ax-skill-choices" class="ax-choices"></div><small>全部所选指令共同应用，至少选择 1 个。新记录保存指令与版本快照。</small></div>
+      <div class="ax-source-info"><span class="ax-status ax-good">已连接</span><span>默认 AI 数据源 · 当前配置模型</span></div>
+      <label class="ax-field" id="ax-history-field">首次历史范围<select id="ax-history"><option value="0">从启用时刻开始</option><option value="1">最近 1 天</option><option value="3">最近 3 天</option><option value="7">最近 7 天</option></select><small>回溯只处理已采集内容，保存前显示预计待生成数量。</small></label>
+      <details class="ax-advanced"><summary class="cursor-interaction">高级配置</summary><label class="ax-field">每轮最大尝试次数<select id="ax-attempts"><option value="3">3 次（默认）</option><option value="1">1 次</option><option value="5">5 次</option></select></label><span class="ax-muted">语言、语气、超时继承创作设置；每条源内容生成一篇草稿。</span></details>
+      <div class="ax-preview" id="ax-config-preview" aria-live="polite"></div>
+      <p id="ax-validation" class="ax-error" role="alert" hidden></p>
+      <div class="ax-sheet-actions"><button type="button" class="ax-button cursor-interaction" id="ax-save-paused">保存为暂停</button><button type="button" id="ax-save-active" class="ax-button ax-primary cursor-interaction">保存并启用</button></div>
+    </form>
+  </section>
+  <section class="ax-detail ax-sheet" id="ax-detail" aria-label="监听任务详情" hidden></section>
+</div>
+<style>
+#ai-listening-design { --ax-canvas: light-dark(#f7f7f2,#20231f); --ax-paper: light-dark(#ffffff,#282c28); --ax-ink: light-dark(#292c29,#e2e5de); --ax-muted: light-dark(#72756c,#a5aca1); --ax-line: light-dark(#e1e3d9,#42473e); --ax-soft: light-dark(#f2f3ec,#33392f); --ax-accent: light-dark(#a64e35,#e0a087); --ax-accent-soft: light-dark(#f3e9e2,#42352d); --ax-good: light-dark(#3d705a,#93bda3); --ax-bad: light-dark(#b84035,#e89b90); --ax-warning: light-dark(#946421,#dab679); color:var(--ax-ink); font:14px/1.65 "Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif; position:relative; color-scheme:light dark; }
+#ai-listening-design * { box-sizing:border-box; }
+#ai-listening-design { display:grid; }
+#ai-listening-design .ax-shell { grid-area:1/1; }
+#ai-listening-design.ax-overlay .ax-shell { opacity:.45; pointer-events:none; }
+#ai-listening-design [hidden] { display:none !important; }
+#ai-listening-design h1,#ai-listening-design h2,#ai-listening-design h3,#ai-listening-design p { margin:0; }
+#ai-listening-design h1 { font-size:32px; line-height:1.25; font-weight:500; margin:10px 0; letter-spacing:-.04em; }
+#ai-listening-design h2 { font-size:19px; font-weight:500; }
+#ai-listening-design h3 { font-size:15px; font-weight:500; }
+#ai-listening-design strong { font-weight:500; }
+#ai-listening-design small { font-size:12px; color:var(--ax-muted); }
+#ai-listening-design .ax-shell { background:var(--ax-canvas); display:grid; grid-template-columns:168px minmax(0,1fr); min-height:520px; border-radius:8px; }
+#ai-listening-design .ax-side { border-right:1px solid var(--ax-line); padding:22px 14px; }
+#ai-listening-design .ax-brand { display:flex; gap:12px; align-items:center; padding:6px 10px 24px; font-size:18px; font-weight:500; }
+#ai-listening-design .ax-brand>span { font-size:34px; letter-spacing:-.13em; padding-right:5px; }
+#ai-listening-design .ax-brand>span>span { color:var(--ax-accent); }
+#ai-listening-design .ax-brand small { display:block; font-size:9px; letter-spacing:.06em; }
+#ai-listening-design .ax-side-label { color:var(--ax-muted); font-size:11px; padding:20px 10px 8px; }
+#ai-listening-design .ax-nav { padding:10px 14px; font-size:13px; border-radius:4px; }
+#ai-listening-design .ax-nav-active { background:var(--ax-accent-soft); color:var(--ax-accent); }
+#ai-listening-design .ax-side-foot { font-size:11px; color:var(--ax-muted); margin:56px 10px 0; }
+#ai-listening-design .ax-main { min-width:0; }
+#ai-listening-design .ax-chrome { padding:18px 26px; border-bottom:1px solid var(--ax-line); display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; font-size:12px; }
+#ai-listening-design .ax-demo { color:var(--ax-muted); }
+#ai-listening-design .ax-content { padding:30px 26px 20px; }
+#ai-listening-design .ax-heading small { font-size:11px; letter-spacing:.12em; color:var(--ax-accent); }
+#ai-listening-design .ax-heading p { color:var(--ax-muted); font-size:13px; }
+#ai-listening-design .ax-tabs { display:flex; flex-wrap:wrap; gap:20px; border-bottom:1px solid var(--ax-line); margin:24px 0; }
+#ai-listening-design .ax-tab { background:none; color:var(--ax-muted); border:0; border-bottom:2px solid transparent; padding:10px 0; font:inherit; font-size:13px; }
+#ai-listening-design .ax-tab[aria-selected=true] { color:var(--ax-accent); border-bottom-color:var(--ax-accent); }
+#ai-listening-design .ax-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+#ai-listening-design .ax-button { font:inherit; font-size:12px; color:var(--ax-ink); background:var(--ax-paper); border:1px solid var(--ax-line); border-radius:5px; padding:7px 11px; }
+#ai-listening-design .ax-primary { background:var(--ax-accent); color:var(--ax-paper); border-color:var(--ax-accent); }
+#ai-listening-design .ax-button:disabled { opacity:.5; cursor:not-allowed; }
+#ai-listening-design .ax-link { color:var(--ax-accent); background:none; border:0; font:inherit; font-size:12px; padding:3px 0; text-align:left; }
+#ai-listening-design .ax-status { display:inline-flex; align-items:center; gap:5px; font-size:12px; white-space:nowrap; }
+#ai-listening-design .ax-status::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+#ai-listening-design .ax-good { color:var(--ax-good); }
+#ai-listening-design .ax-bad,#ai-listening-design .ax-error { color:var(--ax-bad); }
+#ai-listening-design .ax-muted { color:var(--ax-muted); }
+#ai-listening-design .ax-table-wrap { overflow-x:auto; background:var(--ax-paper); border:1px solid var(--ax-line); border-radius:6px; }
+#ai-listening-design .ax-table { border-collapse:collapse; width:100%; font-size:12px; }
+#ai-listening-design .ax-table th { text-align:left; background:var(--ax-soft); padding:12px; font-weight:500; white-space:nowrap; color:var(--ax-muted); }
+#ai-listening-design .ax-table td { border-top:1px solid var(--ax-line); vertical-align:top; padding:15px 12px; }
+#ai-listening-design .ax-table td:first-child { min-width:140px; }
+#ai-listening-design .ax-table small { display:block; font-size:11px; margin-top:5px; }
+#ai-listening-design .ax-task-name { font-size:13px; }
+#ai-listening-design .ax-scope { min-width:116px; }
+#ai-listening-design .ax-skill { display:inline-block; padding:1px 6px; background:var(--ax-soft); border-radius:3px; margin:0 4px 4px 0; white-space:nowrap; }
+#ai-listening-design .ax-actions { display:flex; flex-wrap:wrap; gap:3px 10px; min-width:100px; }
+#ai-listening-design .ax-results { white-space:nowrap; font-variant-numeric:tabular-nums; }
+#ai-listening-design .ax-summary { color:var(--ax-muted); font-size:12px; margin-top:14px; }
+#ai-listening-design .ax-toast { margin-top:16px; font-size:12px; color:var(--ax-good); min-height:20px; }
+#ai-listening-design .ax-sheet { grid-area:1/1; z-index:2; justify-self:end; width:min(740px,100%); background:var(--ax-paper); border:1px solid var(--ax-line); border-radius:8px; padding:24px; }
+#ai-listening-design .ax-editor { width:min(560px,100%); }
+#ai-listening-design .ax-sheet-head { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:22px; }
+#ai-listening-design .ax-field { display:flex; flex-direction:column; gap:8px; margin-bottom:20px; font-size:13px; }
+#ai-listening-design input:not([type=checkbox]),#ai-listening-design select { width:100%; background:var(--ax-paper); color:var(--ax-ink); border:1px solid var(--ax-line); border-radius:5px; min-height:38px; padding:8px 10px; font:inherit; font-size:13px; }
+#ai-listening-design input[type=checkbox] { accent-color:var(--ax-accent); margin:0; }
+#ai-listening-design .ax-choices { display:flex; gap:10px; flex-wrap:wrap; }
+#ai-listening-design .ax-choice { display:flex; gap:7px; align-items:center; padding:7px 10px; border:1px solid var(--ax-line); border-radius:5px; font-size:12px; }
+#ai-listening-design .ax-choice:has(:checked) { background:var(--ax-accent-soft); }
+#ai-listening-design .ax-source-info { display:flex; gap:12px; flex-wrap:wrap; background:var(--ax-soft); padding:12px; margin-bottom:20px; font-size:12px; }
+#ai-listening-design .ax-advanced { padding:12px 0; border-top:1px solid var(--ax-line); font-size:12px; }
+#ai-listening-design .ax-advanced .ax-field { margin-top:14px; }
+#ai-listening-design .ax-preview { padding:14px; background:var(--ax-soft); font-size:13px; margin:18px 0; }
+#ai-listening-design .ax-sheet-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; padding-top:16px; border-top:1px solid var(--ax-line); }
+#ai-listening-design .ax-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border-top:1px solid var(--ax-line); border-bottom:1px solid var(--ax-line); margin:20px 0; }
+#ai-listening-design .ax-metric { padding:16px 10px; }
+#ai-listening-design .ax-metric strong { display:block; font-size:25px; font-weight:400; font-variant-numeric:tabular-nums; margin-top:5px; }
+#ai-listening-design .ax-config { display:grid; grid-template-columns:120px minmax(0,1fr); gap:12px; font-size:13px; }
+#ai-listening-design .ax-config dt { color:var(--ax-muted); }
+#ai-listening-design .ax-config dd { margin:0; overflow-wrap:anywhere; }
+#ai-listening-design .ax-record-list { display:grid; gap:12px; }
+#ai-listening-design .ax-record { border-bottom:1px solid var(--ax-line); padding:12px 0; font-size:13px; }
+#ai-listening-design .ax-record-top { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+#ai-listening-design .ax-record p { margin:6px 0; }
+#ai-listening-design .ax-log { padding:0; list-style:none; font-size:12px; }
+#ai-listening-design .ax-log li { padding:12px 0; border-bottom:1px solid var(--ax-line); }
+#ai-listening-design .ax-log time { color:var(--ax-muted); display:inline-block; margin-right:14px; }
+@media (max-width:780px) { #ai-listening-design .ax-shell { grid-template-columns:1fr; } #ai-listening-design .ax-side { display:none; } }
+@media (max-width:470px) { #ai-listening-design .ax-content,#ai-listening-design .ax-sheet { padding:18px 14px; } #ai-listening-design .ax-chrome { padding:14px; } #ai-listening-design .ax-tabs { gap:13px; } #ai-listening-design .ax-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } #ai-listening-design .ax-config { grid-template-columns:80px minmax(0,1fr); } #ai-listening-design input:not([type=checkbox]),#ai-listening-design select { font-size:16px; } }
+@media (pointer:coarse) { #ai-listening-design .ax-button,#ai-listening-design .ax-link,#ai-listening-design .ax-tab,#ai-listening-design .ax-choice { min-height:44px; } }
+</style>
+<script>
+(() => {
+  const root=document.getElementById('ai-listening-design');
+  const byId=id=>root.querySelector('#'+id);
+  const esc=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const modeLabels={all:'全部',original:'原创',reply:'回复',retweet:'转推（含引用）'};
+  const accounts=['@OpenAI','@AnthropicAI','@karpathy'];
+  const skillNames=['事实核查','中文长文','文章结构','工程解读'];
+  const defaults=[
+    {id:1,name:'AI 产品动态分析',accounts:accounts.slice(0,2),all:false,mode:'original',skills:skillNames.slice(0,3),state:'active',success:18,failed:2,queued:2,running:1,retry:1,attempts:27,last:'10/03 08:42',history:0,max:3},
+    {id:2,name:'开发者观点解读',accounts:[accounts[2]],all:false,mode:'reply',skills:[skillNames[3]],state:'paused',success:6,failed:1,queued:1,running:0,retry:0,attempts:9,last:'10/02 21:15',history:0,max:3},
+    {id:3,name:'行业新闻简报',accounts:accounts.slice(),all:true,mode:'all',skills:['旧版摘要（已停用）'],state:'blocked',success:0,failed:0,queued:0,running:0,retry:0,attempts:0,last:'尚无记录',history:0,max:3}
+  ];
+  let tasks=structuredClone(defaults),tab='tasks',editing=null,detailId=null,detailTab='records';
+  function restore(snapshot) {
+    const saved=snapshot?.privateContent;
+    if(saved?.schema===1 && Array.isArray(saved.tasks) && saved.tasks.length<=15 && saved.tasks.every(t=>t && typeof t.name==='string' && Array.isArray(t.skills) && Array.isArray(t.accounts))) tasks=saved.tasks;
+  }
+  restore(window.openai?.widgetState);
+  function persist() {
+    const payload={modelContent:{proposal:'AI 监听任务',savedTaskChoices:tasks.filter(t=>t.id>3).map(t=>({name:t.name,accounts:t.all?'全部':t.accounts,mode:t.mode,skills:t.skills,historyDays:t.history})),selectedTask:tasks.find(t=>t.id===detailId)?.name||null},privateContent:{schema:1,tasks}};
+    if(window.openai?.setWidgetState) window.openai.setWidgetState(payload).catch(()=>{});
+  }
+  window.addEventListener('openai:set_globals',event=>{if(event.detail?.globals?.widgetState){restore(event.detail.globals.widgetState);render();}});
+  const taskTotal=t=>t.success+t.failed+t.queued+t.running+t.retry+(t.cancelled||0);
+  function status(t) {
+    const names={active:'已启用',paused:'已暂停',blocked:'配置异常',archived:'已归档'};
+    const kind=t.state==='active'?'ax-good':t.state==='blocked'?'ax-bad':'ax-muted';
+    return `<span class="ax-status ${kind}">${names[t.state]}</span>`;
+  }
+  function toast(text) { byId('ax-toast').textContent=text; }
+  function syncOverlay() { const open=!byId('ax-editor').hidden||!byId('ax-detail').hidden;root.classList.toggle('ax-overlay',open);root.querySelector('.ax-shell').inert=open; }
+  function render() {
+    root.querySelectorAll('[data-tab]').forEach(button=>button.setAttribute('aria-selected',String(button.dataset.tab===tab)));
+    byId('ax-panel').setAttribute('aria-labelledby',`ax-${{tasks:'list',jobs:'jobs',skills:'skills',settings:'settings',source:'source'}[tab]}-tab`);
+    if(tab==='tasks') renderTasks();
+    if(tab==='jobs') renderJobs();
+    if(tab==='skills') byId('ax-panel').innerHTML=`<div class="ax-toolbar"><h3>统一 Skills 库</h3><small>监听任务与内容流使用同一份启用列表</small></div><div class="ax-record-list">${skillNames.map((name,i)=>`<div class="ax-record"><div class="ax-record-top"><strong>${name}</strong><span class="ax-status ax-good">已启用 · v${i+1}</span></div><p class="ax-muted">${['核对来源、事实和数字，标记不确定信息。','用自然中文写成完整文章。','按背景、主要变化与影响组织文章。','结合技术实现解释工程影响。'][i]}</p></div>`).join('')}</div>`;
+    if(tab==='settings') byId('ax-panel').innerHTML='<h3>创作设置</h3><dl class="ax-config"><dt>AI 总开关</dt><dd>已开启</dd><dt>自动触发</dt><dd>仅匹配已启用的监听任务</dd><dt>默认语言 / 语气</dt><dd>zh-CN / 专业自然</dd><dt>每轮最大尝试</dt><dd>3 次</dd><dt>请求超时</dt><dd>60 秒</dd></dl>';
+    if(tab==='source') byId('ax-panel').innerHTML='<h3>默认 AI 数据源</h3><dl class="ax-config"><dt>连接</dt><dd><span class="ax-status ax-good">已就绪</span></dd><dt>调用方式</dt><dd>沿用全局 AI 数据源和配置模型</dd><dt>密钥</dt><dd>•••••••• · 由后端保管</dd><dt>AI Worker</dt><dd><span class="ax-status ax-good">在线</span></dd></dl>';
+  }
+  function renderTasks() {
+    const visibleTasks=tasks.filter(t=>t.state!=='archived');
+    byId('ax-panel').innerHTML=`<div class="ax-toolbar"><button class="ax-button ax-primary cursor-interaction" data-action="create">＋ 新增任务</button><span class="ax-status ax-good">默认数据源已就绪 · Worker 在线</span></div><div class="ax-table-wrap"><table class="ax-table"><thead><tr><th>任务 / 监听范围</th><th>模式 / Skills</th><th>状态 / 执行情况</th><th>结果 / 累计尝试</th><th>操作</th></tr></thead><tbody>${visibleTasks.map(t=>`<tr><td><button class="ax-link ax-task-name cursor-interaction" data-action="detail" data-id="${t.id}">${esc(t.name)}</button><small class="ax-scope">${esc(t.all?'全部监听账号':t.accounts.join(' · '))}</small><small>最近活动 ${esc(t.last)}</small></td><td>${modeLabels[t.mode]}<small>${t.skills.map(s=>`<span class="ax-skill">${esc(s)}</span>`).join('')}</small></td><td>${status(t)}<small>${t.state==='blocked'?'所选 Skill 已停用':`排队 ${t.queued} · 生成中 ${t.running}<br>等待重试 ${t.retry}${t.pendingBackfillDays?'<br>历史补生成待恢复':''}`}</small></td><td class="ax-results">成功 ${t.success} · 最终失败 ${t.failed}<small>累计执行尝试 ${t.attempts} 次</small></td><td><div class="ax-actions"><button class="ax-link cursor-interaction" data-action="detail" data-id="${t.id}">详情</button><button class="ax-link cursor-interaction" data-action="edit" data-id="${t.id}">编辑</button><button class="ax-link cursor-interaction" data-action="toggle" data-id="${t.id}">${t.state==='active'?'暂停':'恢复'}</button><button class="ax-link cursor-interaction" data-action="copy" data-id="${t.id}">复制</button></div></td></tr>`).join('')}</tbody></table></div><p class="ax-summary">共 ${visibleTasks.length} 条监听任务 · 成功 ${visibleTasks.reduce((sum,t)=>sum+t.success,0)} 篇 · 最终失败 ${visibleTasks.reduce((sum,t)=>sum+t.failed,0)} 篇 · 累计执行尝试 ${visibleTasks.reduce((sum,t)=>sum+t.attempts,0)} 次</p>`;
+  }
+  function renderJobs() {
+    byId('ax-panel').innerHTML=`<div class="ax-toolbar"><h3>生成记录</h3><small>按监听任务查看生成结果与尝试明细</small></div>${tasks.map(t=>`<div class="ax-record"><div class="ax-record-top"><button class="ax-link ax-task-name cursor-interaction" data-action="detail" data-id="${t.id}">${esc(t.name)}</button>${status(t)}</div><p class="ax-muted">共 ${taskTotal(t)} 条记录 · 成功 ${t.success} · 最终失败 ${t.failed} · 累计执行尝试 ${t.attempts}</p></div>`).join('')}`;
+  }
+  function openEditor(task,copy=false) {
+    byId('ax-detail').hidden=true; detailId=null; editing=task&&!copy?task.id:null;
+    byId('ax-editor-title').textContent=copy?'复制监听任务':task?'编辑监听任务':'新增监听任务';
+    byId('ax-name').value=task?task.name+(copy?'（副本）':''):'AI 产品观察';
+    byId('ax-scope').value=task?.all?'all':'specific';
+    byId('ax-mode').value=task?.mode||'original';
+    byId('ax-history').value='0';
+    byId('ax-attempts').value=String(task?.max||3);
+    byId('ax-history-field').hidden=Boolean(editing);
+    byId('ax-save-paused').hidden=Boolean(editing);
+    byId('ax-save-active').textContent=editing?'保存修改':'保存并启用';
+    byId('ax-accounts').innerHTML=accounts.map((name,i)=>`<label class="ax-choice cursor-interaction"><input type="checkbox" name="account" value="${name}" ${task?task.accounts.includes(name)?'checked':'':i<2?'checked':''}>${name}</label>`).join('');
+    byId('ax-skill-choices').innerHTML=skillNames.map((name,i)=>`<label class="ax-choice cursor-interaction"><input type="checkbox" name="skill" value="${name}" ${task?task.skills.includes(name)?'checked':'':i<2?'checked':''}>${name}</label>`).join('');
+    byId('ax-validation').hidden=true; byId('ax-editor').hidden=false; updatePreview();
+  }
+  function choices(name) { return Array.from(root.querySelectorAll(`input[name="${name}"]:checked`),input=>input.value); }
+  function updatePreview() {
+    const all=byId('ax-scope').value==='all',count=choices('account').length,skills=choices('skill').length,days=Number(byId('ax-history').value);
+    byId('ax-accounts').hidden=all;
+    byId('ax-account-note').textContent=all?'覆盖全部监听账号，包括后续新增的账号。':'仅使用已保存的监听账号；采集范围由账号设置决定。';
+    byId('ax-config-preview').textContent=`${all?'监听全部账号':`监听 ${count} 个账号`}的${modeLabels[byId('ax-mode').value]}内容，使用 ${skills} 个 Skills，每条内容生成一篇草稿。${editing?'修改仅影响后续记录。':days?`首次回溯最近 ${days} 天；示例预计待生成 ${days*4} 条。`:'从启用时刻开始，不主动生成历史内容。'}`;
+  }
+  function saveTask(state) {
+    const name=byId('ax-name').value.trim(),all=byId('ax-scope').value==='all',picked=choices('account'),skills=choices('skill');
+    if(!name||(!all&&!picked.length)||!skills.length) { byId('ax-validation').textContent='请填写任务名称，选择监听账号和至少一个 Skill。';byId('ax-validation').hidden=false;return; }
+    const old=tasks.find(t=>t.id===editing);
+    const task={...(old||{id:Math.max(...tasks.map(t=>t.id),0)+1,success:0,failed:0,queued:0,running:0,retry:0,attempts:0,last:'等待新内容',firstActivated:false}),name,accounts:all?accounts.slice():picked,all,mode:byId('ax-mode').value,skills,state,history:editing?old.history:Number(byId('ax-history').value),max:Number(byId('ax-attempts').value)};
+    if(old) tasks=tasks.map(t=>t.id===editing?task:t); else tasks.push(task);
+    if(!old && state==='active'){scheduleDemoBackfill(task,task.history);task.firstActivated=true;}
+    byId('ax-editor').hidden=true;tab='tasks';render();syncOverlay();persist();toast('示例配置已保存 · 预览不会调用 AI');
+  }
+  function scheduleDemoBackfill(t,days) { const count=Math.max(days-(t.backfillCoveredDays||0),0)*4;t.queued+=count;t.backfillCoveredDays=Math.max(t.backfillCoveredDays||0,days);return count; }
+  function openDetail(id) {
+    byId('ax-editor').hidden=true;detailId=id;detailTab='records';renderDetail();persist();
+  }
+  function renderDetail() {
+    const t=tasks.find(t=>t.id===detailId);if(!t)return;
+    const records=(t.id===1?[{name:'模型功能更新的主要变化',author:accounts[0],status:'成功',attempt:1,total:1},{name:'产品发布后的工程影响',author:accounts[1],status:'成功',attempt:2,total:2},{name:'接口超时，等待下一次执行',author:accounts[0],status:'等待重试',attempt:2,total:2},{name:'源内容生成失败',author:accounts[1],status:t.failed?'最终失败':'排队中',attempt:t.failed?3:0,total:3}]:[]).map(record=>({...record,maxAttempts:3}));
+    let content='';
+    if(detailTab==='config') content=`<dl class="ax-config"><dt>监听范围</dt><dd>${esc(t.all?'全部监听账号':t.accounts.join('、'))}</dd><dt>监听模式</dt><dd>${modeLabels[t.mode]}</dd><dt>Skills</dt><dd>${esc(t.skills.join(' → '))}</dd><dt>生成方式</dt><dd>每条源内容 → 一篇文章草稿</dd><dt>数据源</dt><dd>全局默认数据源 / 实际模型随执行记录保存</dd><dt>最大尝试</dt><dd>每轮 ${t.max} 次</dd></dl>`;
+    if(detailTab==='records') content=`<div class="ax-toolbar"><small>最近 ${records.length} 条示例 · 共 ${taskTotal(t)} 条生成记录</small>${t.failed&&t.state!=='archived'?`<button class="ax-button cursor-interaction" data-action="retry-failed" data-id="${t.id}">重试 ${t.failed} 条失败记录</button>`:''}</div><div class="ax-record-list">${records.length?records.map(r=>`<div class="ax-record"><div class="ax-record-top"><strong>${esc(r.name)}</strong><span class="ax-status ${r.status==='成功'?'ax-good':r.status==='最终失败'?'ax-bad':'ax-muted'}">${r.status}</span></div><p class="ax-muted">${r.author} · 本轮 ${r.attempt}/${r.maxAttempts} 次 · 累计 ${r.total} 次</p>${r.status==='成功'?'<button class="ax-link cursor-interaction" data-action="draft">查看文章草稿</button>':''}</div>`).join(''):'<p class="ax-muted">没有展开的示例记录。真实页面将在此显示该任务的全部生成记录。</p>'}</div>`;
+    if(detailTab==='logs') content=t.id===1?`<ul class="ax-log"><li><time>10/03 08:42:18</time>生成成功 · 第 2 次尝试 · 耗时 12 秒</li><li><time>10/03 08:41:50</time>等待重试 · 第 1 次尝试 · 请求超时</li><li><time>10/03 08:40:12</time>命中源内容 · ${esc(t.accounts[0]||'监听账号')} · ${modeLabels[t.mode]}</li><li><time>10/03 08:00:00</time>任务配置保存 · Skills 快照已记录</li></ul>`:'<p class="ax-muted">暂无展开的示例日志；实际执行将逐次保存开始、结果、耗时与错误信息。</p>';
+    byId('ax-detail').innerHTML=`<div class="ax-sheet-head"><div><h2>${esc(t.name)}</h2>${status(t)}</div><button class="ax-button cursor-interaction" data-action="close-detail">关闭详情</button></div><div class="ax-metrics"><div class="ax-metric"><small>成功文章</small><strong>${t.success}</strong></div><div class="ax-metric"><small>最终失败</small><strong>${t.failed}</strong></div><div class="ax-metric"><small>待处理 / 生成中</small><strong>${t.queued} / ${t.running}</strong></div><div class="ax-metric"><small>累计执行尝试</small><strong>${t.attempts}</strong></div></div><div class="ax-tabs" role="tablist" aria-label="监听任务详情">${[['config','配置摘要'],['records','生成记录'],['logs','运行日志']].map(([key,label])=>`<button class="ax-tab cursor-interaction" id="ax-detail-${key}" role="tab" aria-controls="ax-detail-panel" aria-selected="${detailTab===key}" data-detail-tab="${key}">${label}</button>`).join('')}</div><div id="ax-detail-panel" role="tabpanel" aria-labelledby="ax-detail-${detailTab}">${content}</div>${t.state!=='archived'?`<div id="ax-backfill" class="ax-preview" hidden><label class="ax-field">补生成历史范围<select id="ax-backfill-days"><option value="1">最近 1 天</option><option value="3">最近 3 天</option><option value="7" selected>最近 7 天</option></select></label><p id="ax-backfill-preview" aria-live="polite">示例预计待生成 ${Math.max(7-(t.backfillCoveredDays||0),0)*4} 条；同任务已处理内容会去重。${t.state==='paused'?'任务已暂停，请求等待恢复后执行。':''}</p><div class="ax-sheet-actions"><button class="ax-button cursor-interaction" data-action="cancel-backfill">取消</button><button class="ax-button ax-primary cursor-interaction" data-action="queue-backfill" data-id="${t.id}">${t.state==='paused'?'保存补生成请求':'确认补生成'}</button></div></div><div class="ax-sheet-actions"><button class="ax-button cursor-interaction" data-action="backfill" data-id="${t.id}" ${t.state==='blocked'?'disabled':''}>补生成历史</button><button class="ax-button cursor-interaction" data-action="edit" data-id="${t.id}">编辑配置</button><button class="ax-button cursor-interaction" data-action="archive" data-id="${t.id}">归档任务</button></div>`:''}`;
+    byId('ax-detail').hidden=false;
+  }
+  byId('ax-form').addEventListener('input',updatePreview);
+  byId('ax-form').addEventListener('change',updatePreview);
+  function saveCurrent() { const oldState=editing?tasks.find(t=>t.id===editing).state:'active';saveTask(oldState==='blocked'?'paused':oldState); }
+  byId('ax-form').addEventListener('submit',event=>{event.preventDefault();saveCurrent();});
+  byId('ax-save-paused').addEventListener('click',()=>saveTask('paused'));
+  byId('ax-save-active').addEventListener('click',saveCurrent);
+  root.addEventListener('change',event=>{
+    if(event.target.id==='ax-backfill-days'){
+      const t=tasks.find(item=>item.id===detailId),days=Number(event.target.value);
+      byId('ax-backfill-preview').textContent=`示例预计待生成 ${Math.max(days-(t.backfillCoveredDays||0),0)*4} 条；同任务已处理内容会去重。${t.state==='paused'?'任务已暂停，请求等待恢复后执行。':''}`;
+    }
+  });
+  root.addEventListener('click',event=>{
+    const button=event.target.closest('button');if(!button)return;
+    if(button.dataset.tab){tab=button.dataset.tab;byId('ax-editor').hidden=true;byId('ax-detail').hidden=true;render();syncOverlay();return;}
+    if(button.dataset.detailTab){detailTab=button.dataset.detailTab;renderDetail();return;}
+    const action=button.dataset.action,id=Number(button.dataset.id),t=tasks.find(item=>item.id===id);
+    if(action==='create')openEditor(null);
+    if(action==='edit')openEditor(t);
+    if(action==='copy')openEditor(t,true);
+    if(action==='close-editor')byId('ax-editor').hidden=true;
+    if(action==='close-detail'){byId('ax-detail').hidden=true;detailId=null;}
+    if(action==='detail')openDetail(id);
+    if(action==='toggle'){
+      if(t.state==='blocked'){toast('先编辑任务，替换已停用的 Skill 后再启用。');return;}
+      t.state=t.state==='active'?'paused':'active';
+      if(t.state==='active' && t.firstActivated===false){scheduleDemoBackfill(t,t.history);t.firstActivated=true;}
+      if(t.state==='active' && t.pendingBackfillDays){scheduleDemoBackfill(t,t.pendingBackfillDays);t.pendingBackfillDays=0;}
+      render();if(detailId===id)renderDetail();persist();toast(t.state==='paused'?'任务已暂停：未开始的记录停止执行，已领取的记录允许完成。':'任务已恢复：继续原队列和已请求回溯，监听恢复后新发布的内容。');
+    }
+    if(action==='retry-failed'){t.queued+=t.failed;t.failed=0;render();renderDetail();persist();toast('失败记录已进入示例队列；实际执行开始时累计尝试次数才增加。');}
+    if(action==='archive'){t.state='archived';t.cancelled=(t.cancelled||0)+t.queued+t.retry;t.queued=0;t.retry=0;t.pendingBackfillDays=0;byId('ax-detail').hidden=true;detailId=null;render();persist();toast('任务已归档，文章草稿、历史与防重信息保留，可在生成记录查看。');}
+    if(action==='backfill')byId('ax-backfill').hidden=false;
+    if(action==='cancel-backfill')byId('ax-backfill').hidden=true;
+    if(action==='queue-backfill'){
+      const days=Number(byId('ax-backfill-days').value);
+      if(t.state==='paused')t.pendingBackfillDays=Math.max(t.pendingBackfillDays||0,days);else scheduleDemoBackfill(t,days);
+      render();renderDetail();persist();toast('历史补生成请求已保存；示例不会调用 AI。');
+    }
+    if(action==='draft')toast('真实页面将在文章管理中打开对应草稿；当前为交互方案。');
+    syncOverlay();
+  });
+  render();
+})();
+</script>
