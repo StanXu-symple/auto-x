@@ -49,9 +49,9 @@ from app.services.ai_jobs import (
     resolve_context_skills,
 )
 from app.services.article_media import (
-    SOURCE_SCREENSHOT_IMAGES_KEY,
     article_screenshot_copies,
     clear_unreferenced_article_images,
+    preserve_article_media_metadata,
 )
 
 router = APIRouter(prefix="/ai", tags=["AI Creation"])
@@ -657,13 +657,7 @@ async def patch_ai_draft(
         )
     changes = payload.model_dump(exclude_unset=True, exclude={"revision"})
     if "metadata" in changes:
-        metadata = dict(changes["metadata"]) if changes["metadata"] is not None else None
-        if metadata is not None:
-            metadata.pop(SOURCE_SCREENSHOT_IMAGES_KEY, None)
-        copies = article_screenshot_copies(draft)
-        if copies:
-            metadata = {**(metadata or {}), SOURCE_SCREENSHOT_IMAGES_KEY: copies}
-        changes["metadata"] = metadata
+        changes["metadata"] = preserve_article_media_metadata(draft, changes["metadata"])
     for key, value in changes.items():
         setattr(draft, "draft_metadata" if key == "metadata" else key, value)
     draft.revision += 1

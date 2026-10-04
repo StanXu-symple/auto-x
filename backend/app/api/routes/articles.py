@@ -33,9 +33,11 @@ from app.schemas.article import (
 from app.schemas.common import MessageResponse, Page
 from app.services.article_media import (
     ALLOWED_IMAGE_SUFFIXES,
+    INCLUDE_SOURCE_SCREENSHOT_KEY,
     MAX_ARTICLE_IMAGE_BYTES,
     SOURCE_SCREENSHOT_IMAGES_KEY,
     article_image_path,
+    article_includes_source_screenshot,
     article_screenshot_copies,
     clear_article_images,
     clear_unreferenced_article_images,
@@ -65,12 +67,14 @@ def _article_out(
     source_url: str | None = None,
     source_screenshot: ArticleSourceScreenshot | None = None,
 ) -> ArticleOut:
+    include_source_screenshot = article_includes_source_screenshot(article)
     return ArticleOut(
         id=article.id,
         job_id=article.job_id,
         source_tweet_id=article.source_tweet_id,
         source_url=source_url,
-        source_screenshot=source_screenshot,
+        source_screenshot=source_screenshot if include_source_screenshot else None,
+        include_source_screenshot=include_source_screenshot,
         article_source=article.article_source,
         title=article.title,
         content=article.content,
@@ -144,7 +148,7 @@ async def _article_sources(
 
 
 async def _source_screenshot_path(db: DbSession, article: AIDraft) -> Path | None:
-    if article.source_tweet_id is None:
+    if article.source_tweet_id is None or not article_includes_source_screenshot(article):
         return None
     screenshot = await db.scalar(
         select(TweetScreenshot)
@@ -274,8 +278,11 @@ async def update_article(
             raise APIError(400, "article_image_invalid", "图片不存在或不属于当前用户")
     old_images = list(article.images or [])
     for key, value in changes.items():
-        setattr(article, key, value)
-    if {"title", "content", "excerpt", "images"} & changes.keys():
+        if key == INCLUDE_SOURCE_SCREENSHOT_KEY:
+            article.draft_metadata = {**(article.draft_metadata or {}), key: value}
+        else:
+            setattr(article, key, value)
+    if {"title", "content", "excerpt", "images", INCLUDE_SOURCE_SCREENSHOT_KEY} & changes.keys():
         article.publish_status = "unpublished"
         article.publish_channel = None
         article.publish_attempt_id = None

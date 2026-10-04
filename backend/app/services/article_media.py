@@ -16,6 +16,7 @@ ARTICLE_UPLOAD_DIR = Path(os.getenv("ARTICLE_UPLOAD_DIR", "/var/lib/xsentinel/ar
 ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_ARTICLE_IMAGE_BYTES = 10 * 1024 * 1024
 SOURCE_SCREENSHOT_IMAGES_KEY = "source_screenshot_images"
+INCLUDE_SOURCE_SCREENSHOT_KEY = "include_source_screenshot"
 
 
 def _screenshot_copy_names(article_id: int, metadata: dict | None) -> list[str]:
@@ -32,6 +33,29 @@ def _screenshot_copy_names(article_id: int, metadata: dict | None) -> list[str]:
 
 def article_screenshot_copies(article: AIDraft) -> list[str]:
     return _screenshot_copy_names(article.id, article.draft_metadata)
+
+
+def article_includes_source_screenshot(article: AIDraft) -> bool:
+    # Existing articles have no preference and continue to include the source image.
+    return (article.draft_metadata or {}).get(INCLUDE_SOURCE_SCREENSHOT_KEY) is not False
+
+
+def preserve_article_media_metadata(
+    article: AIDraft | None, metadata: dict | None
+) -> dict | None:
+    """Only the article editor may change media preferences and tracked copies."""
+    result = dict(metadata) if metadata is not None else None
+    if result is not None:
+        result.pop(SOURCE_SCREENSHOT_IMAGES_KEY, None)
+        result.pop(INCLUDE_SOURCE_SCREENSHOT_KEY, None)
+    if article is not None:
+        copies = article_screenshot_copies(article)
+        if copies:
+            result = {**(result or {}), SOURCE_SCREENSHOT_IMAGES_KEY: copies}
+        preference = (article.draft_metadata or {}).get(INCLUDE_SOURCE_SCREENSHOT_KEY)
+        if isinstance(preference, bool):
+            result = {**(result or {}), INCLUDE_SOURCE_SCREENSHOT_KEY: preference}
+    return result
 
 
 async def clear_unreferenced_article_images(db: AsyncSession, candidates: list[str]) -> None:

@@ -71,7 +71,17 @@ function setup(t, props, api) {
   t.mock.method(URL, 'revokeObjectURL', (url) => revoked.push(url))
   const inputs = reactive(props)
   const gallery = ref()
-  const app = renderer.createApp({ render: () => h(Gallery, { ...inputs, ref: gallery }) })
+  const removedImages = []
+  let removedScreenshots = 0
+  const app = renderer.createApp({
+    render: () =>
+      h(Gallery, {
+        ...inputs,
+        ref: gallery,
+        onRemoveImage: (path) => removedImages.push(path),
+        onRemoveSourceScreenshot: () => removedScreenshots++,
+      }),
+  })
   app.mount({})
   const state = gallery.value.$.setupState
   let mounted = true
@@ -80,7 +90,17 @@ function setup(t, props, api) {
     mounted = false
   }
   t.after(unmount)
-  return { inputs, unmount, state, created, revoked }
+  return {
+    inputs,
+    unmount,
+    state,
+    created,
+    revoked,
+    removedImages,
+    get removedScreenshots() {
+      return removedScreenshots
+    },
+  }
 }
 
 test('an article with only a source screenshot loads its authenticated screenshot media', async (t) => {
@@ -194,4 +214,53 @@ test('closing the gallery discards in-flight media requests', async (t) => {
   await flush()
   assert.equal(state.created.length, 0)
   assert.deepEqual(state.state.urls, {})
+})
+
+test('editable gallery identifies uploaded and source photos without mutating its input', async (t) => {
+  const gallery = setup(
+    t,
+    { images: ['1/upload.png'], sourceScreenshot: { tweet_id: '123' }, removable: true },
+    { image: async () => new Blob(), screenshot: async () => new Blob() },
+  )
+  await flush()
+  gallery.state.removeMedia(gallery.state.media[1])
+  gallery.state.removeMedia(gallery.state.media[0])
+  assert.deepEqual(gallery.removedImages, ['1/upload.png'])
+  assert.equal(gallery.removedScreenshots, 1)
+  assert.deepEqual(gallery.inputs.images, ['1/upload.png'])
+  assert.equal(gallery.inputs.sourceScreenshot.tweet_id, '123')
+})
+
+test('read-only and busy galleries reject deletion events', async (t) => {
+  const gallery = setup(
+    t,
+    { images: ['1/upload.png'], sourceScreenshot: { tweet_id: '123' } },
+    { image: async () => new Blob(), screenshot: async () => new Blob() },
+  )
+  await flush()
+  for (const item of gallery.state.media) gallery.state.removeMedia(item)
+  gallery.inputs.removable = true
+  gallery.inputs.disabled = true
+  await flush()
+  for (const item of gallery.state.media) gallery.state.removeMedia(item)
+  assert.deepEqual(gallery.removedImages, [])
+  assert.equal(gallery.removedScreenshots, 0)
+})
+
+test('removing a photo discards its pending preview and revokes loaded previews', async (t) => {
+  const pending = deferred()
+  const gallery = setup(
+    t,
+    { images: ['1/upload.png'], sourceScreenshot: { tweet_id: '123' }, removable: true },
+    { image: () => pending.promise, screenshot: async () => new Blob() },
+  )
+  await flush()
+  gallery.inputs.images = []
+  gallery.inputs.sourceScreenshot = null
+  await flush()
+  pending.resolve(new Blob())
+  await flush()
+  assert.deepEqual(gallery.revoked, ['blob:test-1'])
+  assert.deepEqual(gallery.state.urls, {})
+  assert.equal(gallery.created.length, 1)
 })

@@ -51,7 +51,16 @@ const bots = ref<QQBotAccount[]>([])
 const groups = ref<QQJoinedGroup[]>([])
 const historyArticle = ref<EntityId | null>(null)
 const form = reactive<ArticlePayload>({ title: '', content: '', excerpt: '', images: [] })
-const mediaCount = computed(() => form.images.length + (editing.value?.source_screenshot ? 1 : 0))
+const includeSourceScreenshot = ref(true)
+const sourceScreenshot = computed(() =>
+  includeSourceScreenshot.value ? editing.value?.source_screenshot : null,
+)
+const visibleMediaCount = computed(() => form.images.length + (sourceScreenshot.value ? 1 : 0))
+// Reserve a slot even while a restored or pending source screenshot is not yet loaded.
+const mediaCount = computed(
+  () =>
+    form.images.length + (includeSourceScreenshot.value && editing.value?.source_tweet_id ? 1 : 0),
+)
 const publishForm = reactive({
   channel: 'qq' as 'qq' | 'xhs',
   bot_id: null as number | null,
@@ -91,7 +100,9 @@ const {
   '无法读取发布历史',
 )
 function edit(article?: Article) {
+  if (saving.value || uploading.value) return
   editing.value = article || null
+  includeSourceScreenshot.value = article?.include_source_screenshot !== false
   Object.assign(
     form,
     article
@@ -110,12 +121,18 @@ function view(article: Article) {
   previewOpen.value = true
 }
 async function save() {
+  if (saving.value || uploading.value) return
   if (!form.title.trim() || !form.content.trim()) return message.warning('请填写标题和正文')
   saving.value = true
   try {
+    const payload = { ...form, images: [...form.images] }
     if (editing.value)
-      await articlesApi.update(editing.value.id, { ...form, revision: editing.value.revision })
-    else await articlesApi.create(form)
+      await articlesApi.update(editing.value.id, {
+        ...payload,
+        include_source_screenshot: includeSourceScreenshot.value,
+        revision: editing.value.revision,
+      })
+    else await articlesApi.create(payload)
     open.value = false
     await load()
     message.success('文章已保存')
@@ -128,7 +145,7 @@ async function save() {
 async function upload(event: Event) {
   const files = Array.from((event.target as HTMLInputElement).files || [])
   ;(event.target as HTMLInputElement).value = ''
-  if (!files.length || uploading.value) return
+  if (!open.value || !files.length || uploading.value || saving.value) return
   if (mediaCount.value + files.length > 18)
     return message.warning('每篇文章最多 18 张图片（含自动关联的原帖截图）')
   uploading.value = true
@@ -141,6 +158,19 @@ async function upload(event: Event) {
   } finally {
     uploading.value = false
   }
+}
+function removeImage(path: string) {
+  if (saving.value || uploading.value) return
+  form.images = form.images.filter((image) => image !== path)
+}
+function removeSourceScreenshot() {
+  if (saving.value || uploading.value) return
+  includeSourceScreenshot.value = false
+}
+function restoreSourceScreenshot() {
+  if (saving.value || uploading.value) return
+  if (form.images.length >= 18) return message.warning('请先删除一张图片，为原帖截图留出位置')
+  includeSourceScreenshot.value = true
 }
 function remove(article: Article) {
   Modal.confirm({
@@ -331,8 +361,13 @@ watch(
       cancel-text="取消"
       width="760px"
       :confirm-loading="saving"
+      :ok-button-props="{ disabled: uploading }"
+      :closable="!saving && !uploading"
+      :mask-closable="!saving && !uploading"
+      :keyboard="!saving && !uploading"
+      :cancel-button-props="{ disabled: saving || uploading }"
       @ok="save"
-      ><a-form layout="vertical"
+      ><a-form layout="vertical" :disabled="saving"
         ><a-form-item label="标题" required><a-input v-model:value="form.title" /></a-form-item
         ><a-form-item label="摘要"
           ><a-textarea v-model:value="form.excerpt" :rows="2" /></a-form-item
@@ -341,30 +376,53 @@ watch(
         ><a-form-item
           label="媒体"
           :extra="
-            editing?.source_screenshot
-              ? '原帖截图已自动关联，发布时一并发送。每篇文章最多 18 张图片（含原帖截图）。'
-              : '每篇文章最多 18 张图片。'
+            includeSourceScreenshot && editing?.source_tweet_id
+              ? '每篇文章最多 18 张图片（为原帖截图保留 1 张）。删除图片在保存后生效，取消编辑会保留原图片。'
+              : '每篇文章最多 18 张图片。删除图片在保存后生效，取消编辑会保留原图片。'
           "
           ><label class="upload-zone"
             ><input
               type="file"
               accept="image/jpeg,image/png,image/webp"
               multiple
-              :disabled="uploading || mediaCount >= 18"
+              :disabled="saving || uploading || mediaCount >= 18"
               @change="upload"
             /><strong><UploadOutlined /> {{ uploading ? '上传中…' : '上传媒体' }}</strong
             ><span>支持 JPG、PNG、WebP 图片，随文章保存</span></label
           >
-          <div v-if="mediaCount" class="muted" style="margin-top: 10px">
-            已添加 {{ mediaCount }} 张图片
+          <div v-if="visibleMediaCount" class="muted" style="margin-top: 10px">
+            已添加 {{ visibleMediaCount }} 张图片
           </div>
           <ArticleMediaGallery
-            v-if="open && mediaCount"
+            v-if="open && visibleMediaCount"
             :images="form.images"
-            :source-screenshot="editing?.source_screenshot"
+            :source-screenshot="sourceScreenshot"
+            removable
+            :disabled="saving || uploading"
+            @remove-image="removeImage"
+            @remove-source-screenshot="removeSourceScreenshot"
             style="margin-top: 12px"
-          /> </a-form-item></a-form
-    ></a-modal>
+          />
+          <div v-if="editing?.source_tweet_id && !includeSourceScreenshot" style="margin-top: 10px">
+            <span class="muted">当前文章已移除原帖截图。</span>
+            <a-button
+              type="link"
+              size="small"
+              :disabled="saving || uploading"
+              @click="restoreSourceScreenshot"
+              >恢复自动关联</a-button
+            >
+          </div>
+          <p
+            v-else-if="editing?.source_tweet_id && !sourceScreenshot"
+            class="muted"
+            style="margin-top: 10px"
+          >
+            保存后将自动关联来源帖子的可用截图。
+          </p>
+        </a-form-item></a-form
+      ></a-modal
+    >
     <a-modal
       v-model:open="previewOpen"
       title="查看文章"

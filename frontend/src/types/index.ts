@@ -746,6 +746,7 @@ export interface Article {
   source_tweet_id: EntityId | null
   source_url?: string | null
   source_screenshot?: ArticleSourceScreenshot | null
+  include_source_screenshot?: boolean
   article_source: ArticleSource
   title: string
   content: string
@@ -799,6 +800,7 @@ export interface ArticlePublishHistory {
 }
 
 export interface UpdateArticlePayload extends Partial<ArticlePayload> {
+  include_source_screenshot?: boolean
   revision: number
 }
 

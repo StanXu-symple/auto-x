@@ -17,7 +17,7 @@ from app.models.tweet import Tweet
 from app.models.tweet_screenshot import TweetScreenshot
 from app.schemas.ai import AIDraftPatch
 from app.services import article_media, tweet_screenshot_media
-from app.services.article_media import SOURCE_SCREENSHOT_IMAGES_KEY
+from app.services.article_media import INCLUDE_SOURCE_SCREENSHOT_KEY, SOURCE_SCREENSHOT_IMAGES_KEY
 
 
 @pytest.fixture
@@ -147,6 +147,44 @@ async def test_metadata_without_server_copies_keeps_null_semantics(context, meta
     assert result.metadata == expected
 
 
+@pytest.mark.parametrize("preference", [False, True])
+@pytest.mark.parametrize("metadata", [None, {}, {INCLUDE_SOURCE_SCREENSHOT_KEY: "override"}])
+async def test_metadata_edit_preserves_article_screenshot_preference(context, preference, metadata):
+    context.draft.draft_metadata = {INCLUDE_SOURCE_SCREENSHOT_KEY: preference}
+    await context.db.commit()
+
+    result = await patch_ai_draft(
+        1, AIDraftPatch(metadata=metadata, revision=1), context.db, None
+    )
+
+    assert result.metadata == {INCLUDE_SOURCE_SCREENSHOT_KEY: preference}
+    assert article_media.article_includes_source_screenshot(context.draft) is preference
+    assert await asyncio.to_thread(context.source_path.exists)
+
+
+async def test_metadata_edit_cannot_set_screenshot_preference_for_legacy_article(context):
+    context.draft.draft_metadata = None
+    await context.db.commit()
+
+    result = await patch_ai_draft(
+        1, AIDraftPatch(metadata={INCLUDE_SOURCE_SCREENSHOT_KEY: False}, revision=1),
+        context.db, None,
+    )
+
+    assert result.metadata == {}
+    assert article_media.article_includes_source_screenshot(context.draft) is True
+
+
+def test_generated_metadata_cannot_set_new_article_screenshot_preferences():
+    metadata = {
+        "other": True, INCLUDE_SOURCE_SCREENSHOT_KEY: False,
+        SOURCE_SCREENSHOT_IMAGES_KEY: ["7/source-1-" + "a" * 64 + ".png"],
+    }
+
+    assert article_media.preserve_article_media_metadata(None, metadata) == {"other": True}
+    assert metadata[INCLUDE_SOURCE_SCREENSHOT_KEY] is False
+
+
 async def test_job_delete_cleans_copies_and_uploads_but_preserves_source_and_shared_media(context):
     shared_image = "7/shared.png"
     shared_path = article_media.write_article_image(shared_image, b"shared upload")
@@ -187,11 +225,16 @@ async def test_running_job_delete_keeps_draft_and_files(context):
     assert await asyncio.to_thread(context.upload_path.exists)
 
 
+@pytest.mark.parametrize("preference", [None, False, True])
 async def test_regeneration_preserves_server_copies_and_ignores_generated_copy_metadata(
-    context, monkeypatch
+    context, monkeypatch, preference
 ):
     context.job.status = "running"
     context.job.claim_token = "claim"
+    if preference is not None:
+        context.draft.draft_metadata = {
+            **context.draft.draft_metadata, INCLUDE_SOURCE_SCREENSHOT_KEY: preference,
+        }
     await context.db.commit()
     monkeypatch.setattr("app.ai_worker.AsyncSessionFactory", context.factory)
     worker = object.__new__(AIGenerationWorker)
@@ -206,7 +249,10 @@ async def test_regeneration_preserves_server_copies_and_ignores_generated_copy_m
         {
             "title": "Regenerated article",
             "content": "New content",
-            "metadata": {"new": True, SOURCE_SCREENSHOT_IMAGES_KEY: [supplied_image]},
+            "metadata": {
+                "new": True, SOURCE_SCREENSHOT_IMAGES_KEY: [supplied_image],
+                INCLUDE_SOURCE_SCREENSHOT_KEY: not preference,
+            },
         },
         {},
         "a" * 64,
@@ -219,5 +265,9 @@ async def test_regeneration_preserves_server_copies_and_ignores_generated_copy_m
     assert context.draft.revision == 2
     assert context.draft.draft_metadata[SOURCE_SCREENSHOT_IMAGES_KEY] == [context.copy_image]
     assert context.draft.draft_metadata["new"] is True
+    if preference is None:
+        assert INCLUDE_SOURCE_SCREENSHOT_KEY not in context.draft.draft_metadata
+    else:
+        assert context.draft.draft_metadata[INCLUDE_SOURCE_SCREENSHOT_KEY] is preference
     assert context.draft.images == [context.upload_image]
     assert await asyncio.to_thread(context.copy_path.exists)

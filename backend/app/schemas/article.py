@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, StrictBool, field_validator, model_validator
 
 from app.schemas.common import APIModel
 
@@ -35,6 +35,7 @@ class ArticlePatch(APIModel):
     content: str | None = Field(default=None, min_length=1, max_length=50000)
     excerpt: str | None = Field(default=None, max_length=1000)
     images: list[str] | None = Field(default=None, max_length=18)
+    include_source_screenshot: StrictBool | None = None
     revision: int = Field(ge=1)
 
     @model_validator(mode="after")
@@ -58,9 +59,9 @@ class ArticlePatch(APIModel):
     def normalize_optional_text(cls, value: str | None) -> str | None:
         return value.strip() or None if value is not None else None
 
-    @field_validator("images", mode="before")
+    @field_validator("images", "include_source_screenshot", mode="before")
     @classmethod
-    def reject_null_images(cls, value: object) -> object:
+    def reject_null_media_fields(cls, value: object) -> object:
         if value is None:
             raise ValueError("field cannot be null")
         return value
@@ -78,6 +79,7 @@ class ArticleOut(APIModel):
     source_tweet_id: int | None
     source_url: str | None = None
     source_screenshot: ArticleSourceScreenshot | None = None
+    include_source_screenshot: bool = True
     article_source: ArticleSource
     title: str
     content: str

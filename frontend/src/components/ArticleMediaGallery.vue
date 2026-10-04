@@ -6,6 +6,12 @@ import type { ArticleSourceScreenshot } from '@/types'
 const props = defineProps<{
   images: string[]
   sourceScreenshot?: ArticleSourceScreenshot | null
+  removable?: boolean
+  disabled?: boolean
+}>()
+const emit = defineEmits<{
+  removeImage: [path: string]
+  removeSourceScreenshot: []
 }>()
 type GalleryMedia = { key: string; label: string; alt: string } & (
   { type: 'screenshot'; tweetId: string } | { type: 'image'; path: string }
@@ -33,6 +39,12 @@ const media = computed<GalleryMedia[]>(() => [
 const urls = reactive<Record<string, string>>({})
 const failed = reactive<Record<string, boolean>>({})
 let request = 0
+
+function removeMedia(item: GalleryMedia) {
+  if (!props.removable || props.disabled) return
+  if (item.type === 'screenshot') emit('removeSourceScreenshot')
+  else emit('removeImage', item.path)
+}
 
 function releaseUrls() {
   for (const [path, url] of Object.entries(urls)) {
@@ -86,6 +98,17 @@ onBeforeUnmount(() => {
       />
       <span v-else class="muted">{{ failed[item.key] ? '图片加载失败' : '图片加载中…' }}</span>
       <small class="muted">{{ item.label }}</small>
+      <a-button
+        v-if="removable"
+        type="text"
+        size="small"
+        danger
+        :disabled="disabled"
+        :aria-label="item.type === 'screenshot' ? '删除原帖截图' : `删除${item.alt}`"
+        @click="removeMedia(item)"
+      >
+        删除图片
+      </a-button>
     </div>
   </div>
 </template>

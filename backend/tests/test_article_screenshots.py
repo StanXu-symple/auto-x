@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -183,11 +184,97 @@ async def test_existing_article_automatically_exposes_source_screenshot(database
     article = (await articles(database)).items[0]
 
     assert article.images == []
+    assert article.include_source_screenshot is True
     assert article.source_url == "https://x.com/alice/status/123"
     assert article.source_screenshot.tweet_id == "123"
     assert article.source_screenshot.sha256 == screenshot.sha256
     assert article.source_screenshot.captured_at is not None
     assert article.revision == 1
+
+
+@pytest.mark.parametrize("value", [None, "false", 0, 1])
+def test_screenshot_preference_rejects_null_and_non_booleans(value):
+    with pytest.raises(ValidationError):
+        ArticlePatch(include_source_screenshot=value, revision=1)
+
+
+async def test_remove_source_screenshot_persists_per_article_and_keeps_publish_copy(
+    database, admin, xhs_publish
+):
+    screenshot = await add_screenshot(database)
+    await publish_article(1, ArticlePublishCreate(channel="xhs"), database, None, admin)
+    copied_path = Path(xhs_publish.await_args.kwargs["payload"]["images"][0])
+    article = await database.get(AIDraft, 1)
+    prior_copies = article_media.article_screenshot_copies(article)
+    database.add(
+        AIDraft(
+            id=2, source_tweet_id=1, article_source="ai", title="Same source",
+            content="Other article", images=[], revision=1,
+        )
+    )
+    await database.commit()
+
+    result = await update_article(
+        1, ArticlePatch(include_source_screenshot=False, revision=1), database, admin
+    )
+    await database.refresh(article)
+
+    assert result.include_source_screenshot is False
+    assert result.source_screenshot is None
+    assert result.revision == 2
+    assert result.publish_status == "unpublished"
+    assert result.publish_channel is None
+    assert result.publish_error is None
+    assert result.published_at is None
+    assert article.publish_attempt_id is None
+    assert article.draft_metadata[article_media.INCLUDE_SOURCE_SCREENSHOT_KEY] is False
+    assert article_media.article_screenshot_copies(article) == prior_copies
+    assert await asyncio.to_thread(copied_path.read_bytes) == screenshot_png()
+    assert tweet_screenshot_media.screenshot_path(screenshot.image_path) is not None
+    assert await database.get(TweetScreenshot, "123") is screenshot
+    refreshed = {item.id: item for item in (await articles(database)).items}
+    assert refreshed[1].include_source_screenshot is False
+    assert refreshed[1].source_screenshot is None
+    assert refreshed[1].source_url == refreshed[2].source_url
+    assert refreshed[2].include_source_screenshot is True
+    assert refreshed[2].source_screenshot.tweet_id == "123"
+
+    edited = await update_article(
+        1, ArticlePatch(title="Still detached", revision=2), database, admin
+    )
+    assert edited.include_source_screenshot is False
+    assert edited.source_screenshot is None
+    restored = await update_article(
+        1, ArticlePatch(include_source_screenshot=True, revision=3), database, admin
+    )
+    assert restored.include_source_screenshot is True
+    assert restored.source_screenshot.tweet_id == "123"
+    assert await asyncio.to_thread(copied_path.exists)
+
+
+async def test_removed_source_screenshot_stays_removed_when_capture_finishes(database, admin):
+    await update_article(
+        1, ArticlePatch(include_source_screenshot=False, revision=1), database, admin
+    )
+    await add_screenshot(database)
+
+    result = (await articles(database)).items[0]
+    assert result.include_source_screenshot is False
+    assert result.source_screenshot is None
+
+
+async def test_queued_article_cannot_change_screenshot_preference(database, admin):
+    article = await database.get(AIDraft, 1)
+    article.publish_status = "queued"
+    await database.commit()
+
+    with pytest.raises(APIError) as error:
+        await update_article(
+            1, ArticlePatch(include_source_screenshot=False, revision=1), database, admin
+        )
+
+    assert error.value.code == "article_publish_in_progress"
+    assert article_media.article_includes_source_screenshot(article) is True
 
 
 async def test_article_list_resolves_shared_sources_in_one_database_query(database):
@@ -341,6 +428,72 @@ async def test_xhs_publish_accepts_source_screenshot_as_only_image(
     assert path.parent == media_directories.uploads / str(admin.id)
     assert validated_source(str(path), admin.id) == path
     assert (await database.get(AIDraft, 1)).images == []
+
+
+async def test_xhs_publish_omits_removed_source_and_accepts_18_uploaded_images(
+    database, admin, xhs_publish
+):
+    screenshot = await add_screenshot(database)
+    images = [f"{admin.id}/upload-{index}.png" for index in range(18)]
+    for image in images:
+        article_media.write_article_image(image, b"manual image")
+    await update_article(
+        1, ArticlePatch(images=images, include_source_screenshot=False, revision=1),
+        database, admin,
+    )
+
+    await publish_article(1, ArticlePublishCreate(channel="xhs"), database, None, admin)
+
+    assert xhs_publish.await_args.kwargs["payload"]["images"] == [
+        str(article_media.article_image_path(image)) for image in images
+    ]
+    assert article_media.article_screenshot_copies(await database.get(AIDraft, 1)) == []
+    assert tweet_screenshot_media.screenshot_path(screenshot.image_path) is not None
+
+
+async def test_removing_all_images_requires_an_image_before_xhs_publish(
+    database, admin, xhs_publish
+):
+    screenshot = await add_screenshot(database)
+    image = f"{admin.id}/uploaded.png"
+    upload_path = article_media.write_article_image(image, b"manual image")
+    article = await database.get(AIDraft, 1)
+    article.images = [image]
+    await database.commit()
+    await update_article(
+        1, ArticlePatch(images=[], include_source_screenshot=False, revision=1), database, admin
+    )
+
+    with pytest.raises(APIError) as error:
+        await publish_article(1, ArticlePublishCreate(channel="xhs"), database, None, admin)
+
+    assert error.value.code == "xhs_images_required"
+    xhs_publish.assert_not_awaited()
+    assert not await asyncio.to_thread(upload_path.exists)
+    assert tweet_screenshot_media.screenshot_path(screenshot.image_path) is not None
+
+
+async def test_qq_publish_omits_removed_source_screenshot(database, admin, monkeypatch):
+    screenshot = await add_screenshot(database)
+    image = f"{admin.id}/uploaded.png"
+    upload_path = article_media.write_article_image(image, b"manual image")
+    await update_article(
+        1, ArticlePatch(images=[image], include_source_screenshot=False, revision=1),
+        database, admin,
+    )
+    enqueue = AsyncMock()
+    monkeypatch.setattr("app.api.routes.articles.enqueue_qq_delivery_ids", enqueue)
+
+    await publish_article(
+        1, ArticlePublishCreate(channel="qq", bot_id=1, group_openids=["group"]),
+        database, None, admin,
+    )
+
+    deliveries = list(await database.scalars(select(QQDelivery).order_by(QQDelivery.sequence)))
+    assert [Path(row.media_path) for row in deliveries if row.media_path] == [upload_path]
+    assert article_media.article_screenshot_copies(await database.get(AIDraft, 1)) == []
+    assert tweet_screenshot_media.screenshot_path(screenshot.image_path) is not None
+    enqueue.assert_awaited_once()
 
 
 @pytest.mark.parametrize("upload_count", [17, 18])
