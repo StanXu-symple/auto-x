@@ -424,6 +424,10 @@ onMounted(async () => {
                   {{ record.source_text || '—' }}
                 </p></template
               ></a-table-column
+            ><a-table-column title="任务来源"
+              ><template #default="{ record }">{{
+                record.manual ? '手动生成' : '监听自动生成'
+              }}</template></a-table-column
             ><a-table-column title="状态"
               ><template #default="{ record }"
                 ><StatusPill :value="record.status" /></template></a-table-column
@@ -575,7 +579,8 @@ onMounted(async () => {
               ><a-button :loading="loading.source" @click="testSource">测试连接</a-button></a-space
             ></a-form
           ></a-card
-        ></a-tab-pane></a-tabs
+        ></a-tab-pane
+      ></a-tabs
     ><a-modal
       v-model:open="skillOpen"
       :title="editingSkill ? '编辑 Skill' : '新建 Skill'"
