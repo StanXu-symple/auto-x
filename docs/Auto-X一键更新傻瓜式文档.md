@@ -1039,3 +1039,41 @@ bash kejilion.sh app auto-x
 前端、backend、认证中心 HTTP 均返回 200；线上 ArticlesView 资源与新容器内文件逐字一致，并包含原帖截图展示代码。新 backend 从现有四篇文章中识别到三篇带成功原帖截图的文章，三篇均正确返回 `source_screenshot`。XHS 和浏览器在线，远程日志均可读取 200 行，两主机和 13 个监控实例全部健康。一次 hn-1 SSH 在连接阶段关闭，重连只读检查成功，未重新运行安装器；此时浏览器无活动任务，空闲池 `browser_pool_size=0` 属于按需启动状态。
 
 本次未触发真实 QQ 消息或小红书图片上传/发布。截图副本发送顺序与 18 张上限已有针对性测试；实际平台投递和扫码需由用户从页面发起后结合任务记录验证。创作页导航上限已改为 60 秒并补充阶段诊断；平台返回 461 或要求重新登录时仍需按登录态处理，延长等待不能解除平台验证。
+
+## 二十五、文章照片删除与 AI 任务来源列升级
+
+2026-10-05，本地 `dev` 的 `aeeb7cd`（文章编辑删除上传照片和原帖截图）与 `341e631`（AI 生成任务显示手动/监听自动来源）已推送 `dev` 并快进 `main`。固定运行 SHA 为 `341e6314ffc7cb604f148cbaaf93465600ac69c9`。上次实际部署为 `48aca12`；其间的 `7a5fef9` 只是部署文档。本次需要 tc-2 的 `backend`、`ai-worker`、`frontend`；安装器更新完整七项原清单，让依赖服务使用同一固定镜像。hn-1 没有本次业务改动，保持原四项和旧运行 SHA。
+
+此次没有新增 Alembic、Compose 或 Nacos 业务配置，数据库应仍为 `0031_tweet_screenshots`。文章截图是否自动关联写入现有 `draft_metadata`；AI Worker 重新生成或修改元数据时需保留这个选择。编辑删除在点击“保存”后生效，取消编辑保留原图片；恢复原帖截图会预留一张媒体容量。
+
+### 发布与构建故障恢复
+
+`main` 首次触发的 [Actions 37250113733](https://github.com/StanXu-symple/auto-x/actions/runs/37250113733) 在构建 Camoufox 镜像时失败，前端镜像因此未构建。作业日志中 `python -m camoufox fetch` 查询 `api.github.com/repos/camoufox/camoufox/releases` 收到 `403 rate limit exceeded`；本次提交没有修改 Camoufox 的 Dockerfile 或构建依赖。重跑同一 SHA 的失败作业后，第二次运行成功，四种固定 SHA 镜像完成发布。**首次失败时不得因 backend 镜像已存在就启动安装器；必须等待完整工作流成功并核对目标镜像。**
+
+### 备份与菜单 2 更新
+
+tc-2 完整备份为 `/home/docker/auto-x/backups/pre-article-task-source-tc-2-20261005T011802Z/`：保存 `.env`、原七项服务清单、Compose 覆盖、安装定义、控制面、11 个容器记录、PostgreSQL custom dump、`article_uploads` 与 `tweet_screenshots` 卷归档以及三份 Nacos JSON。数据库转储经 `pg_restore --list`、卷归档经 `tar -tzf`、Nacos 文档经 JSON 解析，22 个文件与 manifest 的大小和 SHA256 一致；目录 700、文件 600。此前不完整备份 `/home/docker/auto-x/backups/pre-article-task-source-tc-2-20261005T011043Z/` 缺 Nacos 文档和摘要，不能作为回滚基线。
+
+备份脚本最初将 `.env` 中以 `/nacos` 结尾的 `NACOS_SERVER_ADDR` 再拼 `/nacos/v1/auth/login`，形成 `/nacos/nacos/v1/auth/login` 并返回 404。先规范化基址，再新建完整备份目录；不要把不同时点的文件补进失败目录。这个错误发生在备份脚本，不代表 Nacos 服务不可用。
+
+在 tc-2 先无超时预拉并校验 `ghcr.io/stanxu-symple/auto-x-backend:sha-341e6314ffc7cb604f148cbaaf93465600ac69c9` 和对应 `frontend` 镜像；两镜像的 OCI revision 必须都等于目标完整 SHA。然后使用原安装器菜单 `2. 更新` 的等价入口：
+
+```bash
+cd /root
+TERM=xterm COMPOSE_PROGRESS=plain \
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-341e6314ffc7cb604f148cbaaf93465600ac69c9 \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1 \
+AUTO_X_SERVICES=backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend \
+bash kejilion.sh app auto-x
+```
+
+`KJ_AUTO_X_CAMOUFOX_REMOTE=1` 保持 tc-2 通过 Nacos 使用 hn-1 的浏览器；`KJ_AUTO_X_SKIP_PULL=1` 仅在两个所需镜像已完整下载并核对 revision 后使用。后台安装器日志及退出码分别记录在 `/root/auto-x-article-task-source-341e631-update.log`、`.pid`、`.exit`。本次退出码为 0，安装器输出“Auto-X 已从 GitHub 项目更新完成”。
+
+### 验收
+
+tc-2 源码和七项业务容器的 OCI revision 均为 `341e6314ffc7cb604f148cbaaf93465600ac69c9`、全部 healthy；`migrate` 退出码 0。frontend 8080、backend 就绪接口、auth-center 就绪接口均返回 HTTP 200，原七项服务清单完整。hn-1 四项服务保持原运行 SHA `48aca12ed3054608aa86190c7765359fbff59910` 且 healthy，8006/8007 健康接口返回 HTTP 200。数据库仍为 `0031_tweet_screenshots`；原服务清单和 Compose 覆盖逐字一致，`.env` 仅 `IMAGE_TAG`、`FRONTEND_IMAGE_TAG` 变化。Nacos 三份 JSON 的值均与备份一致，其中共享配置经安装器重新序列化后原文字节不同，两份监控配置原文字节相同。
+
+线上前端资源已核对包含文章编辑的“恢复自动关联”及生成任务的“监听自动生成”文案。真实文章编辑保存和生成任务由用户在业务使用时复测。
