@@ -1123,3 +1123,39 @@ bash kejilion.sh app auto-x
 更新后 tc-2 源码与七项业务容器 revision 都是目标 SHA，七项 healthy；Compose `migrate` 为 `exited|0`。数据库版本为 `0032_ai_listen_tasks`，`ai_settings.auto_trigger_mode=legacy_all`，原生成记录 5 条、草稿 5 条保留，新监听任务、历史回溯与逐次尝试记录均为 0。frontend 8080、backend 就绪、auth-center 就绪均返回 HTTP 200；未认证访问新监听任务及预览 API 返回 401。前端资源包含“监听任务”和中文“全部状态”文案。未创建真实任务，也未调用 AI 数据源。
 
 原七项服务清单、Compose 覆盖、安装定义逐字一致；`.env` 仅 `IMAGE_TAG` 和 `FRONTEND_IMAGE_TAG` 两键变化。三份 Nacos Data ID 均返回 HTTP 200，JSON 语义与备份一致。`article_uploads` 和 `tweet_screenshots` 两卷逐文件摘要与备份一致，无文件增删改。本轮 hn-1 未升级。
+
+## 二十七、AI 监听任务自动推送小红书和 QQ 更新
+
+2026-10-07，`dev` 提交 `36247a532c8e0c451e415be9e31802998ef81d43` 已合入 `main`，[GitHub Actions 37507910172](https://github.com/StanXu-symple/auto-x/actions/runs/37507910172) 构建成功。监听任务的新建和编辑支持多选生成后自动推送到小红书、QQ；QQ 可指定机器人及多个群。投递使用生成任务快照和每渠道独立的持久记录，页面展示结果及安全重试入口。旧监听任务的 `auto_publish_channels` 默认是空列表，不会因升级自行向平台发送内容。
+
+本次新增顺序迁移 `0033_ai_listen_auto_publish`、`0034_ai_publish_dispatches`。需要在 **tc-2** 更新 `backend`、`ai-worker`、`frontend`；为保持安装器的原完整清单并避免 `--remove-orphans` 移除其他服务，仍选择 `backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend` 七项。`ai-worker` 与 `backend` 使用同一 core 镜像。**hn-1 不需要为本次改动更新** xhs-worker、camoufox-worker、monitor-center 或 monitor-agent；AI Worker 通过 Nacos 发现 hn-1 的 XHS API。
+
+### 更新前备份与安装器入口
+
+tc-2 的升级前备份目录为 `/home/docker/auto-x/backups/pre-ai-auto-publish-tc-2-20261006T181040Z/`。其中 23 个文件已校验，manifest SHA256 为 `7c3d9daf01b001e45df2704d5efa307045631fe8d2b942cc675a2d7019439cc5`；PostgreSQL custom dump 能用 `pg_restore --list` 读取。备份包含 `.env`、原完整服务清单、Compose 覆盖、控制面文件、三份 Nacos 原配置，以及 `article_uploads`、`tweet_screenshots` 卷归档和摘要。不要把 Nacos 凭据或服务密钥打印到普通日志。
+
+先确认目标完整 SHA 的 Actions 镜像构建成功，再预拉 tc-2 所需的官方 GHCR `backend`、`frontend` 镜像，并核对 OCI `org.opencontainers.image.revision`。只有镜像完整存在且 revision 与目标 SHA 一致时，才可使用下例的 `KJ_AUTO_X_SKIP_PULL=1`。在 tc-2 的 `/root` 执行 `bash kejilion.sh app auto-x`，选择运行环境 `3`（default）和应用菜单 `2`（更新）；下面是该菜单 2 的非交互等价入口：
+
+```bash
+cd /root
+TERM=xterm COMPOSE_PROGRESS=plain \
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-36247a532c8e0c451e415be9e31802998ef81d43 \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1 \
+AUTO_X_SERVICES=backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend \
+bash kejilion.sh app auto-x
+```
+
+`KJ_APPS_SKIP_REFRESH=1` 仅用于 `/root/apps` 已是当前 Auto-X 安装定义的节点。完整更新会先同步源码和 Nacos 配置，Compose `migrate` 自动执行 `alembic upgrade head`，再启动七项服务；无需手工运行迁移。若配置同步、迁移或服务启动失败，应保留现场并先报告问题，确认后再修复重试。
+
+### Nacos 认证配置与验收
+
+安装器会在 Nacos 的 `x-sentinel-config.json` 补入 `SERVICE_CLIENT_AI_WORKER_SECRET`，并在 `SERVICE_AUTH_CLIENTS_JSON` 中新增 `ai-worker` 身份，授权其对 `xhs-worker` 使用 `xhs:execute`。对应密钥回写到 tc-2 的 `data/control-plane/ai-worker.secret`，认证中心启动时将新身份、凭据和授权导入 PostgreSQL。已有 Nacos 值优先，已有身份的授权不会因安装器重新启用；如果现有 `ai-worker` 凭据与密钥不匹配，配置同步会报错并停止本次更新。验收时比较密钥摘要、客户端记录和数据库授权，避免输出明文密钥。
+
+本次已核实：tc-2 安装器退出码为 0，七项服务均为 healthy 且镜像 OCI revision 为上述目标 SHA；`migrate` 为 `exited|0`，数据库 `alembic_version` 为 `0034_ai_publish_dispatches`。frontend 8080、backend `/api/v1/health/ready`、auth-center 就绪接口均返回 HTTP 200。认证中心中的 `ai-worker` 身份已启用，有一条有效凭据及面向 `xhs-worker` 的 `xhs:execute` 授权。升级前的生成记录和草稿各 5 条均保留。
+
+与本轮备份对照，Nacos `x-sentinel-config.json` 的语义差异仅为新增 `SERVICE_CLIENT_AI_WORKER_SECRET` 和 `SERVICE_AUTH_CLIENTS_JSON.ai-worker`；其余 93 个既有键值相同。`x-sentinel-monitor-nodes.json`、`x-sentinel-monitor-topology.json` 与备份语义相同。Nacos 中的凭据与 tc-2 本机 `ai-worker.secret` 一致，两处客户端身份哈希都与该凭据匹配；`ai-worker` 到 `xhs-worker:xhs:execute` 的授权存在。核验只输出摘要和结论，未输出密钥。
+
+hn-1 保持原四项服务，均 healthy、无重启或 OOM，镜像 revision 仍为 `48aca12ed3054608aa86190c7765359fbff59910`；本机 8006、8007 的 `/health/live` 及 tc-2 backend 容器访问这两个公网健康接口均返回 HTTP 200。tc-2 的 `.env` 相对本轮备份仅 `IMAGE_TAG`、`FRONTEND_IMAGE_TAG` 两键变化；原七项服务清单逐字相同。`article_uploads` 的 4 项、`tweet_screenshots` 的 50 项与备份逐文件 SHA 相同，无增删改。上述检查验证部署与授权准备；尚未创建真实监听任务，也未实际向小红书或 QQ 推送。真实投递需管理员明确选择渠道、具备对应小红书登录态或 QQ 机器人及群授权，在产生新内容后逐渠道核对投递记录与平台结果。
