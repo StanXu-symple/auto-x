@@ -65,6 +65,16 @@ def provider_request(**overrides) -> ProviderRequest:
     return ProviderRequest(**values)
 
 
+def test_xhs_auto_publish_instructs_generation_to_fit_note_limits() -> None:
+    ordinary, _, _, _ = build_provider_material(provider_request())
+    xhs, _, _, _ = build_provider_material(
+        provider_request(auto_publish_channels=("xhs", "qq"))
+    )
+    assert "within 20 characters" not in ordinary
+    assert "within 20 characters" in xhs
+    assert "within 1000 characters" in xhs
+
+
 def author_profile() -> dict:
     return {
         "identity_summary": "关注 AI 产品与智能体的作者",

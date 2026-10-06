@@ -2,14 +2,16 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { aiApi, aiDataSourceApi, aiListenTasksApi, monitoredUsersApi } from '@/services/api'
+import { aiApi, aiDataSourceApi, aiListenTasksApi, monitoredUsersApi, qqApi } from '@/services/api'
 import { usePagedTable } from '@/composables/usePagedTable'
 import { getErrorMessage } from '@/services/http'
 import { formatDateTime, formatDuration } from '@/utils/format'
 import StatusPill from '@/components/StatusPill.vue'
+import AutoPublishStatus from '@/components/AutoPublishStatus.vue'
 import type {
   AiDataSourceStatus,
   AiJob,
+  AiListenPublishChannel,
   AiListenMode,
   AiListenTask,
   AiListenTaskBackfill,
@@ -20,6 +22,8 @@ import type {
   AiSkill,
   EntityId,
   MonitoredUser,
+  QQBotAccount,
+  QQJoinedGroup,
 } from '@/types'
 
 const emit = defineEmits<{
@@ -32,6 +36,11 @@ const users = ref<MonitoredUser[]>([])
 const skills = ref<AiSkill[]>([])
 const settings = ref<AiSettings | null>(null)
 const source = ref<AiDataSourceStatus | null>(null)
+const qqBots = ref<QQBotAccount[]>([])
+const qqGroups = ref<QQJoinedGroup[]>([])
+const qqLoadedBotId = ref<EntityId | null>(null)
+const qqLoading = ref(false)
+let qqOptionsRequest = 0
 const filters = reactive({
   search: '',
   desired_state: 'all',
@@ -51,6 +60,15 @@ const modeOptions = [
 ]
 const modeLabel = (value: string) =>
   modeOptions.find((item) => item.value === value)?.label || value
+const deliveryOptions: Array<{ label: string; value: AiListenPublishChannel }> = [
+  { label: '小红书', value: 'xhs' },
+  { label: 'QQ', value: 'qq' },
+]
+const deliveryLabel = (targets: AiListenPublishChannel[] | undefined) =>
+  deliveryOptions
+    .filter((option) => targets?.includes(option.value))
+    .map((option) => option.label)
+    .join('、') || '仅保存草稿'
 const summary = ref<AiListenTaskStats | null>(null)
 const {
   rows: tasks,
@@ -88,6 +106,9 @@ const form = reactive<AiListenTaskPayload>({
   monitored_user_ids: [],
   listen_mode: 'original',
   skill_ids: [],
+  auto_publish_channels: [],
+  qq_bot_id: null,
+  qq_group_openids: [],
   initial_sync_days: 0,
   max_attempts_override: null,
   language_override: null,
@@ -120,7 +141,7 @@ const scopeSummary = computed(() =>
 )
 const configSummary = computed(
   () =>
-    `监听${scopeSummary.value}的${modeLabel(form.listen_mode)}内容，按顺序使用 ${form.skill_ids.length} 个 Skills，每条内容生成一篇文章草稿${form.initial_sync_days > 0 && !editing.value ? `；首次处理最近 ${form.initial_sync_days} 天已采集内容` : ''}。`,
+    `监听${scopeSummary.value}的${modeLabel(form.listen_mode)}内容，按顺序使用 ${form.skill_ids.length} 个 Skills，每条内容生成一篇文章草稿；${form.auto_publish_channels.length ? `生成成功后自动推送至${deliveryLabel(form.auto_publish_channels)}${form.auto_publish_channels.includes('qq') ? `（${form.qq_group_openids.length} 个 QQ 群）` : ''}` : '不自动推送'}${form.initial_sync_days > 0 && !editing.value ? `；首次处理最近 ${form.initial_sync_days} 天已采集内容` : ''}。`,
 )
 const selectedAccounts = computed(() =>
   form.all_monitored_users
@@ -183,6 +204,7 @@ const {
 )
 const attemptsOpen = ref(false)
 const attemptsJob = ref<AiJob | null>(null)
+const retryingDispatchId = ref<EntityId | null>(null)
 const {
   rows: attempts,
   loading: attemptsLoading,
@@ -228,6 +250,76 @@ async function refreshTasks() {
 }
 defineExpose({ refresh: refreshTasks })
 
+async function loadQqOptions(botId: EntityId | null) {
+  const request = ++qqOptionsRequest
+  qqLoading.value = true
+  qqBots.value = []
+  qqGroups.value = []
+  qqLoadedBotId.value = null
+  try {
+    const bots = await qqApi.bots()
+    if (request !== qqOptionsRequest) return
+    qqBots.value = bots
+    if (botId != null) {
+      const groups = await qqApi.joinedGroups(botId)
+      if (request !== qqOptionsRequest) return
+      qqGroups.value = groups
+      qqLoadedBotId.value = botId
+    }
+  } catch (error) {
+    if (request === qqOptionsRequest)
+      message.error(getErrorMessage(error, '无法加载 QQ 机器人或已加入的群'))
+  } finally {
+    if (request === qqOptionsRequest) qqLoading.value = false
+  }
+}
+
+async function loadQqGroups(botId: EntityId | null) {
+  const request = ++qqOptionsRequest
+  qqGroups.value = []
+  qqLoadedBotId.value = null
+  if (botId == null) {
+    qqLoading.value = false
+    return
+  }
+  qqLoading.value = true
+  try {
+    const groups = await qqApi.joinedGroups(botId)
+    if (request === qqOptionsRequest) {
+      qqGroups.value = groups
+      qqLoadedBotId.value = botId
+    }
+  } catch (error) {
+    if (request === qqOptionsRequest)
+      message.error(getErrorMessage(error, '无法加载已加入的 QQ 群'))
+  } finally {
+    if (request === qqOptionsRequest) qqLoading.value = false
+  }
+}
+
+function changePublishChannels(values?: unknown) {
+  const qqSelected = Array.isArray(values)
+    ? values.includes('qq')
+    : form.auto_publish_channels.includes('qq')
+  if (qqSelected) {
+    void loadQqOptions(form.qq_bot_id)
+  } else {
+    ++qqOptionsRequest
+    qqLoading.value = false
+    qqBots.value = []
+    qqGroups.value = []
+    qqLoadedBotId.value = null
+    form.qq_bot_id = null
+    form.qq_group_openids = []
+  }
+}
+
+function changeQqBot(botId: EntityId | null) {
+  form.qq_bot_id = botId
+  form.qq_group_openids = []
+  void loadQqGroups(botId)
+}
+
 function setForm(task?: AiListenTask) {
   taskPreviewRequest++
   Object.assign(form, {
@@ -237,6 +329,9 @@ function setForm(task?: AiListenTask) {
     monitored_user_ids: [...(task?.monitored_user_ids || [])],
     listen_mode: (task?.listen_mode || 'original') as AiListenMode,
     skill_ids: [...(task?.skill_ids || [])],
+    auto_publish_channels: [...(task?.auto_publish_channels || [])],
+    qq_bot_id: task?.qq_bot_id ?? null,
+    qq_group_openids: [...(task?.qq_group_openids || [])],
     initial_sync_days: task?.initial_sync_days || 0,
     max_attempts_override: task?.max_attempts_override ?? null,
     language_override: task?.language_override ?? null,
@@ -249,6 +344,7 @@ function setForm(task?: AiListenTask) {
     : -1
   editing.value = task || null
   editorOpen.value = true
+  changePublishChannels()
 }
 
 async function edit(task: AiListenTask) {
@@ -274,6 +370,9 @@ function payload(): AiListenTaskPayload {
     monitored_user_ids: form.all_monitored_users ? [] : [...form.monitored_user_ids],
     listen_mode: form.listen_mode,
     skill_ids: [...form.skill_ids],
+    auto_publish_channels: [...form.auto_publish_channels],
+    qq_bot_id: form.auto_publish_channels.includes('qq') ? form.qq_bot_id : null,
+    qq_group_openids: form.auto_publish_channels.includes('qq') ? [...form.qq_group_openids] : [],
     initial_sync_days: form.initial_sync_days,
     max_attempts_override: form.max_attempts_override || null,
     language_override: form.language_override?.trim() || null,
@@ -286,6 +385,18 @@ function validate() {
   if (!form.name.trim()) return '请填写任务名称'
   if (!form.all_monitored_users && !form.monitored_user_ids.length) return '请选择至少一个监听账号'
   if (!form.skill_ids.length || form.skill_ids.length > 20) return '请选择 1–20 个 Skills'
+  if (form.auto_publish_channels.includes('qq')) {
+    if (qqLoading.value) return '请等待 QQ 推送目标加载完成'
+    if (
+      !form.qq_bot_id ||
+      !qqBots.value.some((bot) => String(bot.id) === String(form.qq_bot_id) && bot.is_enabled)
+    )
+      return '请选择已启用的 QQ 机器人'
+    if (!form.qq_group_openids.length) return '请选择至少一个 QQ 群'
+    const joined = new Set(qqGroups.value.map((group) => group.group_openid))
+    if (form.qq_group_openids.some((openid) => !joined.has(openid)))
+      return '所选 QQ 群已不在机器人加入的群列表，请重新选择'
+  }
   if (form.initial_sync_days == null || form.initial_sync_days < 0 || form.initial_sync_days > 365)
     return '首次历史范围需为 0–365 天'
   const inactive = form.skill_ids.filter(
@@ -338,6 +449,9 @@ async function save(state?: 'enabled' | 'paused') {
         monitored_user_ids: data.monitored_user_ids,
         listen_mode: data.listen_mode,
         skill_ids: data.skill_ids,
+        auto_publish_channels: data.auto_publish_channels,
+        qq_bot_id: data.qq_bot_id,
+        qq_group_openids: data.qq_group_openids,
         max_attempts_override: data.max_attempts_override,
         language_override: data.language_override,
         tone_override: data.tone_override,
@@ -383,6 +497,8 @@ async function openDetail(task: AiListenTask) {
   detailTab.value = 'records'
   recordStatus.value = 'all'
   await refreshDetail()
+  if (detail.value?.auto_publish_channels?.includes('qq'))
+    void loadQqOptions(detail.value.qq_bot_id)
 }
 
 async function changeState(task: AiListenTask, action: 'pause' | 'resume' | 'archive') {
@@ -479,6 +595,23 @@ async function retry(job: AiJob) {
     message.error(getErrorMessage(error, '重试失败'))
   }
 }
+async function retryPublishDispatch(id: EntityId) {
+  retryingDispatchId.value = id
+  try {
+    await aiApi.retryPublishDispatch(id)
+    await resetRecords()
+    message.success('自动推送已重新排队')
+  } catch (error) {
+    message.error(getErrorMessage(error, '自动推送重试失败'))
+  } finally {
+    retryingDispatchId.value = null
+  }
+}
+function retryableDispatches(job: AiJob) {
+  return (job.auto_publish_dispatches || []).filter(
+    (dispatch) => dispatch.status === 'failed' && dispatch.article_publish_attempt_id === null,
+  )
+}
 function editRecordDraft(job: AiJob) {
   detailOpen.value = false
   emit('editDraft', job)
@@ -546,6 +679,9 @@ function payloadFromTask(task: AiListenTask): AiListenTaskPayload {
     monitored_user_ids: [...task.monitored_user_ids],
     listen_mode: task.listen_mode,
     skill_ids: [...task.skill_ids],
+    auto_publish_channels: [...(task.auto_publish_channels || [])],
+    qq_bot_id: task.qq_bot_id ?? null,
+    qq_group_openids: [...(task.qq_group_openids || [])],
     initial_sync_days: task.initial_sync_days,
     max_attempts_override: task.max_attempts_override,
     language_override: task.language_override,
@@ -589,6 +725,17 @@ function taskSkills(task: AiListenTask) {
       )
     ).join(' → ') || '暂无'
   )
+}
+function taskQqTargets(task: AiListenTask) {
+  const botName =
+    qqBots.value.find((bot) => String(bot.id) === String(task.qq_bot_id))?.name ||
+    `机器人 #${task.qq_bot_id || '—'}`
+  const names = (task.qq_group_openids || []).map((openid) =>
+    String(qqLoadedBotId.value) === String(task.qq_bot_id)
+      ? qqGroups.value.find((group) => group.group_openid === openid)?.name || openid
+      : openid,
+  )
+  return `${botName} · ${names.join('、') || '暂无群'}`
 }
 function stateLabel(task: AiListenTask) {
   return task.desired_state === 'enabled'
@@ -686,7 +833,7 @@ onMounted(async () => {
         :loading="loading"
         row-key="id"
         :pagination="pagination"
-        :scroll="{ x: 1180 }"
+        :scroll="{ x: 1320 }"
         @change="change"
       >
         <a-table-column title="任务名称" :width="200">
@@ -713,6 +860,11 @@ onMounted(async () => {
               ><span class="one-line">{{ taskSkills(record) }}</span></a-tooltip
             ></template
           ></a-table-column
+        >
+        <a-table-column title="自动推送" :width="130"
+          ><template #default="{ record }">{{
+            deliveryLabel(record.auto_publish_channels)
+          }}</template></a-table-column
         >
         <a-table-column title="状态" :width="230"
           ><template #default="{ record }"
@@ -885,6 +1037,51 @@ onMounted(async () => {
           </div>
           <div class="muted">按上方顺序应用，已有记录保留创建时的 Skill 快照。</div></a-form-item
         >
+        <a-form-item label="生成成功后自动推送"
+          ><a-checkbox-group
+            v-model:value="form.auto_publish_channels"
+            :options="deliveryOptions"
+            @change="changePublishChannels"
+          />
+          <div class="muted">可同时选择小红书和 QQ；不选则只保存文章草稿。</div>
+          <div v-if="form.auto_publish_channels.includes('xhs')" class="muted">
+            小红书使用任务创建者保存的登录态；文章需有图片或已完成的源帖截图，标题不超过 20
+            字、正文不超过 1000 字。条件不满足会记录推送失败。
+          </div></a-form-item
+        >
+        <template v-if="form.auto_publish_channels.includes('qq')">
+          <a-form-item label="QQ 机器人" required>
+            <a-select
+              v-model:value="form.qq_bot_id"
+              :loading="qqLoading"
+              :options="
+                qqBots.map((bot) => ({
+                  label: `${bot.name}${bot.is_enabled ? '' : '（已停用）'}`,
+                  value: bot.id,
+                  disabled: !bot.is_enabled,
+                }))
+              "
+              placeholder="选择已启用的机器人"
+              @change="changeQqBot"
+            />
+          </a-form-item>
+          <a-form-item label="发送到 QQ 群" required>
+            <a-select
+              v-model:value="form.qq_group_openids"
+              mode="multiple"
+              :loading="qqLoading"
+              :disabled="!form.qq_bot_id"
+              :options="
+                qqGroups.map((group) => ({
+                  label: group.name || group.group_openid,
+                  value: group.group_openid,
+                }))
+              "
+              placeholder="选择机器人已加入的群，可多选"
+            />
+            <div class="muted">自动推送仅发送到此任务所选的群。</div>
+          </a-form-item>
+        </template>
         <a-alert
           type="info"
           show-icon
@@ -1021,6 +1218,14 @@ onMounted(async () => {
           ><a-descriptions-item label="Skills" :span="2">{{
             taskSkills(detail)
           }}</a-descriptions-item
+          ><a-descriptions-item label="自动推送" :span="2">{{
+            deliveryLabel(detail.auto_publish_channels)
+          }}</a-descriptions-item
+          ><a-descriptions-item
+            v-if="detail.auto_publish_channels?.includes('qq')"
+            label="QQ 目标"
+            :span="2"
+            >{{ taskQqTargets(detail) }}</a-descriptions-item
           ><a-descriptions-item label="配置版本">{{ detail.config_version }}</a-descriptions-item
           ><a-descriptions-item label="首次启用">{{
             formatDateTime(detail.activated_at)
@@ -1103,7 +1308,7 @@ onMounted(async () => {
               :loading="recordsLoading"
               row-key="id"
               :pagination="recordsPagination"
-              :scroll="{ x: 700 }"
+              :scroll="{ x: 900 }"
               @change="changeRecords"
               ><a-table-column title="源内容" :width="300"
                 ><template #default="{ record }"
@@ -1113,6 +1318,10 @@ onMounted(async () => {
               ><a-table-column title="状态" :width="100"
                 ><template #default="{ record }"
                   ><StatusPill :value="record.status" /></template></a-table-column
+              ><a-table-column title="自动推送" :width="200"
+                ><template #default="{ record }"
+                  ><AutoPublishStatus
+                    :dispatches="record.auto_publish_dispatches" /></template></a-table-column
               ><a-table-column title="尝试" :width="110"
                 ><template #default="{ record }"
                   >{{ record.attempts }}/{{ record.max_attempts }}
@@ -1136,6 +1345,13 @@ onMounted(async () => {
                       >文章管理</a-button
                     ><a-button v-if="record.status === 'failed'" type="link" @click="retry(record)"
                       >重试</a-button
+                    ><a-button
+                      v-for="dispatch in retryableDispatches(record)"
+                      :key="dispatch.id"
+                      type="link"
+                      :loading="retryingDispatchId === dispatch.id"
+                      @click="retryPublishDispatch(dispatch.id)"
+                      >重试{{ dispatch.channel === 'xhs' ? '小红书' : 'QQ' }}推送</a-button
                     ></a-space
                   ></template
                 ></a-table-column

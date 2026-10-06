@@ -439,6 +439,8 @@ services:
       NACOS_SERVICE_NAME: xsentinel-ai-worker
       NACOS_SERVICE_PORT: "${AI_WORKER_HOST_PORT:-8202}"
     volumes:
+      - article_uploads:/var/lib/xsentinel/article-uploads
+      - ${TWEET_SCREENSHOT_VOLUME:-tweet_screenshots}:${TWEET_SCREENSHOT_DIR:-/var/lib/xsentinel/tweet-screenshots}:ro
       - runtime_logs:/var/log/xsentinel
     expose:
       - "8202"

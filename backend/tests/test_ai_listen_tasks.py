@@ -14,10 +14,14 @@ from app.api.routes.ai_listen import (
     _create_task,
     _out,
     archive_listen_task,
+    copy_listen_task,
+    create_listen_task,
     decide_listen_queue,
     patch_listen_task,
+    pause_listen_task,
 )
 from app.db.base import Base
+from app.models.admin import Admin
 from app.models.ai import (
     AIFeature,
     AIGenerationJob,
@@ -26,6 +30,7 @@ from app.models.ai import (
     AISkill,
 )
 from app.models.monitored_user import MonitoredUser
+from app.models.qq import QQBotAccount, QQJoinedGroup
 from app.models.tweet import Tweet
 from app.schemas.ai import (
     AIListenTaskCreate,
@@ -66,6 +71,9 @@ async def database():
     tables = [
         Base.metadata.tables[name]
         for name in (
+            "admins",
+            "qq_bot_accounts",
+            "qq_joined_groups",
             "monitored_users",
             "ai_skills",
             "ai_features",
@@ -112,6 +120,24 @@ async def database():
                     is_active=True,
                 ),
                 MonitoredUser(id=1, username="alice", is_active=True),
+                Admin(id=9, username="publisher", password_hash="test"),
+                QQBotAccount(
+                    id=2,
+                    name="写作机器人",
+                    app_id="test-app",
+                    encrypted_app_secret="test",
+                    secret_hint="test",
+                    secret_fingerprint="test",
+                    is_enabled=True,
+                ),
+                QQJoinedGroup(
+                    id=3,
+                    bot_id=2,
+                    app_id="test-app",
+                    group_openid="group-1",
+                    is_joined=True,
+                    last_event_at=datetime.now(UTC),
+                ),
             ]
         )
         await db.commit()
@@ -148,6 +174,157 @@ async def test_first_activation_switches_mode_and_freezes_initial_window(databas
         backfill = await db.scalar(select(AIListenTaskBackfill))
         assert backfill.request_id == "initial"
         assert backfill.config_snapshot["skills"][0]["instructions"] == "原始指令"
+
+
+async def test_auto_publish_channels_persist_and_backfill_snapshot_survives_edit(database) -> None:
+    async with database() as db:
+        admin = await db.get(Admin, 9)
+        created = await create_listen_task(
+            AIListenTaskCreate(
+                name="自动推送",
+                desired_state="paused",
+                monitored_user_ids=[1],
+                skill_ids=[1],
+                auto_publish_channels=["xhs", "qq"],
+                qq_bot_id=2,
+                qq_group_openids=["group-1"],
+            ),
+            db,
+            FakeRedis(),
+            admin,
+        )
+        task_id = created.id
+        task = await get_task(db, task_id)
+        assert task.owner_admin_id == admin.id
+        assert created.auto_publish_channels == ["xhs", "qq"]
+        assert (created.qq_bot_id, created.qq_group_openids) == (2, ["group-1"])
+        frozen = task_snapshot(task)
+        assert frozen["owner_admin_id"] == admin.id
+        assert (frozen["qq_bot_id"], frozen["qq_group_openids"]) == (2, ["group-1"])
+        copied = await copy_listen_task(task_id, db, FakeRedis(), admin)
+        assert copied.auto_publish_channels == ["xhs", "qq"]
+        assert (copied.qq_bot_id, copied.qq_group_openids) == (2, ["group-1"])
+        assert (await get_task(db, copied.id)).owner_admin_id == admin.id
+        edited = await patch_listen_task(
+            task_id,
+            AIListenTaskPatch(config_version=1, auto_publish_channels=[]),
+            db,
+            FakeRedis(),
+            admin,
+        )
+        assert edited.auto_publish_channels == []
+        assert edited.config_version == 2
+        assert frozen["auto_publish_channels"] == ["xhs", "qq"]
+        assert (await db.get(type(task), task_id)).auto_publish_channels == []
+
+
+@pytest.mark.parametrize("channel", ["xhs", "qq"])
+async def test_ownerless_task_binds_first_auto_publish_editor(database, channel: str) -> None:
+    async with database() as db:
+        task = await _create_task(
+            db,
+            AIListenTaskCreate(
+                name="旧任务", desired_state="paused", monitored_user_ids=[1], skill_ids=[1]
+            ),
+        )
+        await db.commit()
+        assert task.owner_admin_id is None
+        admin = await db.get(Admin, 9)
+        await patch_listen_task(
+            task.id,
+            AIListenTaskPatch(
+                config_version=1,
+                auto_publish_channels=[channel],
+                qq_bot_id=2 if channel == "qq" else None,
+                qq_group_openids=["group-1"] if channel == "qq" else [],
+            ),
+            db,
+            FakeRedis(),
+            admin,
+        )
+        assert task.owner_admin_id == admin.id
+
+
+async def test_other_admin_cannot_pause_archive_or_copy_owned_task(database) -> None:
+    async with database() as db:
+        db.add(Admin(id=10, username="other-admin", password_hash="test"))
+        task = await _create_task(
+            db,
+            AIListenTaskCreate(
+                name="归属管理员任务",
+                desired_state="paused",
+                monitored_user_ids=[1],
+                skill_ids=[1],
+            ),
+            owner_admin_id=9,
+        )
+        await db.commit()
+        other = await db.get(Admin, 10)
+        for operation in (
+            lambda: pause_listen_task(task.id, db, FakeRedis(), other),
+            lambda: archive_listen_task(task.id, db, FakeRedis(), other),
+            lambda: copy_listen_task(task.id, db, FakeRedis(), other),
+        ):
+            with pytest.raises(APIError) as error:
+                await operation()
+            assert error.value.status_code == 403
+            assert error.value.code == "ai_listen_task_owner_required"
+        assert (await get_task(db, task.id)).desired_state == "paused"
+
+
+def test_auto_publish_channels_reject_unknown_duplicate_and_null() -> None:
+    base = {"name": "推送", "monitored_user_ids": [1], "skill_ids": [1]}
+    assert AIListenTaskCreate(**base).auto_publish_channels == []
+    for channels in (["xhs", "xhs"], ["wechat"]):
+        with pytest.raises(ValidationError):
+            AIListenTaskCreate(**base, auto_publish_channels=channels)
+    with pytest.raises(ValidationError):
+        AIListenTaskPatch(config_version=1, auto_publish_channels=None)
+    with pytest.raises(ValidationError):
+        AIListenTaskCreate(**base, auto_publish_channels=["qq"])
+
+
+async def test_qq_auto_publish_rejects_unjoined_groups_on_create_and_edit(database) -> None:
+    async with database() as db:
+        with pytest.raises(APIError) as error:
+            await _create_task(
+                db,
+                AIListenTaskCreate(
+                    name="无群",
+                    desired_state="paused",
+                    monitored_user_ids=[1],
+                    skill_ids=[1],
+                    auto_publish_channels=["qq"],
+                    qq_bot_id=2,
+                    qq_group_openids=["not-joined"],
+                ),
+            )
+        assert error.value.code == "qq_group_not_joined"
+        await db.rollback()
+        task = await _create_task(
+            db,
+            AIListenTaskCreate(
+                name="待绑定群",
+                desired_state="paused",
+                monitored_user_ids=[1],
+                skill_ids=[1],
+            ),
+        )
+        await db.commit()
+        with pytest.raises(APIError) as error:
+            await patch_listen_task(
+                task.id,
+                AIListenTaskPatch(
+                    config_version=1,
+                    auto_publish_channels=["qq"],
+                    qq_bot_id=2,
+                    qq_group_openids=["not-joined"],
+                ),
+                db,
+                FakeRedis(),
+                None,
+            )
+        assert error.value.code == "qq_group_not_joined"
 
 
 async def test_paused_task_anchors_on_first_resume_only(database) -> None:

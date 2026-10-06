@@ -29,6 +29,14 @@ class XHSJobFailedError(RuntimeError):
     pass
 
 
+class XHSJobNotAcceptedError(XHSJobFailedError):
+    """The XHS worker explicitly rejected the job before persisting it."""
+
+    def __init__(self, message: str, *, retry_after_seconds: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
 def xhs_response_key(job_id: str) -> str:
     return f"{XHS_RESPONSE_PREFIX}{job_id}"
 

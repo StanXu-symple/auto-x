@@ -23,6 +23,7 @@ from app.schemas.xhs_service import (
 from app.services.article_media import ALLOWED_IMAGE_SUFFIXES, MAX_ARTICLE_IMAGE_BYTES
 from app.services.xhs_jobs import (
     XHSJobFailedError,
+    XHSJobNotAcceptedError,
     XHSJobTimeoutError,
     XHSWorkerUnavailableError,
 )
@@ -148,8 +149,26 @@ class XHSServiceClient:
                         ],
                         timeout=min(timeout_seconds, 60),
                     )
-                if response.status_code == 409:
-                    raise XHSJobFailedError("该小红书账号已有任务执行中，请等待完成")
+                if response.status_code in {409, 429}:
+                    try:
+                        detail = response.json().get("detail")
+                    except (ValueError, AttributeError):
+                        detail = None
+                    if (
+                        response.status_code == 409
+                        and detail == "Account already has an active job"
+                    ):
+                        raise XHSJobNotAcceptedError("该小红书账号已有任务执行中，请等待完成")
+                    if response.status_code == 429 and detail == "Browser worker at capacity":
+                        raw_retry_after = response.headers.get("Retry-After")
+                        try:
+                            retry_after = max(1, min(120, int(raw_retry_after or "5")))
+                        except ValueError:
+                            retry_after = 5
+                        raise XHSJobNotAcceptedError(
+                            "小红书浏览器暂时繁忙，请稍后重试",
+                            retry_after_seconds=retry_after,
+                        )
                 response.raise_for_status()
                 state = XHSJobState.model_validate(response.json())
                 if state.job_id != job.job_id:

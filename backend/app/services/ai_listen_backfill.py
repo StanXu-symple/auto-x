@@ -41,6 +41,7 @@ def task_snapshot(
     """Freeze the explicit selection so edits cannot silently widen a pending scan."""
     return {
         "config_version": task.config_version,
+        "owner_admin_id": task.owner_admin_id,
         "all_monitored_users": task.all_monitored_users,
         "monitored_user_ids": (
             all_user_ids
@@ -55,6 +56,9 @@ def task_snapshot(
             for link in task.subscriptions
         ],
         "listen_mode": task.listen_mode,
+        "auto_publish_channels": list(task.auto_publish_channels or []),
+        "qq_bot_id": task.qq_bot_id,
+        "qq_group_openids": list(task.qq_group_openids or []),
         "skill_ids": [
             link.skill_id for link in sorted(task.skills, key=lambda item: item.priority)
         ],

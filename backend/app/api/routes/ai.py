@@ -27,6 +27,7 @@ from app.models.ai import (
     AIUserSkillBinding,
 )
 from app.models.ai_data_source import AIDataSource
+from app.models.ai_publish import AIPublishDispatch
 from app.models.monitored_user import MonitoredUser
 from app.models.tweet import Tweet
 from app.schemas.ai import (
@@ -46,6 +47,7 @@ from app.schemas.ai import (
     AIUserSkillBindingReplace,
     ManualGenerateRequest,
 )
+from app.schemas.ai_publish import AIPublishDispatchOut
 from app.schemas.common import MessageResponse, Page
 from app.services.ai_jobs import (
     create_manual_job,
@@ -54,6 +56,8 @@ from app.services.ai_jobs import (
     resolve_active_skills,
     resolve_context_skills,
 )
+from app.services.ai_publish import retry_failed_dispatch
+from app.services.ai_publish_read import dispatches_by_job
 from app.services.article_media import (
     article_screenshot_copies,
     clear_unreferenced_article_images,
@@ -109,6 +113,7 @@ def _job_out(
     source_username: str | None = None,
     *,
     detail: bool = False,
+    auto_publish_dispatches: list[AIPublishDispatchOut] | None = None,
 ) -> AIJobOut | AIJobDetail:
     common = {
         "id": job.id,
@@ -139,6 +144,7 @@ def _job_out(
         "created_at": job.created_at,
         "updated_at": job.updated_at,
         "draft": _draft_out(job.draft),
+        "auto_publish_dispatches": auto_publish_dispatches or [],
     }
     if detail:
         return AIJobDetail(
@@ -532,9 +538,16 @@ async def list_ai_jobs(
             .limit(page_size)
         )
     ).all()
+    dispatches = await dispatches_by_job(db, (job.id for job, *_ in rows))
     return Page(
         items=[
-            _job_out(job, tweet_id, source_text, username)
+            _job_out(
+                job,
+                tweet_id,
+                source_text,
+                username,
+                auto_publish_dispatches=dispatches.get(job.id, []),
+            )
             for job, tweet_id, source_text, username in rows
         ],
         total=total,
@@ -556,11 +569,60 @@ async def get_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> AIJobDetail
     ).one_or_none()
     if row is None:
         raise APIError(404, "ai_job_not_found", "AI generation job was not found")
-    return _job_out(row[0], row[1], row[2], row[3], detail=True)  # type: ignore[return-value]
+    dispatches = await dispatches_by_job(db, [row[0].id])
+    return _job_out(  # type: ignore[return-value]
+        row[0],
+        row[1],
+        row[2],
+        row[3],
+        detail=True,
+        auto_publish_dispatches=dispatches.get(row[0].id, []),
+    )
+
+
+@router.post("/publish-dispatches/{dispatch_id}/retry", response_model=AIPublishDispatchOut)
+async def retry_ai_publish_dispatch(
+    dispatch_id: int, db: DbSession, admin: CurrentAdmin
+) -> AIPublishDispatchOut:
+    dispatch = await db.get(AIPublishDispatch, dispatch_id)
+    if dispatch is None:
+        raise APIError(404, "ai_publish_dispatch_not_found", "自动推送记录不存在")
+    owner_admin_id = (dispatch.payload_snapshot or {}).get("owner_admin_id")
+    if owner_admin_id is not None and owner_admin_id != admin.id:
+        raise APIError(403, "ai_publish_dispatch_forbidden", "不能重试其他管理员的自动推送")
+    draft = await db.scalar(
+        select(AIDraft)
+        .where(AIDraft.id == dispatch.draft_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if draft is None:
+        raise APIError(404, "article_not_found", "关联文章不存在")
+    if (dispatch.payload_snapshot or {}).get("draft_revision") != draft.revision:
+        raise APIError(
+            409,
+            "ai_publish_dispatch_article_changed",
+            "文章已修改，不能按旧内容重试自动推送；请在文章管理中手动发布",
+        )
+    if draft.publish_channel == dispatch.channel and draft.publish_attempt_id is not None:
+        raise APIError(
+            409,
+            "ai_publish_dispatch_manual_attempt_exists",
+            "该渠道已有手动推送尝试，请先核对平台记录，避免重复发送",
+        )
+    retried = await retry_failed_dispatch(db, dispatch_id)
+    if retried is None:
+        raise APIError(
+            409,
+            "ai_publish_dispatch_not_retryable",
+            "只能重试未向平台提交的自动推送失败；其他结果请先核对平台记录",
+        )
+    await db.commit()
+    return AIPublishDispatchOut.model_validate(retried)
 
 
 @router.post("/jobs/{job_id}/retry", response_model=AIJobOut)
-async def retry_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> AIJobOut:
+async def retry_ai_job(job_id: int, db: DbSession, admin: CurrentAdmin) -> AIJobOut:
     await get_ai_setting(db, for_update=True)
     task_id = await db.scalar(
         select(AIGenerationJob.listen_task_id).where(AIGenerationJob.id == job_id)
@@ -571,6 +633,10 @@ async def retry_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> AIJobOut:
         )
         if task is None or task.desired_state == "archived":
             raise APIError(409, "ai_listen_task_archived", "已归档任务的记录不能重试")
+        if task.owner_admin_id is not None and task.owner_admin_id != admin.id:
+            raise APIError(
+                403, "ai_listen_task_owner_required", "只有任务归属管理员可以重试生成记录"
+            )
     job = await db.scalar(
         select(AIGenerationJob)
         .where(AIGenerationJob.id == job_id)

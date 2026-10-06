@@ -45,6 +45,7 @@ from app.services.ai_data_source import (
 )
 from app.services.ai_listen_backfill import process_pending_backfills
 from app.services.ai_provider import AIProviderClient, AIProviderError, ProviderRequest
+from app.services.ai_publish import AIPublishDispatcher, initialize_publish_dispatches
 from app.services.article_media import preserve_article_media_metadata
 from app.services.metrics import (
     AI_DRAFTS,
@@ -100,9 +101,11 @@ class AIGenerationWorker:
         self.stop_event = asyncio.Event()
         self.active_tasks = 0
         self.process_stats = ProcessStatsSampler()
+        self.publisher = AIPublishDispatcher(settings, self.redis, AsyncSessionFactory)
 
     def request_stop(self) -> None:
         self.stop_event.set()
+        self.publisher.request_stop()
 
     async def run(self) -> None:
         await self.redis.ping()
@@ -116,6 +119,7 @@ class AIGenerationWorker:
         )
         logger.info("X Sentinel AI worker started", extra={"worker_id": self.worker_id})
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        publish_task = asyncio.create_task(self.publisher.run())
         try:
             while not self.stop_event.is_set():
                 try:
@@ -132,6 +136,8 @@ class AIGenerationWorker:
                 except TimeoutError:
                     pass
         finally:
+            self.publisher.request_stop()
+            await publish_task
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
@@ -764,6 +770,10 @@ class AIGenerationWorker:
         job.provider = data_source.protocol
         job.model_name = data_source.model
         job.request_snapshot = current_snapshot
+        task_snapshot = job.task_snapshot if isinstance(job.task_snapshot, dict) else {}
+        channels = task_snapshot.get("auto_publish_channels")
+        if not isinstance(channels, list):
+            channels = []
         return ProviderRequest(
             provider=data_source.protocol,
             model=data_source.model,
@@ -783,6 +793,9 @@ class AIGenerationWorker:
             source=source,
             job_id=job.id,
             api_key=data_source.api_key,
+            auto_publish_channels=tuple(
+                channel for channel in channels if channel in {"xhs", "qq"}
+            ),
         )
 
     async def _generate_with_lease(
@@ -841,6 +854,7 @@ class AIGenerationWorker:
             job = await session.get(AIGenerationJob, job_id, with_for_update=True)
             if job is None or job.claim_token != claim_token or job.status != "running":
                 return False
+            generated_provider = job.provider
             await self._assert_lock(lock_key, claim_token, lost_lock)
             draft = await session.scalar(
                 select(AIDraft).where(AIDraft.job_id == job.id).with_for_update()
@@ -928,7 +942,18 @@ class AIGenerationWorker:
             job.claimed_by = None
             job.lease_expires_at = None
             await self._finish_attempt(session, job, status="succeeded", ended_at=now)
-        AI_DRAFTS.labels(provider=job.provider).inc()
+            if job.listen_task_id is not None:
+                # An outbox failure cannot convert an already generated draft into
+                # a generation failure. The publisher scans uninitialized jobs.
+                try:
+                    async with session.begin_nested():
+                        await session.flush()
+                        await initialize_publish_dispatches(session, job, draft)
+                except Exception:
+                    logger.exception(
+                        "AI publish outbox initialization deferred", extra={"ai_job_id": job_id}
+                    )
+        AI_DRAFTS.labels(provider=generated_provider).inc()
         return True
 
     async def _commit_failure(

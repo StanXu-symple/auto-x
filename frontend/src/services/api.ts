@@ -5,6 +5,7 @@ import type {
   AiJobActionResponse,
   AiJobQuery,
   AiGenerationAttempt,
+  AutoPublishDispatch,
   AiListenTask,
   AiListenTaskBackfill,
   AiListenTaskEvent,
@@ -433,6 +434,9 @@ export const aiApi = {
   },
   async retryJob(id: EntityId) {
     return dataOf(await http.post<Wrapped<AiJob>>(`/ai/jobs/${id}/retry`))
+  },
+  async retryPublishDispatch(id: EntityId) {
+    return dataOf(await http.post<Wrapped<AutoPublishDispatch>>(`/ai/publish-dispatches/${id}/retry`))
   },
   async removeJob(id: EntityId) {
     await http.delete(`/ai/jobs/${id}`)

@@ -578,6 +578,77 @@ def test_camoufox_caller_upgrade_preserves_remote_clients_and_secret(tmp_path):
     assert json.loads(values['SERVICE_AUTH_CLIENTS_JSON'])['xhs-worker']['grants'] == {}
 
 
+def test_ai_worker_caller_round_trip_preserves_credentials_and_revocation(tmp_path):
+    import hashlib
+    import json
+
+    module = load_script()
+    existing = {"backend": {"secret_sha256": "b" * 64, "grants": {}}}
+    values = {"SERVICE_AUTH_CLIENTS_JSON": json.dumps(existing)}
+    module.ensure_ai_worker_caller(values)
+    first = dict(values)
+    module.ensure_ai_worker_caller(values)
+    assert values == first
+    clients = json.loads(values["SERVICE_AUTH_CLIENTS_JSON"])
+    assert clients["backend"] == existing["backend"]
+    secret = values["SERVICE_CLIENT_AI_WORKER_SECRET"]
+    assert clients["ai-worker"] == {
+        "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+        "grants": {"xhs-worker": "xhs:execute"},
+    }
+    module.write_control_plane_values(tmp_path, values)
+    secret_file = tmp_path / "ai-worker.secret"
+    assert secret_file.read_text().strip() == secret
+    assert secret_file.stat().st_mode & 0o777 == 0o600
+    assert module.read_control_plane_values(tmp_path)["SERVICE_CLIENT_AI_WORKER_SECRET"] == secret
+    assert "SERVICE_CLIENT_AI_WORKER_SECRET" not in module.BOOTSTRAP_CACHE_KEYS
+
+    clients["ai-worker"]["grants"] = {}
+    values["SERVICE_AUTH_CLIENTS_JSON"] = json.dumps(clients)
+    module.ensure_ai_worker_caller(values)
+    assert json.loads(values["SERVICE_AUTH_CLIENTS_JSON"])["ai-worker"]["grants"] == {}
+
+
+def test_ai_worker_caller_rejects_missing_or_mismatched_existing_secret():
+    import json
+    import pytest
+
+    module = load_script()
+    values = {"SERVICE_AUTH_CLIENTS_JSON": json.dumps({
+        "ai-worker": {"secret_sha256": "b" * 64, "grants": {}}
+    })}
+    for secret in (None, "wrong-secret"):
+        if secret:
+            values["SERVICE_CLIENT_AI_WORKER_SECRET"] = secret
+        with pytest.raises(RuntimeError, match="ai-worker"):
+            module.ensure_ai_worker_caller(values)
+
+
+def test_nacos_sync_seeds_ai_identity_only_for_ai_or_auth_nodes(monkeypatch, tmp_path):
+    module = load_script()
+    env_file = tmp_path / ".env"
+    env_file.write_text("NACOS_SERVER_ADDR=http://nacos:8848\n", encoding="utf-8")
+    monkeypatch.setattr(module, "load_remote", lambda *_args, **_kwargs: (
+        {"POSTGRES_HOST": "db.example", "REDIS_HOST": "redis.example"}, "token"
+    ))
+    monkeypatch.setattr(module, "publish", lambda *_args, **_kwargs: None)
+    calls = []
+    monkeypatch.setattr(module, "ensure_ai_worker_caller", lambda values: calls.append(values))
+    for selected, expected in (
+        ("xhs-worker,monitor-agent", False),
+        ("ai-worker", True),
+        ("auth-center", True),
+        ("", True),
+    ):
+        calls.clear()
+        argv = ["nacos-config.py", "--env-file", str(env_file), "--no-write-bootstrap"]
+        if selected:
+            argv += ["--monitor-services", selected]
+        monkeypatch.setattr(sys, "argv", argv)
+        assert module.main() == 0
+        assert bool(calls) is expected
+
+
 def test_camoufox_runtime_config_is_remote_but_port_and_image_are_local():
     module = load_script()
     assert 'CAMOUFOX_MAX_CONCURRENCY' in module.RUNTIME_CONFIG_KEYS
@@ -734,11 +805,42 @@ def test_control_plane_init_seeds_screenshot_secret_without_restoring_grants(tmp
     }
     assert secret_file.stat().st_mode & 0o777 == 0o600
     assert clients["xhs-worker"] == original["xhs-worker"]
+    assert clients["backend"] == original["backend"]
+    ai_secret_file = tmp_path / "ai-worker.secret"
+    ai_secret = ai_secret_file.read_text().strip()
+    assert clients["ai-worker"] == {
+        "secret_sha256": hashlib.sha256(ai_secret.encode()).hexdigest(),
+        "grants": {"xhs-worker": "xhs:execute"},
+    }
+    assert ai_secret_file.stat().st_mode & 0o777 == 0o600
     clients["screenshot-worker"]["grants"] = {}
+    clients["ai-worker"]["grants"] = {}
     clients_path.write_text(json.dumps(clients))
     subprocess.run(command, check=True, capture_output=True, text=True)
     assert secret_file.read_text().strip() == secret
+    assert ai_secret_file.read_text().strip() == ai_secret
     assert json.loads(clients_path.read_text())["screenshot-worker"]["grants"] == {}
+    assert json.loads(clients_path.read_text())["ai-worker"]["grants"] == {}
+
+
+def test_control_plane_init_fresh_install_seeds_ai_worker_client(tmp_path):
+    import hashlib
+    import json
+
+    root = Path(__file__).parents[2]
+    (tmp_path / "private.pem").write_text("existing-private-key\n")
+    (tmp_path / "public.pem").write_text("existing-public-key\n")
+    subprocess.run(
+        ["bash", str(root / "infra/scripts/microservices-init.sh"), str(tmp_path)],
+        check=True, capture_output=True, text=True,
+    )
+    clients = json.loads((tmp_path / "clients.json").read_text())
+    secret = (tmp_path / "ai-worker.secret").read_text().strip()
+    assert clients["ai-worker"] == {
+        "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+        "grants": {"xhs-worker": "xhs:execute"},
+    }
+    assert clients["backend"]["grants"]["xhs-worker"] == "xhs:execute"
 
 
 def test_monitor_upgrade_adds_only_selected_browser_and_preserves_remote(monkeypatch, tmp_path):

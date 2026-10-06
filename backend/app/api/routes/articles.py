@@ -9,16 +9,18 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, File, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 
 from app.api.deps import CurrentAdmin, DbSession, RedisClient
 from app.api.errors import APIError
 from app.core.config import get_settings
-from app.models.ai import AIDraft, ArticlePublishAttempt
+from app.models.ai import AIDraft, AIGenerationJob, ArticlePublishAttempt
+from app.models.ai_publish import AIPublishDispatch
 from app.models.monitored_user import MonitoredUser
 from app.models.qq import QQBotAccount, QQDelivery, QQJoinedGroup
 from app.models.tweet import Tweet
 from app.models.tweet_screenshot import TweetScreenshot
+from app.schemas.ai_publish import AIPublishDispatchOut
 from app.schemas.article import (
     ArticleCreate,
     ArticleOut,
@@ -31,6 +33,7 @@ from app.schemas.article import (
     ArticleSourceScreenshot,
 )
 from app.schemas.common import MessageResponse, Page
+from app.services.ai_publish_read import dispatches_by_draft
 from app.services.article_media import (
     ALLOWED_IMAGE_SUFFIXES,
     INCLUDE_SOURCE_SCREENSHOT_KEY,
@@ -60,12 +63,38 @@ from app.services.xhs_verification import clear_verification_image
 
 router = APIRouter(prefix="/articles", tags=["Article Management"])
 logger = logging.getLogger(__name__)
+AUTO_PUBLISH_BLOCKING_STATUSES = frozenset(
+    {"pending", "retry_wait", "dispatching", "accepted", "published", "uncertain"}
+)
+AUTO_PUBLISH_ACTIVE_STATUSES = ("pending", "retry_wait", "dispatching", "accepted")
+AUTO_PUBLISH_FAILURE_STATUSES = ("failed", "uncertain")
+
+
+def _publish_filter(status: ArticlePublishStatus):
+    def has_dispatch(*states: str):
+        return exists(
+            select(AIPublishDispatch.id).where(
+                AIPublishDispatch.draft_id == AIDraft.id,
+                AIPublishDispatch.status.in_(states),
+            )
+        )
+
+    if status == "published":
+        return or_(AIDraft.publish_status == "published", has_dispatch("published"))
+    if status == "queued":
+        return or_(AIDraft.publish_status == "queued", has_dispatch(*AUTO_PUBLISH_ACTIVE_STATUSES))
+    if status == "failed":
+        return or_(AIDraft.publish_status == "failed", has_dispatch(*AUTO_PUBLISH_FAILURE_STATUSES))
+    return (AIDraft.publish_status == "unpublished") & ~exists(
+        select(AIPublishDispatch.id).where(AIPublishDispatch.draft_id == AIDraft.id)
+    )
 
 
 def _article_out(
     article: AIDraft,
     source_url: str | None = None,
     source_screenshot: ArticleSourceScreenshot | None = None,
+    auto_publish_dispatches: list[AIPublishDispatchOut] | None = None,
 ) -> ArticleOut:
     include_source_screenshot = article_includes_source_screenshot(article)
     return ArticleOut(
@@ -84,6 +113,7 @@ def _article_out(
         publish_channel=article.publish_channel,
         publish_error=article.publish_error,
         published_at=article.published_at,
+        auto_publish_dispatches=auto_publish_dispatches or [],
         revision=article.revision,
         created_at=article.created_at,
         updated_at=article.updated_at,
@@ -205,7 +235,7 @@ async def list_articles(
     if article_source:
         conditions.append(AIDraft.article_source == article_source)
     if publish_status:
-        conditions.append(AIDraft.publish_status == publish_status)
+        conditions.append(_publish_filter(publish_status))
 
     total = int(await db.scalar(select(func.count(AIDraft.id)).where(*conditions)) or 0)
     articles = list(
@@ -218,9 +248,16 @@ async def list_articles(
         )
     )
     sources = await _article_sources(db, articles)
+    dispatches = await dispatches_by_draft(
+        db, (article.id for article in articles if article.job_id is not None)
+    )
     return Page(
         items=[
-            _article_out(article, *sources.get(article.source_tweet_id, (None, None)))
+            _article_out(
+                article,
+                *sources.get(article.source_tweet_id, (None, None)),
+                dispatches.get(article.id, []),
+            )
             for article in articles
         ],
         total=total,
@@ -265,6 +302,7 @@ async def update_article(
         raise APIError(404, "article_not_found", "文章不存在")
     if article.publish_status == "queued":
         raise APIError(409, "article_publish_in_progress", "文章正在推送，暂时不能编辑")
+    await _ensure_no_active_auto_publish(db, article)
     if article.revision != payload.revision:
         raise APIError(
             409,
@@ -296,16 +334,20 @@ async def update_article(
             db, [image for image in old_images if image not in (article.images or [])]
         )
     sources = await _article_sources(db, [article])
-    return _article_out(article, *sources.get(article.source_tweet_id, (None, None)))
+    dispatches = await dispatches_by_draft(db, [article.id] if article.job_id is not None else [])
+    return _article_out(
+        article, *sources.get(article.source_tweet_id, (None, None)), dispatches.get(article.id, [])
+    )
 
 
 @router.delete("/{article_id}", response_model=MessageResponse)
 async def delete_article(article_id: int, db: DbSession, _: CurrentAdmin) -> MessageResponse:
-    article = await db.get(AIDraft, article_id)
+    article = await db.scalar(select(AIDraft).where(AIDraft.id == article_id).with_for_update())
     if article is None:
         raise APIError(404, "article_not_found", "文章不存在")
     if article.publish_status == "queued":
         raise APIError(409, "article_publish_in_progress", "文章正在推送，暂时不能删除")
+    await _ensure_no_active_auto_publish(db, article)
     images = [*(article.images or []), *article_screenshot_copies(article)]
     await db.delete(article)
     await db.commit()
@@ -387,6 +429,71 @@ def _article_qq_text(article: AIDraft) -> str:
     return "\n".join(
         (f"标题:{article.title}", f"摘要:{article.excerpt or ''}", f"正文:{article.content}")
     )
+
+
+async def _ensure_no_auto_publish_conflict(db: DbSession, article: AIDraft, channel: str) -> None:
+    if article.job_id is None:
+        return
+    dispatch = await db.scalar(
+        select(AIPublishDispatch).where(
+            AIPublishDispatch.draft_id == article.id,
+            AIPublishDispatch.channel == channel,
+        )
+    )
+    if dispatch is not None:
+        if dispatch.status in AUTO_PUBLISH_BLOCKING_STATUSES or (
+            dispatch.status == "failed" and dispatch.article_publish_attempt_id is not None
+        ):
+            raise APIError(
+                409,
+                "article_auto_publish_conflict",
+                "该渠道已有自动推送记录；请先核对平台状态，避免重复发送",
+                {"channel": channel, "status": dispatch.status},
+            )
+        return
+    # The draft and the dispatch rows are committed together in the normal path.
+    # Also guard the recovery window if outbox creation was deferred.
+    job = await db.get(AIGenerationJob, article.job_id)
+    snapshot = job.task_snapshot if job and isinstance(job.task_snapshot, dict) else {}
+    if (
+        job is not None
+        and job.status == "succeeded"
+        and channel in (snapshot.get("auto_publish_channels") or [])
+    ):
+        raise APIError(
+            409,
+            "article_auto_publish_pending",
+            "该渠道的自动推送正在准备，请稍后查看推送状态",
+            {"channel": channel, "status": "pending"},
+        )
+
+
+async def _ensure_no_active_auto_publish(db: DbSession, article: AIDraft) -> None:
+    if article.job_id is None:
+        return
+    active = await db.scalar(
+        select(AIPublishDispatch.id)
+        .where(
+            AIPublishDispatch.draft_id == article.id,
+            AIPublishDispatch.status.in_(("pending", "retry_wait", "dispatching", "accepted")),
+        )
+        .limit(1)
+    )
+    if active is not None:
+        raise APIError(
+            409, "article_auto_publish_in_progress", "文章正在自动推送，暂时不能编辑或删除"
+        )
+    job = await db.get(AIGenerationJob, article.job_id)
+    snapshot = job.task_snapshot if job and isinstance(job.task_snapshot, dict) else {}
+    if (
+        job is not None
+        and job.status == "succeeded"
+        and job.publish_outbox_initialized_at is None
+        and snapshot.get("auto_publish_channels")
+    ):
+        raise APIError(
+            409, "article_auto_publish_pending", "文章自动推送正在准备，暂时不能编辑或删除"
+        )
 
 
 async def _publish_to_qq(
@@ -518,6 +625,7 @@ async def publish_article(
         raise APIError(404, "article_not_found", "文章不存在")
     if article.publish_status == "queued":
         raise APIError(409, "article_publish_in_progress", "文章正在推送，请等待本次推送完成")
+    await _ensure_no_auto_publish_conflict(db, article, payload.channel)
     if payload.channel == "qq":
         return await _publish_to_qq(article, payload, db, redis, admin)
 

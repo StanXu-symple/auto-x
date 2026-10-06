@@ -32,6 +32,19 @@ services:
       - ${CONTROL_PLANE_DIR:-./data/control-plane}/screenshot-worker.secret:/run/xsentinel/screenshot-worker.secret:ro
     networks: [control, app, data, monitoring]
 
+  ai-worker:
+    environment:
+      XHS_TRANSPORT: http
+      XHS_SERVICE_NAME: xsentinel-xhs-worker
+      NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}
+      NACOS_CONFIG_ENABLED: "true"
+      NACOS_CONFIG_REQUIRED: "true"
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
+      SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/ai-worker.secret
+    volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/ai-worker.secret:/run/xsentinel/ai-worker.secret:ro
+    networks: [control, app, data, monitoring]
+
   xhs-worker:
     image: ${XHS_WORKER_IMAGE:-x-sentinel-xhs-worker}:${IMAGE_TAG:-latest}
     command: ["uvicorn", "app.xhs_service:app", "--host", "0.0.0.0", "--port", "8006"]

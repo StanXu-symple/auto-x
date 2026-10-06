@@ -393,6 +393,26 @@ async def enqueue_listening_jobs(
             if backfill_snapshot is not None
             else task.feature_code
         )
+        auto_publish_channels = (
+            list(backfill_snapshot.get("auto_publish_channels") or [])
+            if backfill_snapshot is not None
+            else list(task.auto_publish_channels or [])
+        )
+        owner_admin_id = (
+            backfill_snapshot.get("owner_admin_id")
+            if backfill_snapshot is not None
+            else task.owner_admin_id
+        )
+        qq_bot_id = (
+            backfill_snapshot.get("qq_bot_id")
+            if backfill_snapshot is not None
+            else task.qq_bot_id
+        )
+        qq_group_openids = (
+            list(backfill_snapshot.get("qq_group_openids") or [])
+            if backfill_snapshot is not None
+            else list(task.qq_group_openids or [])
+        )
         if backfill_snapshot is not None and backfill_snapshot.get(
             "exclude_legacy_generated", True
         ):
@@ -527,6 +547,10 @@ async def enqueue_listening_jobs(
                     "all_monitored_users": all_users,
                     "skill_ids": selected_ids,
                     "config_version": config_version,
+                    "auto_publish_channels": auto_publish_channels,
+                    "owner_admin_id": owner_admin_id,
+                    "qq_bot_id": qq_bot_id,
+                    "qq_group_openids": qq_group_openids,
                 },
                 "feature_code": feature.code,
                 "skill_id": selected_ids[0],

@@ -45,11 +45,17 @@ from app.services.ai_listen_tasks import (
     summarize_stats,
     task_out,
     task_stats,
+    validate_qq_publish_target,
     validate_selection,
 )
 
 router = APIRouter(prefix="/listen-tasks", tags=["AI Listening"])
 AI_HEARTBEAT_KEY = "xsentinel:ai-worker:heartbeat"
+
+
+def _require_task_owner(task: AIListenTask, admin: CurrentAdmin) -> None:
+    if task.owner_admin_id is not None and task.owner_admin_id != admin.id:
+        raise APIError(403, "ai_listen_task_owner_required", "只有任务归属管理员可以操作该任务")
 
 
 async def _worker_online(redis: RedisClient) -> bool:
@@ -130,7 +136,11 @@ async def _activate(db: AsyncSession, task: AIListenTask, *, switch_from_legacy:
 
 
 async def _create_task(
-    db: AsyncSession, payload: AIListenTaskCreate, *, copied_from: int | None = None
+    db: AsyncSession,
+    payload: AIListenTaskCreate,
+    *,
+    owner_admin_id: int | None = None,
+    copied_from: int | None = None,
 ) -> AIListenTask:
     # Lock before selection validation and FK writes; Skill mutations take this
     # singleton lock first as well.
@@ -141,6 +151,12 @@ async def _create_task(
         user_ids=payload.monitored_user_ids,
         skill_ids=payload.skill_ids,
         lock_rows=True,
+    )
+    await validate_qq_publish_target(
+        db,
+        channels=payload.auto_publish_channels,
+        bot_id=payload.qq_bot_id,
+        group_openids=payload.qq_group_openids,
     )
     if payload.desired_state == "enabled" and setting.auto_trigger_mode == "legacy_all":
         if not payload.switch_from_legacy:
@@ -154,9 +170,13 @@ async def _create_task(
     now = datetime.now(UTC)
     task = AIListenTask(
         name=payload.name,
+        owner_admin_id=owner_admin_id,
         desired_state="paused",
         all_monitored_users=payload.all_monitored_users,
         listen_mode=payload.listen_mode,
+        auto_publish_channels=payload.auto_publish_channels,
+        qq_bot_id=payload.qq_bot_id,
+        qq_group_openids=payload.qq_group_openids,
         config_version=1,
         initial_sync_days=payload.initial_sync_days,
         max_attempts_override=payload.max_attempts_override,
@@ -259,9 +279,9 @@ async def preview_listen_task(
 
 @router.post("", response_model=AIListenTaskOut, status_code=status.HTTP_201_CREATED)
 async def create_listen_task(
-    payload: AIListenTaskCreate, db: DbSession, redis: RedisClient, _: CurrentAdmin
+    payload: AIListenTaskCreate, db: DbSession, redis: RedisClient, admin: CurrentAdmin
 ) -> AIListenTaskOut:
-    task = await _create_task(db, payload)
+    task = await _create_task(db, payload, owner_admin_id=admin.id)
     await db.commit()
     return await _out(db, redis, await get_task(db, task.id))
 
@@ -275,10 +295,11 @@ async def read_listen_task(
 
 @router.patch("/{task_id}", response_model=AIListenTaskOut)
 async def patch_listen_task(
-    task_id: int, payload: AIListenTaskPatch, db: DbSession, redis: RedisClient, _: CurrentAdmin
+    task_id: int, payload: AIListenTaskPatch, db: DbSession, redis: RedisClient, admin: CurrentAdmin
 ) -> AIListenTaskOut:
     await get_ai_setting(db, for_update=True)
     task = await get_task(db, task_id, for_update=True)
+    _require_task_owner(task, admin)
     if task.desired_state == "archived":
         raise APIError(409, "ai_listen_task_archived", "已归档任务不能编辑")
     if task.config_version != payload.config_version:
@@ -294,12 +315,21 @@ async def patch_listen_task(
         "monitored_user_ids", [link.monitored_user_id for link in task.subscriptions]
     )
     selected_skills = changes.get("skill_ids", [link.skill_id for link in task.skills])
+    selected_channels = changes.get("auto_publish_channels", task.auto_publish_channels or [])
+    selected_bot_id = changes.get("qq_bot_id", task.qq_bot_id)
+    selected_groups = changes.get("qq_group_openids", task.qq_group_openids or [])
     users, skills = await validate_selection(
         db,
         all_monitored_users=selected_all,
         user_ids=selected_ids,
         skill_ids=selected_skills,
         lock_rows=True,
+    )
+    await validate_qq_publish_target(
+        db,
+        channels=selected_channels,
+        bot_id=selected_bot_id,
+        group_openids=selected_groups,
     )
     now = datetime.now(UTC)
     if "monitored_user_ids" in changes or "all_monitored_users" in changes:
@@ -333,6 +363,9 @@ async def patch_listen_task(
         "name",
         "all_monitored_users",
         "listen_mode",
+        "auto_publish_channels",
+        "qq_bot_id",
+        "qq_group_openids",
         "max_attempts_override",
         "language_override",
         "tone_override",
@@ -340,6 +373,8 @@ async def patch_listen_task(
     ):
         if key in changes:
             setattr(task, key, changes[key])
+    if task.owner_admin_id is None and task.auto_publish_channels:
+        task.owner_admin_id = admin.id
     task.config_version += 1
     task.updated_at = now
     db.add(_event(task, "updated", "监听任务配置已修改", config_version=task.config_version))
@@ -349,10 +384,11 @@ async def patch_listen_task(
 
 @router.post("/{task_id}/pause", response_model=AIListenTaskOut)
 async def pause_listen_task(
-    task_id: int, db: DbSession, redis: RedisClient, _: CurrentAdmin
+    task_id: int, db: DbSession, redis: RedisClient, admin: CurrentAdmin
 ) -> AIListenTaskOut:
     await get_ai_setting(db, for_update=True)
     task = await get_task(db, task_id, for_update=True)
+    _require_task_owner(task, admin)
     if task.desired_state == "archived":
         raise APIError(409, "ai_listen_task_archived", "已归档任务不能暂停")
     if task.desired_state != "paused":
@@ -368,11 +404,12 @@ async def resume_listen_task(
     task_id: int,
     db: DbSession,
     redis: RedisClient,
-    _: CurrentAdmin,
+    admin: CurrentAdmin,
     switch_from_legacy: bool = False,
 ) -> AIListenTaskOut:
     await get_ai_setting(db, for_update=True)
     task = await get_task(db, task_id, for_update=True)
+    _require_task_owner(task, admin)
     if task.desired_state == "archived":
         raise APIError(409, "ai_listen_task_archived", "已归档任务不能恢复")
     if task.desired_state != "enabled":
@@ -384,10 +421,11 @@ async def resume_listen_task(
 
 @router.post("/{task_id}/archive", response_model=AIListenTaskOut)
 async def archive_listen_task(
-    task_id: int, db: DbSession, redis: RedisClient, _: CurrentAdmin
+    task_id: int, db: DbSession, redis: RedisClient, admin: CurrentAdmin
 ) -> AIListenTaskOut:
     await get_ai_setting(db, for_update=True)
     task = await get_task(db, task_id, for_update=True)
+    _require_task_owner(task, admin)
     if task.desired_state != "archived":
         now = datetime.now(UTC)
         task.desired_state = "archived"
@@ -420,10 +458,11 @@ async def decide_listen_queue(
     payload: AIListenTaskQueueDecision,
     db: DbSession,
     redis: RedisClient,
-    _: CurrentAdmin,
+    admin: CurrentAdmin,
 ) -> AIListenTaskOut:
     await get_ai_setting(db, for_update=True)
     task = await get_task(db, task_id, for_update=True)
+    _require_task_owner(task, admin)
     if task.desired_state == "archived":
         raise APIError(409, "ai_listen_task_archived", "已归档任务不能继续旧队列")
     if not task.queue_hold_reason:
@@ -454,15 +493,19 @@ async def decide_listen_queue(
 
 @router.post("/{task_id}/copy", response_model=AIListenTaskOut, status_code=status.HTTP_201_CREATED)
 async def copy_listen_task(
-    task_id: int, db: DbSession, redis: RedisClient, _: CurrentAdmin
+    task_id: int, db: DbSession, redis: RedisClient, admin: CurrentAdmin
 ) -> AIListenTaskOut:
     original = await get_task(db, task_id)
+    _require_task_owner(original, admin)
     payload = AIListenTaskCreate(
         name=f"{original.name}（副本）",
         desired_state="paused",
         all_monitored_users=original.all_monitored_users,
         monitored_user_ids=[link.monitored_user_id for link in original.subscriptions],
         listen_mode=original.listen_mode,
+        auto_publish_channels=original.auto_publish_channels or [],
+        qq_bot_id=original.qq_bot_id,
+        qq_group_openids=original.qq_group_openids or [],
         skill_ids=[link.skill_id for link in original.skills],
         initial_sync_days=original.initial_sync_days,
         max_attempts_override=original.max_attempts_override,
@@ -470,7 +513,7 @@ async def copy_listen_task(
         tone_override=original.tone_override,
         max_output_tokens_override=original.max_output_tokens_override,
     )
-    task = await _create_task(db, payload, copied_from=original.id)
+    task = await _create_task(db, payload, owner_admin_id=admin.id, copied_from=original.id)
     await db.commit()
     return await _out(db, redis, await get_task(db, task.id))
 
@@ -481,10 +524,11 @@ async def copy_listen_task(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_listen_backfill(
-    task_id: int, payload: AIListenTaskBackfillCreate, db: DbSession, _: CurrentAdmin
+    task_id: int, payload: AIListenTaskBackfillCreate, db: DbSession, admin: CurrentAdmin
 ) -> AIListenTaskBackfillOut:
     await get_ai_setting(db, for_update=True)
     task = await get_task(db, task_id, for_update=True)
+    _require_task_owner(task, admin)
     if task.desired_state == "archived":
         raise APIError(409, "ai_listen_task_archived", "已归档任务不能提交历史补生成")
     try:

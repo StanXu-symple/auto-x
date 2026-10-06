@@ -7,12 +7,23 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 
+from app.schemas.ai_publish import AIPublishDispatchOut
 from app.schemas.common import APIModel, Page
 
 AIProvider = Literal["openai_responses", "codex_bridge"]
 AIJobStatus = Literal["queued", "running", "retry_wait", "succeeded", "failed", "cancelled"]
 AITriggerType = Literal["manual", "legacy_auto", "listen_task"]
+AIListenAutoPublishChannel = Literal["xhs", "qq"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+
+def _normalize_qq_group_openids(values: list[str]) -> list[str]:
+    normalized = [value.strip() for value in values]
+    if any(not value for value in normalized):
+        raise ValueError("QQ group ids must not be blank")
+    if len(normalized) != len(set(normalized)):
+        raise ValueError("QQ group ids must be unique")
+    return normalized
 
 
 def _validate_http_url(value: str) -> str:
@@ -296,6 +307,7 @@ class AIJobOut(APIModel):
     created_at: datetime
     updated_at: datetime
     draft: AIDraftOut | None = None
+    auto_publish_dispatches: list[AIPublishDispatchOut] = Field(default_factory=list)
 
 
 class AIJobDetail(AIJobOut):
@@ -313,6 +325,11 @@ class AIListenTaskCreate(APIModel):
     monitored_user_ids: list[int] = Field(default_factory=list, max_length=500)
     listen_mode: Literal["all", "original", "reply", "retweet"] = "original"
     skill_ids: list[int] = Field(min_length=1, max_length=20)
+    auto_publish_channels: list[AIListenAutoPublishChannel] = Field(
+        default_factory=list, max_length=2
+    )
+    qq_bot_id: int | None = Field(default=None, gt=0)
+    qq_group_openids: list[str] = Field(default_factory=list, max_length=100)
     initial_sync_days: int = Field(default=0, ge=0, le=365)
     max_attempts_override: int | None = Field(default=None, ge=1, le=10)
     language_override: str | None = Field(default=None, min_length=1, max_length=32)
@@ -332,6 +349,11 @@ class AIListenTaskCreate(APIModel):
             item <= 0 for item in self.skill_ids
         ):
             raise ValueError("skill ids must be unique positive integers")
+        if len(self.auto_publish_channels) != len(set(self.auto_publish_channels)):
+            raise ValueError("auto publish channels must be unique")
+        self.qq_group_openids = _normalize_qq_group_openids(self.qq_group_openids)
+        if "qq" in self.auto_publish_channels and (not self.qq_bot_id or not self.qq_group_openids):
+            raise ValueError("QQ automatic publishing requires a bot and at least one group")
         return self
 
     @field_validator("name")
@@ -350,6 +372,11 @@ class AIListenTaskPatch(APIModel):
     monitored_user_ids: list[int] | None = Field(default=None, max_length=500)
     listen_mode: Literal["all", "original", "reply", "retweet"] | None = None
     skill_ids: list[int] | None = Field(default=None, min_length=1, max_length=20)
+    auto_publish_channels: list[AIListenAutoPublishChannel] | None = Field(
+        default=None, max_length=2
+    )
+    qq_bot_id: int | None = Field(default=None, gt=0)
+    qq_group_openids: list[str] | None = Field(default=None, max_length=100)
     max_attempts_override: int | None = Field(default=None, ge=1, le=10)
     language_override: str | None = Field(default=None, min_length=1, max_length=32)
     tone_override: str | None = Field(default=None, min_length=1, max_length=64)
@@ -369,12 +396,20 @@ class AIListenTaskPatch(APIModel):
                 item <= 0 for item in self.skill_ids
             ):
                 raise ValueError("skill ids must be unique positive integers")
+        if self.auto_publish_channels is not None and len(self.auto_publish_channels) != len(
+            set(self.auto_publish_channels)
+        ):
+            raise ValueError("auto publish channels must be unique")
+        if self.qq_group_openids is not None:
+            self.qq_group_openids = _normalize_qq_group_openids(self.qq_group_openids)
         for required in (
             "name",
             "all_monitored_users",
             "monitored_user_ids",
             "listen_mode",
             "skill_ids",
+            "auto_publish_channels",
+            "qq_group_openids",
         ):
             if required in self.model_fields_set and getattr(self, required) is None:
                 raise ValueError(f"{required} cannot be null")
@@ -446,6 +481,9 @@ class AIListenTaskOut(APIModel):
     accounts: list[AIListenTaskAccountOut]
     listen_mode: Literal["all", "original", "reply", "retweet"]
     skill_ids: list[int]
+    auto_publish_channels: list[AIListenAutoPublishChannel]
+    qq_bot_id: int | None
+    qq_group_openids: list[str]
     skills: list[AIListenTaskSkillOut]
     feature_code: str
     config_version: int

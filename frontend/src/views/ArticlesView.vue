@@ -26,6 +26,7 @@ import type {
 import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import AutoPublishStatus from '@/components/AutoPublishStatus.vue'
 import ArticleMediaGallery from '@/components/ArticleMediaGallery.vue'
 import ArticlePreview from '@/components/ArticlePreview.vue'
 import XhsVerificationModal from '@/components/XhsVerificationModal.vue'
@@ -333,7 +334,10 @@ watch(
           }}</template></a-table-column
         ><a-table-column title="状态"
           ><template #default="{ record }"
-            ><StatusPill :value="record.publish_status" /></template></a-table-column
+            ><AutoPublishStatus
+              v-if="record.auto_publish_dispatches?.length"
+              :dispatches="record.auto_publish_dispatches" />
+            <StatusPill v-else :value="record.publish_status" /></template></a-table-column
         ><a-table-column title="更新时间"
           ><template #default="{ record }">{{
             formatDateTime(record.updated_at)

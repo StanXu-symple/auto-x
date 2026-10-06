@@ -5,12 +5,13 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query, status
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentAdmin, DbSession, RedisClient
 from app.api.errors import APIError
 from app.core.config import get_settings
+from app.models.ai_publish import AIPublishDispatch
 from app.models.monitored_user import MonitoredUser
 from app.models.qq import (
     QQBotAccount,
@@ -66,6 +67,33 @@ from app.services.qq_placeholders import (
 from app.services.qq_schedule import next_qq_task_run
 
 router = APIRouter(prefix="/qq", tags=["QQ Notifications"])
+
+
+def _protected_delivery_condition():
+    auto_dispatch = select(AIPublishDispatch.id).where(
+        AIPublishDispatch.channel == "qq",
+        AIPublishDispatch.article_publish_attempt_id
+        == QQDelivery.article_publish_attempt_id,
+    )
+    return or_(
+        QQDelivery.status == "sending",
+        auto_dispatch.where(AIPublishDispatch.status == "accepted").exists(),
+        and_(
+            QQDelivery.status.in_(("queued", "retry_wait")),
+            auto_dispatch.exists(),
+        ),
+    )
+
+
+async def _auto_dispatch_for_delivery(db: DbSession, row: QQDelivery) -> AIPublishDispatch | None:
+    if row.article_publish_attempt_id is None:
+        return None
+    return await db.scalar(
+        select(AIPublishDispatch).where(
+            AIPublishDispatch.channel == "qq",
+            AIPublishDispatch.article_publish_attempt_id == row.article_publish_attempt_id,
+        )
+    )
 
 
 def _bot_out(row: QQBotAccount, target_count: int = 0) -> QQBotOut:
@@ -886,15 +914,33 @@ async def list_deliveries(
 async def clear_task_history(task_id: int, db: DbSession, _: CurrentAdmin) -> MessageResponse:
     if await db.get(QQScheduledTask, task_id) is None:
         raise APIError(404, "qq_task_not_found", "QQ 定时任务不存在")
-    await db.execute(delete(QQDelivery).where(QQDelivery.task_id == task_id))
+    sending = (QQDelivery.task_id == task_id, QQDelivery.status == "sending")
+    if await db.scalar(select(QQDelivery.id).where(*sending).limit(1)) is not None:
+        raise APIError(409, "qq_delivery_active", "该任务有消息正在发送，请等待完成后再清除")
+    await db.execute(
+        delete(QQDelivery).where(
+            QQDelivery.task_id == task_id,
+            QQDelivery.status != "sending",
+        )
+    )
+    if await db.scalar(select(QQDelivery.id).where(*sending).limit(1)) is not None:
+        await db.rollback()
+        raise APIError(409, "qq_delivery_active", "投递期间状态发生变化，请稍后重试清除")
     await db.commit()
     return MessageResponse(message="该任务的推送历史已清除")
 
 
 @router.delete("/deliveries", response_model=MessageResponse)
 async def clear_deliveries(db: DbSession, _: CurrentAdmin) -> MessageResponse:
-    # Delete the database outbox too; stale Redis IDs are ignored by the worker.
-    await db.execute(delete(QQDelivery))
+    protected = _protected_delivery_condition()
+    if await db.scalar(select(QQDelivery.id).where(protected).limit(1)) is not None:
+        raise APIError(409, "qq_delivery_active", "有正在发送的消息或自动推送，请等待完成后再清除")
+    # Keep the guard in the DELETE too: a worker can claim a delivery after
+    # the check above. Stale Redis IDs are ignored by the worker.
+    await db.execute(delete(QQDelivery).where(~protected))
+    if await db.scalar(select(QQDelivery.id).where(protected).limit(1)) is not None:
+        await db.rollback()
+        raise APIError(409, "qq_delivery_active", "投递期间状态发生变化，请稍后重试清除")
     await db.commit()
     return MessageResponse(message="全部 QQ 投递记录已清除")
 
@@ -903,11 +949,16 @@ async def clear_deliveries(db: DbSession, _: CurrentAdmin) -> MessageResponse:
 async def delete_delivery(
     delivery_id: int, db: DbSession, _: CurrentAdmin
 ) -> MessageResponse:
-    result = await db.execute(
-        delete(QQDelivery).where(QQDelivery.id == delivery_id).returning(QQDelivery.id)
-    )
-    if result.scalar_one_or_none() is None:
+    row = await db.get(QQDelivery, delivery_id, with_for_update=True)
+    if row is None:
         raise APIError(404, "qq_delivery_not_found", "QQ 投递记录不存在或已删除")
+    dispatch = await _auto_dispatch_for_delivery(db, row)
+    if row.status == "sending" or (
+        dispatch is not None
+        and (dispatch.status == "accepted" or row.status in {"queued", "retry_wait"})
+    ):
+        raise APIError(409, "qq_delivery_active", "消息正在发送或属于进行中的自动推送，暂不能删除")
+    await db.delete(row)
     await db.commit()
     return MessageResponse(message="QQ 投递记录已删除")
 
@@ -916,11 +967,18 @@ async def delete_delivery(
 async def retry_delivery(
     delivery_id: int, db: DbSession, redis: RedisClient, _: CurrentAdmin
 ) -> QQDeliveryAccepted:
-    row = await db.get(QQDelivery, delivery_id)
+    row = await db.get(QQDelivery, delivery_id, with_for_update=True)
     if row is None:
         raise APIError(404, "qq_delivery_not_found", "QQ 投递记录不存在")
     if row.status not in {"failed", "cancelled"}:
         raise APIError(409, "qq_delivery_not_retryable", "当前投递状态不能重试")
+    # The draft and dispatch may already have been deleted after completion;
+    # the AI idempotency key still identifies an automatic delivery.
+    if (
+        row.idempotency_key.startswith("ai:")
+        or await _auto_dispatch_for_delivery(db, row) is not None
+    ):
+        raise APIError(409, "qq_auto_delivery_retry_forbidden", "自动推送记录不能单独重试 QQ 消息")
     row.status = "queued"
     row.attempts = 0
     row.next_attempt_at = datetime.now(UTC)

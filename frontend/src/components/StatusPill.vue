@@ -23,11 +23,20 @@ const tone = computed(() =>
     'ok',
   ].includes(normalized.value)
     ? 'success'
-    : ['running', 'polling', 'queued', 'connecting', 'backfilling', 'pending'].includes(
-          normalized.value,
-        )
+    : [
+          'running',
+          'polling',
+          'queued',
+          'connecting',
+          'backfilling',
+          'pending',
+          'dispatching',
+          'accepted',
+        ].includes(normalized.value)
       ? 'info'
-      : ['warning', 'partial', 'degraded', 'retry_wait', 'rate_limited'].includes(normalized.value)
+      : ['warning', 'partial', 'degraded', 'retry_wait', 'rate_limited', 'uncertain'].includes(
+            normalized.value,
+          )
         ? 'warning'
         : ['failed', 'error', 'invalid', 'down', 'unhealthy', 'identity_conflict'].includes(
               normalized.value,
@@ -64,6 +73,9 @@ const labels: Record<string, string> = {
   degraded: '降级',
   partial: '部分成功',
   retry_wait: '等待重试',
+  dispatching: '推送中',
+  accepted: '投递中',
+  uncertain: '结果待核对',
 }
 </script>
 

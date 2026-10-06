@@ -29,6 +29,7 @@ import type {
 import MetricCard from '@/components/MetricCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import AutoPublishStatus from '@/components/AutoPublishStatus.vue'
 import AiListenTasks from '@/components/AiListenTasks.vue'
 import { formatDateTime, formatDuration } from '@/utils/format'
 const route = useRoute()
@@ -486,6 +487,10 @@ onMounted(async () => {
             ><a-table-column title="状态"
               ><template #default="{ record }"
                 ><StatusPill :value="record.status" /></template></a-table-column
+            ><a-table-column title="自动推送"
+              ><template #default="{ record }"
+                ><AutoPublishStatus
+                  :dispatches="record.auto_publish_dispatches" /></template></a-table-column
             ><a-table-column title="草稿"
               ><template #default="{ record }">{{
                 record.draft?.title || '尚未生成'

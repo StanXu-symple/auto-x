@@ -81,6 +81,7 @@ def test_control_plane_secrets_are_mounted_by_least_privilege() -> None:
         service: _service_block(source, service)
         for service in (
             "backend",
+            "ai-worker",
             "xhs-worker",
             "auth-center",
             "monitor-center",
@@ -91,6 +92,10 @@ def test_control_plane_secrets_are_mounted_by_least_privilege() -> None:
     assert "/backend.secret:" in blocks["backend"]
     assert "private.pem" not in blocks["backend"]
     assert "clients.json" not in blocks["backend"]
+    assert "/ai-worker.secret:" in blocks["ai-worker"]
+    assert "backend.secret" not in blocks["ai-worker"]
+    assert "private.pem" not in blocks["ai-worker"]
+    assert "clients.json" not in blocks["ai-worker"]
     assert "private.pem" not in blocks["xhs-worker"]
     assert "clients.json" not in blocks["xhs-worker"]
     assert "/private.pem:" in blocks["auth-center"]
@@ -101,6 +106,19 @@ def test_control_plane_secrets_are_mounted_by_least_privilege() -> None:
     assert "private.pem" not in blocks["monitor-center"]
     assert "/services.json:" in blocks["monitor-agent"]
     assert ".secret:" not in blocks["monitor-agent"]
+
+
+def test_ai_worker_http_publish_uses_required_nacos_and_own_secret() -> None:
+    source = (REPOSITORY_ROOT / "docker-compose.microservices.yml").read_text()
+    ai_worker = _service_block(source, "ai-worker")
+    assert "XHS_TRANSPORT: http" in ai_worker
+    assert "XHS_SERVICE_NAME: xsentinel-xhs-worker" in ai_worker
+    assert "NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}" in ai_worker
+    assert 'NACOS_CONFIG_ENABLED: "true"' in ai_worker
+    assert 'NACOS_CONFIG_REQUIRED: "true"' in ai_worker
+    assert "SERVICE_CLIENT_SECRET_FILE: /run/xsentinel/ai-worker.secret" in ai_worker
+    assert "ai-worker.secret:/run/xsentinel/ai-worker.secret:ro" in ai_worker
+    assert "control" in ai_worker
 
 
 def test_control_plane_nacos_ports_follow_host_port_overrides() -> None:

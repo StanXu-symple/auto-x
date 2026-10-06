@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from app.core.config import Settings
 from app.schemas.ai import GeneratedDraft
 from app.services.ai_defaults import DRAFT_OUTPUT_SCHEMA, PROMPT_GUARD
+from app.services.xhs_limits import XHS_NOTE_CONTENT_MAX_LENGTH, XHS_NOTE_TITLE_MAX_LENGTH
 
 logger = logging.getLogger(__name__)
 MAX_SOURCE_CHARACTERS = 30000
@@ -53,6 +54,7 @@ class ProviderRequest:
     source: dict[str, Any]
     job_id: int
     api_key: str
+    auto_publish_channels: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -133,6 +135,13 @@ def build_provider_material(request: ProviderRequest) -> tuple[str, str, str, st
         f"Write in language {sanitize_untrusted_text(request.language, limit=32)} "
         f"with tone {sanitize_untrusted_text(request.tone, limit=64)}."
     )
+    if "xhs" in request.auto_publish_channels:
+        trusted_parts.append(
+            "This draft will be published as a Xiaohongshu image note. "
+            f"Keep the title within {XHS_NOTE_TITLE_MAX_LENGTH} characters and "
+            f"the body within {XHS_NOTE_CONTENT_MAX_LENGTH} characters. "
+            "Preserve the key facts instead of cutting text mid-sentence."
+        )
     instructions = "\n\n".join(trusted_parts)
 
     source = build_untrusted_source(request.source)

@@ -18,6 +18,7 @@ from app.models.ai import (
 )
 from app.models.ai_data_source import AIDataSource
 from app.models.monitored_user import MonitoredUser
+from app.models.qq import QQBotAccount, QQJoinedGroup
 from app.models.tweet import Tweet
 from app.schemas.ai import (
     AIListenTaskAccountOut,
@@ -43,6 +44,34 @@ STATS_KEYS = (
     "cancelled",
     "lifetime_attempts",
 )
+
+
+async def validate_qq_publish_target(
+    db: AsyncSession,
+    *,
+    channels: list[str],
+    bot_id: int | None,
+    group_openids: list[str],
+) -> None:
+    if "qq" not in channels:
+        return
+    if bot_id is None or not group_openids:
+        raise APIError(422, "qq_target_required", "QQ 自动推送需要选择机器人和群")
+    bot = await db.get(QQBotAccount, bot_id)
+    if bot is None or not bot.is_enabled:
+        raise APIError(422, "qq_bot_disabled", "所选 QQ 机器人不存在或未启用")
+    joined = set(
+        await db.scalars(
+            select(QQJoinedGroup.group_openid).where(
+                QQJoinedGroup.bot_id == bot_id,
+                QQJoinedGroup.app_id == bot.app_id,
+                QQJoinedGroup.is_joined.is_(True),
+                QQJoinedGroup.group_openid.in_(group_openids),
+            )
+        )
+    )
+    if missing := set(group_openids) - joined:
+        raise APIError(422, "qq_group_not_joined", "机器人尚未加入所选群", sorted(missing))
 
 
 async def validate_selection(
@@ -254,6 +283,9 @@ async def task_out(
         monitored_user_ids=[link.monitored_user_id for link in task.subscriptions],
         accounts=[AIListenTaskAccountOut.model_validate(user) for user in accounts],
         listen_mode=task.listen_mode,
+        auto_publish_channels=task.auto_publish_channels or [],
+        qq_bot_id=task.qq_bot_id,
+        qq_group_openids=task.qq_group_openids or [],
         skill_ids=[link.skill_id for link in ordered_skills],
         skills=[
             AIListenTaskSkillOut(

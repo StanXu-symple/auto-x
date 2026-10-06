@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import Field, StrictBool, field_validator, model_validator
 
+from app.schemas.ai_publish import AIPublishDispatchOut
 from app.schemas.common import APIModel
 
 ArticleSource = Literal["ai", "user"]
@@ -89,6 +90,7 @@ class ArticleOut(APIModel):
     publish_channel: ArticlePublishChannel | None
     publish_error: str | None
     published_at: datetime | None
+    auto_publish_dispatches: list[AIPublishDispatchOut] = Field(default_factory=list)
     revision: int
     created_at: datetime
     updated_at: datetime

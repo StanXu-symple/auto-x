@@ -221,6 +221,7 @@ CONTROL_PLANE_KEYS = {
     "SERVICE_CLIENT_BACKEND_SECRET",
     "SERVICE_CLIENT_MONITOR_SECRET",
     "SERVICE_CLIENT_AGENT_SECRET",
+    "SERVICE_CLIENT_AI_WORKER_SECRET",
     "SERVICE_CLIENT_XHS_WORKER_SECRET",
     "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET",
     "SERVICE_CLIENT_RUNTIME_LOGS_SECRET",
@@ -411,6 +412,28 @@ def ensure_camoufox_caller(values: dict) -> None:
         raise RuntimeError("Nacos 中 xhs-worker 服务凭据缺失或不匹配，请恢复原服务密钥")
 
 
+def ensure_ai_worker_caller(values: dict) -> None:
+    """Seed an AI Worker identity without restoring revoked grants or credentials."""
+    import hashlib
+    import secrets
+
+    raw = values.get("SERVICE_AUTH_CLIENTS_JSON")
+    if not raw:
+        return
+    clients = json.loads(str(raw))
+    secret = str(values.get("SERVICE_CLIENT_AI_WORKER_SECRET") or "")
+    if "ai-worker" not in clients:
+        secret = secret or secrets.token_hex(32)
+        clients["ai-worker"] = {
+            "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+            "grants": {"xhs-worker": "xhs:execute"},
+        }
+        values["SERVICE_AUTH_CLIENTS_JSON"] = json.dumps(clients, ensure_ascii=False)
+        values["SERVICE_CLIENT_AI_WORKER_SECRET"] = secret
+    elif not secret or clients["ai-worker"]["secret_sha256"] != hashlib.sha256(secret.encode()).hexdigest():
+        raise RuntimeError("Nacos 中 ai-worker 服务凭据缺失或不匹配，请恢复原服务密钥")
+
+
 def ensure_screenshot_defaults(values: dict) -> None:
     """Seed screenshot tuning without changing existing operator choices."""
     defaults = {
@@ -475,6 +498,7 @@ def read_control_plane_values(path: Path) -> dict[str, str]:
         "backend.secret": "SERVICE_CLIENT_BACKEND_SECRET",
         "monitor.secret": "SERVICE_CLIENT_MONITOR_SECRET",
         "agent.secret": "SERVICE_CLIENT_AGENT_SECRET",
+        "ai-worker.secret": "SERVICE_CLIENT_AI_WORKER_SECRET",
         "xhs-worker.secret": "SERVICE_CLIENT_XHS_WORKER_SECRET",
         "screenshot-worker.secret": "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET",
         "runtime-logs.secret": "SERVICE_CLIENT_RUNTIME_LOGS_SECRET",
@@ -498,6 +522,7 @@ def write_control_plane_values(path: Path, values: Mapping[str, object]) -> int:
         "SERVICE_CLIENT_BACKEND_SECRET": "backend.secret",
         "SERVICE_CLIENT_MONITOR_SECRET": "monitor.secret",
         "SERVICE_CLIENT_AGENT_SECRET": "agent.secret",
+        "SERVICE_CLIENT_AI_WORKER_SECRET": "ai-worker.secret",
         "SERVICE_CLIENT_XHS_WORKER_SECRET": "xhs-worker.secret",
         "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET": "screenshot-worker.secret",
         "SERVICE_CLIENT_RUNTIME_LOGS_SECRET": "runtime-logs.secret",
@@ -1047,6 +1072,9 @@ def main() -> int:
     merged.update(remote)
     ensure_camoufox_defaults(merged)
     ensure_camoufox_caller(merged)
+    selected_services = {service.strip() for service in args.monitor_services.split(",")}
+    if not args.monitor_services or selected_services.intersection({"ai-worker", "auth-center"}):
+        ensure_ai_worker_caller(merged)
     ensure_screenshot_defaults(merged)
     ensure_screenshot_caller(merged)
     ensure_runtime_logs_caller(merged)

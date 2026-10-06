@@ -163,6 +163,10 @@ async def test_listening_enqueue_matches_account_type_and_time_and_freezes_skill
 ) -> None:
     now = datetime.now(UTC)
     session = make_listen_session(now, inserted=[101])
+    session.tasks[0].auto_publish_channels = ["xhs", "qq"]
+    session.tasks[0].owner_admin_id = 9
+    session.tasks[0].qq_bot_id = 2
+    session.tasks[0].qq_group_openids = ["group-1"]
     feature = AIFeature(
         id=1,
         code="article_generation",
@@ -195,6 +199,10 @@ async def test_listening_enqueue_matches_account_type_and_time_and_freezes_skill
         "skill three",
     ]
     assert params["task_config_version_m0"] == 4
+    assert params["task_snapshot_m0"]["auto_publish_channels"] == ["xhs", "qq"]
+    assert params["task_snapshot_m0"]["owner_admin_id"] == 9
+    assert params["task_snapshot_m0"]["qq_bot_id"] == 2
+    assert params["task_snapshot_m0"]["qq_group_openids"] == ["group-1"]
     assert session.events[0].event_type == "jobs_enqueued"
     assert session.events[0].details["count"] == 1
 
@@ -204,6 +212,10 @@ async def test_explicit_backfill_uses_requested_window_and_frozen_skill_snapshot
 ) -> None:
     now = datetime.now(UTC)
     session = make_listen_session(now, inserted=[103])
+    session.tasks[0].auto_publish_channels = ["qq"]
+    session.tasks[0].owner_admin_id = 9
+    session.tasks[0].qq_bot_id = 2
+    session.tasks[0].qq_group_openids = ["group-2"]
     session.tweets = [session.tweets[2]]
     feature = AIFeature(
         id=1,
@@ -227,6 +239,10 @@ async def test_explicit_backfill_uses_requested_window_and_frozen_skill_snapshot
         "monitored_user_ids": [1],
         "listen_mode": "original",
         "feature_code": "article_generation",
+        "auto_publish_channels": ["xhs"],
+        "owner_admin_id": 8,
+        "qq_bot_id": 3,
+        "qq_group_openids": ["group-old"],
         "skill_ids": [2, 3],
         "skills": [
             {"id": 2, "name": "分析", "instructions": "old two", "version": 1},
@@ -247,7 +263,30 @@ async def test_explicit_backfill_uses_requested_window_and_frozen_skill_snapshot
     assert params["idempotency_key_m0"] == "listen:7:tweet:13"
     assert params["skill_snapshot_m0"][0]["instructions"] == "old two"
     assert params["task_config_version_m0"] == 2
+    assert params["task_snapshot_m0"]["auto_publish_channels"] == ["xhs"]
+    assert params["task_snapshot_m0"]["owner_admin_id"] == 8
+    assert params["task_snapshot_m0"]["qq_bot_id"] == 3
+    assert params["task_snapshot_m0"]["qq_group_openids"] == ["group-old"]
     assert params["request_snapshot_m0"]["config"]["language"] == "en"
+
+    # A backfill request saved before channel selection existed must remain opt-out.
+    legacy_snapshot = {
+        key: value
+        for key, value in snapshot.items()
+        if key not in {"auto_publish_channels", "owner_admin_id", "qq_bot_id", "qq_group_openids"}
+    }
+    await enqueue_listening_jobs(
+        session,  # type: ignore[arg-type]
+        [13],
+        task_id=7,
+        backfill_window=(now - timedelta(days=3), now - timedelta(days=1)),
+        backfill_snapshot=legacy_snapshot,
+    )
+    legacy_params = session.inserts[1].compile(dialect=postgresql.dialect()).params
+    assert legacy_params["task_snapshot_m0"]["auto_publish_channels"] == []
+    assert legacy_params["task_snapshot_m0"]["owner_admin_id"] is None
+    assert legacy_params["task_snapshot_m0"]["qq_bot_id"] is None
+    assert legacy_params["task_snapshot_m0"]["qq_group_openids"] == []
 
 
 @pytest.mark.parametrize(

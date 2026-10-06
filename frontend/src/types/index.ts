@@ -682,6 +682,20 @@ export type AiJobStatus = 'queued' | 'running' | 'retry_wait' | 'succeeded' | 'f
 export type ArticleSource = 'ai' | 'user'
 export type ArticlePublishStatus = 'unpublished' | 'queued' | 'published' | 'failed'
 export type ArticlePublishChannel = 'qq' | 'xhs'
+export type AutoPublishDispatchStatus =
+  'pending' | 'retry_wait' | 'dispatching' | 'accepted' | 'published' | 'failed' | 'uncertain'
+
+export interface AutoPublishDispatch {
+  id: EntityId
+  channel: ArticlePublishChannel
+  status: AutoPublishDispatchStatus
+  attempts: number
+  article_publish_attempt_id: string | null
+  last_error: string | null
+  started_at: string | null
+  completed_at: string | null
+  updated_at: string
+}
 
 export interface AiDraft {
   id: EntityId
@@ -708,6 +722,7 @@ export interface AiJob {
   status: AiJobStatus | string
   feature_code?: string
   draft?: AiDraft | null
+  auto_publish_dispatches?: AutoPublishDispatch[]
   error_message?: string | null
   last_error?: string | null
   provider?: string | null
@@ -746,6 +761,7 @@ export interface AiJobQuery extends PaginationQuery {
 
 export type AiListenMode = 'all' | 'original' | 'reply' | 'retweet'
 export type AiListenTaskState = 'enabled' | 'paused' | 'archived'
+export type AiListenPublishChannel = 'xhs' | 'qq'
 
 export interface AiListenTaskPayload {
   name: string
@@ -754,6 +770,9 @@ export interface AiListenTaskPayload {
   monitored_user_ids: EntityId[]
   listen_mode: AiListenMode
   skill_ids: EntityId[]
+  auto_publish_channels: AiListenPublishChannel[]
+  qq_bot_id: EntityId | null
+  qq_group_openids: string[]
   initial_sync_days: number
   max_attempts_override?: number | null
   language_override?: string | null
@@ -790,6 +809,9 @@ export interface AiListenTask {
   monitored_user_ids: EntityId[]
   listen_mode: AiListenMode
   skill_ids: EntityId[]
+  auto_publish_channels: AiListenPublishChannel[]
+  qq_bot_id: EntityId | null
+  qq_group_openids: string[]
   initial_sync_days: number
   max_attempts_override?: number | null
   language_override?: string | null
@@ -927,6 +949,7 @@ export interface Article {
   excerpt?: string | null
   images: string[]
   publish_status: ArticlePublishStatus
+  auto_publish_dispatches?: AutoPublishDispatch[]
   publish_channel?: ArticlePublishChannel | null
   publish_error?: string | null
   published_at?: string | null

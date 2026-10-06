@@ -199,6 +199,9 @@ class AIGenerationJob(Base):
     source_text_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    publish_outbox_initialized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -216,6 +219,9 @@ class AIListenTask(Base):
     __tablename__ = "ai_listen_tasks"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_admin_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admins.id", ondelete="SET NULL"), nullable=True
+    )
     name: Mapped[str] = mapped_column(String(100))
     desired_state: Mapped[str] = mapped_column(
         String(16), default="paused", server_default="paused", index=True
@@ -227,6 +233,13 @@ class AIListenTask(Base):
     listen_mode: Mapped[str] = mapped_column(
         String(16), default="original", server_default="original"
     )
+    auto_publish_channels: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default="[]"
+    )
+    qq_bot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qq_bot_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    qq_group_openids: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
     feature_code: Mapped[str] = mapped_column(
         String(64), default="article_generation", server_default="article_generation"
     )
