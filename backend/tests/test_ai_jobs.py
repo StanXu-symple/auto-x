@@ -16,11 +16,9 @@ class FakeSession:
     async def scalar(self, _statement):
         return self.setting
 
-    async def scalars(self, _statement):
-        return self.scalar_batches.pop(0)
-
-    async def execute(self, statement):
+    async def scalars(self, statement):
         self.statements.append(statement)
+        return self.scalar_batches.pop(0)
 
 
 async def test_auto_enqueue_is_idempotent_and_freezes_skill_audit_snapshot(
@@ -31,6 +29,7 @@ async def test_auto_enqueue_is_idempotent_and_freezes_skill_audit_snapshot(
         id=1,
         enabled=True,
         auto_generate=True,
+        auto_trigger_mode="legacy_all",
         provider="openai_responses",
         model_name="gpt-5.6-terra",
         base_url="https://api.openai.com/v1",
@@ -91,15 +90,16 @@ async def test_auto_enqueue_is_idempotent_and_freezes_skill_audit_snapshot(
     monkeypatch.setattr("app.services.ai_jobs.get_ai_feature", fake_feature)
     monkeypatch.setattr("app.services.ai_jobs.resolve_context_skills", fake_skills)
     monkeypatch.setattr("app.services.ai_jobs.build_author_context", fake_context)
-    session = FakeSession(setting, [[tweet_1, tweet_2], ["auto:11"]])
+    session = FakeSession(setting, [[tweet_1, tweet_2], [12]])
     inserted = await enqueue_auto_jobs(session, [11, 12])  # type: ignore[arg-type]
 
     assert inserted == 1
-    assert len(session.statements) == 1
-    statement = session.statements[0]
+    assert len(session.statements) == 2
+    statement = session.statements[-1]
     sql = str(statement.compile(dialect=postgresql.dialect())).upper()
     params = statement.compile(dialect=postgresql.dialect()).params
     assert "ON CONFLICT (IDEMPOTENCY_KEY) DO NOTHING" in sql
+    assert "RETURNING" in sql
     snapshots = [value for key, value in params.items() if key.startswith("skill_snapshot")]
     assert snapshots[0][0]["instructions"] == "frozen instructions"
     request_snapshots = [

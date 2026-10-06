@@ -9,6 +9,7 @@ from app.api.deps import CurrentAdmin, DbSession
 from app.api.errors import APIError
 from app.core.config import get_settings
 from app.core.time import as_utc
+from app.models.ai import AIListenTaskSubscription
 from app.models.monitored_user import MonitoredUser
 from app.models.tweet import Tweet
 from app.schemas.common import AcceptedResponse, MessageResponse, Page
@@ -66,6 +67,7 @@ def _serialize_user(
         next_poll_at=user.next_poll_at,
         last_error=user.last_error,
         consecutive_failures=user.consecutive_failures,
+        archived_at=user.archived_at,
         tweet_count=tweet_count,
         created_at=user.created_at,
         updated_at=user.updated_at,
@@ -87,8 +89,13 @@ async def list_monitored_users(
     page_size: int = Query(default=20, ge=1, le=100),
     search: str | None = Query(default=None, max_length=64),
     is_active: bool | None = None,
+    archived: bool = False,
 ) -> Page[MonitoredUserOut]:
-    conditions = []
+    conditions = [
+        MonitoredUser.archived_at.is_not(None)
+        if archived
+        else MonitoredUser.archived_at.is_(None)
+    ]
     if search:
         term = f"%{search.strip().lower()}%"
         conditions.append(
@@ -205,10 +212,31 @@ async def delete_monitored_user(
     db: DbSession,
     _: CurrentAdmin,
 ) -> MessageResponse:
-    user = await _get_user_or_404(db, user_id)
+    user = await db.scalar(
+        select(MonitoredUser).where(MonitoredUser.id == user_id).with_for_update()
+    )
+    if user is None:
+        raise APIError(404, "monitored_user_not_found", "Monitored user was not found")
+    has_content = await db.scalar(
+        select(Tweet.id).where(Tweet.monitored_user_id == user.id).limit(1)
+    )
+    has_task = await db.scalar(
+        select(AIListenTaskSubscription.task_id)
+        .where(AIListenTaskSubscription.monitored_user_id == user.id)
+        .limit(1)
+    )
+    if has_content is not None or has_task is not None:
+        user.archived_at = datetime.now(UTC)
+        user.is_active = False
+        user.status = "archived"
+        user.next_poll_at = None
+        user.manual_poll_token = None
+        user.poll_generation += 1
+        await db.commit()
+        return MessageResponse(message=f"@{user.username} 已归档，已采集内容和生成历史保留")
     await db.delete(user)
     await db.commit()
-    return MessageResponse(message=f"@{user.username} and its stored data were deleted")
+    return MessageResponse(message=f"@{user.username} 已删除；该账号没有已采集内容或监听任务引用")
 
 
 @router.post("/{user_id}/pause", response_model=MonitoredUserOut)
@@ -240,6 +268,7 @@ async def resume_monitored_user(
 ) -> MonitoredUserOut:
     user = await _get_user_or_404(db, user_id)
     user.is_active = True
+    user.archived_at = None
     user.status = "queued"
     user.last_error = None
     user.next_poll_at = datetime.now(UTC)

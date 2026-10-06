@@ -4,6 +4,16 @@ import type {
   AiJob,
   AiJobActionResponse,
   AiJobQuery,
+  AiGenerationAttempt,
+  AiListenTask,
+  AiListenTaskBackfill,
+  AiListenTaskEvent,
+  AiListenTaskPayload,
+  AiListenTaskPage,
+  AiListenTaskPatch,
+  AiListenTaskPreview,
+  AiListenTaskPreviewPayload,
+  AiListenTaskQuery,
   AiFeature,
   AiDraft,
   AiDataSourceSavePayload,
@@ -192,7 +202,7 @@ export const monitoredUsersApi = {
     return dataOf(await http.patch<Wrapped<MonitoredUser>>(`/monitored-users/${id}`, payload))
   },
   async remove(id: EntityId) {
-    await http.delete(`/monitored-users/${id}`)
+    return dataOf(await http.delete<Wrapped<{ message: string }>>(`/monitored-users/${id}`))
   },
   async pause(id: EntityId) {
     return dataOf(await http.post<Wrapped<MonitoredUser>>(`/monitored-users/${id}/pause`))
@@ -411,6 +421,13 @@ export const aiApi = {
   async jobs(params: AiJobQuery) {
     return pageOf(await http.get<Wrapped<PaginatedResponse<AiJob>>>('/ai/jobs', { params }))
   },
+  async jobAttempts(id: EntityId, params: { page: number; page_size: number }) {
+    return pageOf(
+      await http.get<Wrapped<PaginatedResponse<AiGenerationAttempt>>>(`/ai/jobs/${id}/attempts`, {
+        params,
+      }),
+    )
+  },
   async updateDraft(id: EntityId, payload: UpdateAiDraftPayload) {
     return dataOf(await http.patch<Wrapped<AiDraft>>(`/ai/drafts/${id}`, payload))
   },
@@ -422,6 +439,73 @@ export const aiApi = {
   },
   async generateFromTweet(tweetId: EntityId, payload: GenerateTweetPayload = {}) {
     return dataOf(await http.post<Wrapped<AiJobActionResponse>>(`/tweets/${tweetId}/generate`, payload))
+  },
+}
+
+export const aiListenTasksApi = {
+  async list(params: AiListenTaskQuery) {
+    return dataOf(await http.get<Wrapped<AiListenTaskPage>>('/ai/listen-tasks', { params }))
+  },
+  async detail(id: EntityId) {
+    return dataOf(await http.get<Wrapped<AiListenTask>>(`/ai/listen-tasks/${id}`))
+  },
+  async create(payload: AiListenTaskPayload) {
+    return dataOf(await http.post<Wrapped<AiListenTask>>('/ai/listen-tasks', payload))
+  },
+  async update(id: EntityId, payload: AiListenTaskPatch) {
+    return dataOf(await http.patch<Wrapped<AiListenTask>>(`/ai/listen-tasks/${id}`, payload))
+  },
+  async pause(id: EntityId) {
+    return dataOf(await http.post<Wrapped<AiListenTask>>(`/ai/listen-tasks/${id}/pause`))
+  },
+  async resume(id: EntityId, switchFromLegacy = false) {
+    return dataOf(
+      await http.post<Wrapped<AiListenTask>>(`/ai/listen-tasks/${id}/resume`, undefined, {
+        params: { switch_from_legacy: switchFromLegacy },
+      }),
+    )
+  },
+  async archive(id: EntityId) {
+    return dataOf(await http.post<Wrapped<AiListenTask>>(`/ai/listen-tasks/${id}/archive`))
+  },
+  async queueDecision(id: EntityId, decision: 'continue_old_snapshot' | 'cancel_old_queue') {
+    return dataOf(
+      await http.post<Wrapped<AiListenTask>>(`/ai/listen-tasks/${id}/queue-decision`, { decision }),
+    )
+  },
+  async preview(payload: AiListenTaskPreviewPayload) {
+    return dataOf(
+      await http.post<Wrapped<AiListenTaskPreview>>('/ai/listen-tasks/preview', payload),
+    )
+  },
+  async backfill(
+    id: EntityId,
+    payload: {
+      from_at: string
+      to_at: string
+      request_id?: string
+      exclude_legacy_generated?: boolean
+    },
+  ) {
+    return dataOf(
+      await http.post<Wrapped<AiListenTaskBackfill>>(`/ai/listen-tasks/${id}/backfills`, payload),
+    )
+  },
+  async backfills(id: EntityId, params: { page: number; page_size: number }) {
+    return pageOf(
+      await http.get<Wrapped<PaginatedResponse<AiListenTaskBackfill>>>(
+        `/ai/listen-tasks/${id}/backfills`,
+        { params },
+      ),
+    )
+  },
+  async events(id: EntityId, params: { page: number; page_size: number }) {
+    return pageOf(
+      await http.get<Wrapped<PaginatedResponse<AiListenTaskEvent>>>(
+        `/ai/listen-tasks/${id}/events`,
+        { params },
+      ),
+    )
   },
 }
 

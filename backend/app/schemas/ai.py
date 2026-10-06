@@ -7,10 +7,11 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 
-from app.schemas.common import APIModel
+from app.schemas.common import APIModel, Page
 
 AIProvider = Literal["openai_responses", "codex_bridge"]
 AIJobStatus = Literal["queued", "running", "retry_wait", "succeeded", "failed", "cancelled"]
+AITriggerType = Literal["manual", "legacy_auto", "listen_task"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
@@ -27,6 +28,7 @@ def _validate_http_url(value: str) -> str:
 class AISettingsPatch(APIModel):
     enabled: bool | None = None
     auto_generate: bool | None = None
+    auto_trigger_mode: Literal["legacy_all", "listening_tasks"] | None = None
     provider: AIProvider | None = None
     model: str | None = Field(default=None, min_length=1, max_length=128)
     base_url: str | None = Field(default=None, max_length=500)
@@ -67,6 +69,7 @@ class AISettingsPatch(APIModel):
     @field_validator(
         "enabled",
         "auto_generate",
+        "auto_trigger_mode",
         "provider",
         "model",
         "base_url",
@@ -100,6 +103,7 @@ class AISettingsPatch(APIModel):
 class AISettingsOut(APIModel):
     enabled: bool
     auto_generate: bool
+    auto_trigger_mode: Literal["legacy_all", "listening_tasks"]
     provider: AIProvider
     model: str
     base_url: str
@@ -281,6 +285,11 @@ class AIJobOut(APIModel):
     max_attempts: int
     next_attempt_at: datetime
     manual: bool
+    listen_task_id: int | None = None
+    trigger_type: AITriggerType = "legacy_auto"
+    task_config_version: int | None = None
+    lifetime_attempts: int = 0
+    is_archived: bool = False
     last_error: str | None
     started_at: datetime | None
     completed_at: datetime | None
@@ -290,10 +299,257 @@ class AIJobOut(APIModel):
 
 
 class AIJobDetail(AIJobOut):
+    task_snapshot: dict[str, Any] | None = None
     request_snapshot: dict[str, Any] | None
     response_snapshot: dict[str, Any] | None
     prompt_hash: str | None
     source_text_hash: str | None
+
+
+class AIListenTaskCreate(APIModel):
+    name: str = Field(min_length=1, max_length=100)
+    desired_state: Literal["enabled", "paused"] = "enabled"
+    all_monitored_users: bool = False
+    monitored_user_ids: list[int] = Field(default_factory=list, max_length=500)
+    listen_mode: Literal["all", "original", "reply", "retweet"] = "original"
+    skill_ids: list[int] = Field(min_length=1, max_length=20)
+    initial_sync_days: int = Field(default=0, ge=0, le=365)
+    max_attempts_override: int | None = Field(default=None, ge=1, le=10)
+    language_override: str | None = Field(default=None, min_length=1, max_length=32)
+    tone_override: str | None = Field(default=None, min_length=1, max_length=64)
+    max_output_tokens_override: int | None = Field(default=None, ge=128, le=100000)
+    switch_from_legacy: bool = False
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> AIListenTaskCreate:
+        if not self.all_monitored_users and not self.monitored_user_ids:
+            raise ValueError("choose at least one monitored user")
+        if len(self.monitored_user_ids) != len(set(self.monitored_user_ids)):
+            raise ValueError("monitored user ids must be unique")
+        if any(item <= 0 for item in self.monitored_user_ids):
+            raise ValueError("monitored user ids must be positive")
+        if len(self.skill_ids) != len(set(self.skill_ids)) or any(
+            item <= 0 for item in self.skill_ids
+        ):
+            raise ValueError("skill ids must be unique positive integers")
+        return self
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name must not be blank")
+        return stripped
+
+
+class AIListenTaskPatch(APIModel):
+    config_version: int = Field(ge=1)
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    all_monitored_users: bool | None = None
+    monitored_user_ids: list[int] | None = Field(default=None, max_length=500)
+    listen_mode: Literal["all", "original", "reply", "retweet"] | None = None
+    skill_ids: list[int] | None = Field(default=None, min_length=1, max_length=20)
+    max_attempts_override: int | None = Field(default=None, ge=1, le=10)
+    language_override: str | None = Field(default=None, min_length=1, max_length=32)
+    tone_override: str | None = Field(default=None, min_length=1, max_length=64)
+    max_output_tokens_override: int | None = Field(default=None, ge=128, le=100000)
+
+    @model_validator(mode="after")
+    def validate_patch(self) -> AIListenTaskPatch:
+        if len(self.model_fields_set) <= 1:
+            raise ValueError("at least one task field must be provided")
+        if self.monitored_user_ids is not None:
+            if len(self.monitored_user_ids) != len(set(self.monitored_user_ids)) or any(
+                item <= 0 for item in self.monitored_user_ids
+            ):
+                raise ValueError("monitored user ids must be unique positive integers")
+        if self.skill_ids is not None:
+            if len(self.skill_ids) != len(set(self.skill_ids)) or any(
+                item <= 0 for item in self.skill_ids
+            ):
+                raise ValueError("skill ids must be unique positive integers")
+        for required in (
+            "name",
+            "all_monitored_users",
+            "monitored_user_ids",
+            "listen_mode",
+            "skill_ids",
+        ):
+            if required in self.model_fields_set and getattr(self, required) is None:
+                raise ValueError(f"{required} cannot be null")
+        if self.name is not None:
+            self.name = self.name.strip()
+            if not self.name:
+                raise ValueError("name must not be blank")
+        return self
+
+
+class AIListenTaskPreview(AIListenTaskCreate):
+    task_id: int | None = Field(default=None, ge=1)
+    from_at: datetime | None = None
+    to_at: datetime | None = None
+    exclude_legacy_generated: bool = True
+
+    @model_validator(mode="after")
+    def validate_window(self) -> AIListenTaskPreview:
+        if (self.from_at is None) != (self.to_at is None):
+            raise ValueError("from_at and to_at must be supplied together")
+        if self.from_at and (self.from_at.tzinfo is None or self.to_at.tzinfo is None):
+            raise ValueError("history timestamps must include a timezone")
+        if self.from_at and self.to_at and self.from_at >= self.to_at:
+            raise ValueError("from_at must precede to_at")
+        return self
+
+
+class AIListenTaskStats(APIModel):
+    matched: int = 0
+    queued: int = 0
+    running: int = 0
+    retry_wait: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    cancelled: int = 0
+    lifetime_attempts: int = 0
+
+
+class AIListenTaskCondition(APIModel):
+    status: str
+    reasons: list[str] = Field(default_factory=list)
+
+
+class AIListenTaskAccountOut(APIModel):
+    id: int
+    username: str
+    is_active: bool
+    include_replies: bool
+    include_retweets: bool
+    last_polled_at: datetime | None
+    archived_at: datetime | None = None
+
+
+class AIListenTaskSkillOut(APIModel):
+    id: int
+    name: str
+    is_active: bool
+    version: int
+    priority: int
+
+
+class AIListenTaskOut(APIModel):
+    id: int
+    name: str
+    desired_state: Literal["enabled", "paused", "archived"]
+    queue_hold_reason: str | None
+    all_monitored_users: bool
+    monitored_user_ids: list[int]
+    accounts: list[AIListenTaskAccountOut]
+    listen_mode: Literal["all", "original", "reply", "retweet"]
+    skill_ids: list[int]
+    skills: list[AIListenTaskSkillOut]
+    feature_code: str
+    config_version: int
+    activated_at: datetime | None
+    effective_from: datetime | None
+    initial_sync_days: int
+    initial_backfill_from: datetime | None
+    initial_backfill_to: datetime | None
+    archived_at: datetime | None
+    max_attempts_override: int | None
+    language_override: str | None
+    tone_override: str | None
+    max_output_tokens_override: int | None
+    health: AIListenTaskCondition
+    dependency: AIListenTaskCondition
+    stats: AIListenTaskStats
+    last_matched_at: datetime | None
+    last_success_at: datetime | None
+    last_failure_at: datetime | None
+    last_ai_started_at: datetime | None
+    data_source_name: str | None
+    data_source_model: str | None
+    data_source_verified_at: datetime | None
+    data_source_verification_status: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AIListenTaskPage(Page[AIListenTaskOut]):
+    summary: AIListenTaskStats
+
+
+class AIListenTaskPreviewOut(APIModel):
+    matched: int
+    duplicates: int
+    legacy_generated: int
+    pending: int
+    unavailable_accounts: list[dict[str, Any]]
+    from_at: datetime | None
+    to_at: datetime | None
+
+
+class AIListenTaskBackfillCreate(APIModel):
+    from_at: datetime
+    to_at: datetime
+    request_id: str | None = Field(
+        default=None, min_length=8, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$"
+    )
+    exclude_legacy_generated: bool = True
+
+    @model_validator(mode="after")
+    def validate_window(self) -> AIListenTaskBackfillCreate:
+        if self.from_at.tzinfo is None or self.to_at.tzinfo is None:
+            raise ValueError("history timestamps must include a timezone")
+        if self.from_at >= self.to_at:
+            raise ValueError("from_at must precede to_at")
+        return self
+
+
+class AIListenTaskBackfillOut(APIModel):
+    id: int
+    task_id: int
+    request_id: str
+    from_at: datetime
+    to_at: datetime
+    status: str
+    scanned_count: int
+    enqueued_count: int
+    last_error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AIListenTaskEventOut(APIModel):
+    id: int
+    task_id: int
+    event_type: str
+    job_id: int | None
+    backfill_id: int | None
+    summary: str
+    details: dict[str, Any] | None
+    created_at: datetime
+
+
+class AIListenTaskQueueDecision(APIModel):
+    decision: Literal["continue_old_snapshot", "cancel_old_queue"]
+
+
+class AIGenerationAttemptOut(APIModel):
+    id: int
+    job_id: int
+    lifetime_number: int
+    round_number: int
+    attempt_number: int
+    started_at: datetime
+    ended_at: datetime | None
+    status: str
+    error_type: str | None
+    error_summary: str | None
+    duration_ms: int | None
+    provider: str | None
+    model_name: str | None
+    data_source_name: str | None
+    data_source_version: int | None
 
 
 class ManualGenerateRequest(APIModel):

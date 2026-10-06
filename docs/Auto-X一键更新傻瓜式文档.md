@@ -1077,3 +1077,39 @@ bash kejilion.sh app auto-x
 tc-2 源码和七项业务容器的 OCI revision 均为 `341e6314ffc7cb604f148cbaaf93465600ac69c9`、全部 healthy；`migrate` 退出码 0。frontend 8080、backend 就绪接口、auth-center 就绪接口均返回 HTTP 200，原七项服务清单完整。hn-1 四项服务保持原运行 SHA `48aca12ed3054608aa86190c7765359fbff59910` 且 healthy，8006/8007 健康接口返回 HTTP 200。数据库仍为 `0031_tweet_screenshots`；原服务清单和 Compose 覆盖逐字一致，`.env` 仅 `IMAGE_TAG`、`FRONTEND_IMAGE_TAG` 变化。Nacos 三份 JSON 的值均与备份一致，其中共享配置经安装器重新序列化后原文字节不同，两份监控配置原文字节相同。
 
 线上前端资源已核对包含文章编辑的“恢复自动关联”及生成任务的“监听自动生成”文案。真实文章编辑保存和生成任务由用户在业务使用时复测。
+
+## 二十六、AI 监听任务业务接入与状态中文化
+
+本次把 `/ai-writing` 的监听任务原型接入真实采集、数据库、AI Worker 和前端；生成记录状态下拉同时改为中文。目标提交含 `0032_ai_listen_tasks` 迁移，需在 **tc-2** 更新 `backend`、X 采集 `worker`、`ai-worker`、`frontend`。本机完整服务清单为 `backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend`，按完整清单走安装器菜单 2，避免 Compose 移除未选中的服务。**hn-1 本轮无需升级**，Camoufox/XHS 浏览器服务与 Nacos 地址不变。
+
+迁移会保留现有 AI 自动生成方式为 `legacy_all`，已有生成记录与待执行任务不删除。升级不会自动建立监听任务，也不会自行切换全局生成方式；管理员首次启用真实监听任务时，页面明确提示确认切换到 `listening_tasks`。切换后新采集内容只按已启用任务的账号、类型和 Skills 入队；旧队列仍按原快照处理。监听任务默认生成草稿，历史回溯需在页面预估并由管理员提交。迁移把旧记录的累计次数初始化为原有 `attempts`，历史每次尝试的明细无法追溯，升级后发生的尝试会逐次记录。现有账号若有采集内容或被任务引用，删除操作会归档账号并保留历史。
+
+### 发布与更新前备份
+
+1. 本地 `dev` 提交并推送后，快进合入 `main`；等待目标完整 SHA 的 GitHub Actions `Publish Auto-X images` **全部成功**。首次构建 Camoufox 可能因 GitHub API 限流失败，失败时停止发布，确认原因后重跑同一 SHA；不能因为部分镜像成功就更新。
+2. tc-2 核对当前源码、七项健康、数据库迁移版本和 `.auto-x-services`。先保存 `.env`、服务清单、Compose 覆盖、安装定义、控制面、容器清单、三份 Nacos 原配置和 PostgreSQL custom dump；若本次涉及业务媒体卷，另保存卷归档。备份目录限制 700，文件限制 600；用 `pg_restore --list`、JSON 解析和 SHA256 清单验证。读取 Nacos 时先将 `.env` 的 `NACOS_SERVER_ADDR` 末尾 `/nacos` 去掉，再拼 API 路径，避免重复 `/nacos/nacos`。
+3. 在 tc-2 从官方 GHCR 预拉目标 `backend`、`frontend` 镜像，检查 Docker 退出码为 0、两镜像 OCI `org.opencontainers.image.revision` 均等于目标完整 SHA。未完成镜像验证不得设置 `KJ_AUTO_X_SKIP_PULL=1`。
+
+2026-10-07 更新前已在 tc-2 保存完整备份：`/home/docker/auto-x/backups/pre-ai-listen-tc-2-20261006T161109Z/`（目录名为 UTC 时间）。其中含上述配置和控制面、11 个容器记录、三份 Nacos 原文、PostgreSQL custom dump，以及 `article_uploads`、`tweet_screenshots` 两卷归档。三份 Nacos Data ID 均确认 HTTP 200 且是非空 JSON 对象；dump 为 1,055,471 字节，`pg_restore --list` 可读 332 行；卷归档可列目录，22 个文件与 SHA256/大小清单一致。目录权限为 700、文件为 600，manifest SHA256 为 `423782188a800597c66c0aa88862259a37795ed67eba48b3da69c8690012e9fa`。备份基线：迁移 `0031_tweet_screenshots`、原七项完整清单、AI 生成记录 5 条、草稿 5 条、AI 设置 1 条。
+
+目标 SHA 确认后，在 tc-2 的 `/root` 执行（下方 `<完整SHA>` 替换为实际 40 位值）：
+
+```bash
+cd /root
+TERM=xterm COMPOSE_PROGRESS=plain \
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io KJ_AUTO_X_IMAGE_TAG=sha-<完整SHA> \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1 \
+AUTO_X_SERVICES=backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend \
+bash kejilion.sh app auto-x
+```
+
+这是 `bash kejilion.sh app auto-x` 的菜单 `2. 更新` 等价入口；`KJ_APPS_SKIP_REFRESH=1` 只在本机 `/root/apps` 已有当前 Auto-X 安装定义时使用。安装器从 `main` 获取对应源码，Compose `migrate` 自动执行 `alembic upgrade head`。数据库迁移或容器启动失败时保留现场，按用户要求先报告确认，再修复并重试。
+
+### 验收
+
+- `migrate` 退出 0，`alembic_version` 为 `0032_ai_listen_tasks`；新表存在，已有 `ai_settings.auto_trigger_mode=legacy_all`，旧生成记录数量与备份一致。不要通过创建真实监听任务或调用 AI 数据源来做部署验收。
+- tc-2 七项服务全部 healthy，目标镜像 OCI revision 等于完整 SHA，frontend 8080、backend `/api/v1/health/ready`、auth-center 就绪接口均返回 HTTP 200；`.auto-x-services` 仍为原完整七项。
+- 管理员登录后，`/ai-writing` 出现真实“监听任务”页、任务状态/统计/回溯/尝试记录，生成记录状态选择显示中文；空监听任务列表不会触发自动生成。任务创建、历史回溯和 AI 调用由管理员在业务使用时再复测。
+- hn-1 四项服务与原镜像保持健康，tc-1 Nacos 正常；Nacos 三份 JSON 的值与备份对照，除安装器重新序列化外不应出现业务值变化。

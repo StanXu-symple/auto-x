@@ -11,11 +11,16 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentAdmin, DbSession, RedisClient
 from app.api.errors import APIError
+from app.api.routes.ai_listen import router as listen_router
 from app.core.config import get_settings
 from app.models.ai import (
     AIDraft,
     AIFeature,
+    AIGenerationAttempt,
     AIGenerationJob,
+    AIListenTask,
+    AIListenTaskEvent,
+    AIListenTaskSkill,
     AISetting,
     AISkill,
     AIUserProfile,
@@ -28,6 +33,7 @@ from app.schemas.ai import (
     AIDraftOut,
     AIDraftPatch,
     AIFeatureOut,
+    AIGenerationAttemptOut,
     AIJobDetail,
     AIJobOut,
     AISettingsOut,
@@ -55,6 +61,7 @@ from app.services.article_media import (
 )
 
 router = APIRouter(prefix="/ai", tags=["AI Creation"])
+router.include_router(listen_router)
 tweets_router = APIRouter(prefix="/tweets", tags=["AI Creation"])
 AI_HEARTBEAT_KEY = "xsentinel:ai-worker:heartbeat"
 
@@ -121,6 +128,11 @@ def _job_out(
         "max_attempts": job.max_attempts,
         "next_attempt_at": job.next_attempt_at,
         "manual": job.manual,
+        "listen_task_id": job.listen_task_id,
+        "trigger_type": job.trigger_type,
+        "task_config_version": job.task_config_version,
+        "lifetime_attempts": job.lifetime_attempts,
+        "is_archived": job.is_archived,
         "last_error": job.last_error,
         "started_at": job.started_at,
         "completed_at": job.completed_at,
@@ -131,6 +143,7 @@ def _job_out(
     if detail:
         return AIJobDetail(
             **common,
+            task_snapshot=job.task_snapshot,
             request_snapshot=job.request_snapshot,
             response_snapshot=job.response_snapshot,
             prompt_hash=job.prompt_hash,
@@ -181,6 +194,7 @@ async def _settings_out(setting: AISetting, redis: RedisClient) -> AISettingsOut
     return AISettingsOut(
         enabled=setting.enabled,
         auto_generate=setting.auto_generate,
+        auto_trigger_mode=setting.auto_trigger_mode,
         provider=setting.provider,
         model=setting.model_name,
         base_url=setting.base_url,
@@ -220,6 +234,15 @@ async def patch_ai_settings(
             "模型、地址和 API Key 请在 AI 数据源菜单统一管理",
         )
     setting = await get_ai_setting(db, for_update=True)
+    if changes.get("auto_trigger_mode") == "legacy_all":
+        enabled_tasks = int(
+            await db.scalar(
+                select(func.count(AIListenTask.id)).where(AIListenTask.desired_state == "enabled")
+            )
+            or 0
+        )
+        if enabled_tasks:
+            raise APIError(409, "enabled_listen_tasks_exist", "请先暂停所有已启用的监听任务")
     if "default_skill_ids" in changes:
         requested = changes["default_skill_ids"]
         skills = await resolve_active_skills(db, requested)
@@ -295,6 +318,7 @@ async def get_ai_skill(skill_id: int, db: DbSession, _: CurrentAdmin) -> AISkill
 async def patch_ai_skill(
     skill_id: int, payload: AISkillPatch, db: DbSession, _: CurrentAdmin
 ) -> AISkillOut:
+    setting = await get_ai_setting(db, for_update=True)
     skill = await db.get(AISkill, skill_id, with_for_update=True)
     if skill is None:
         raise APIError(404, "skill_not_found", "AI skill was not found")
@@ -302,7 +326,6 @@ async def patch_ai_skill(
         setattr(skill, key, value)
     skill.version += 1
     if payload.is_active is False:
-        setting = await get_ai_setting(db, for_update=True)
         setting.default_skill_ids = [
             selected for selected in (setting.default_skill_ids or []) if selected != skill_id
         ]
@@ -310,6 +333,15 @@ async def patch_ai_skill(
             update(AIUserSkillBinding)
             .where(AIUserSkillBinding.skill_id == skill_id)
             .values(is_active=False)
+        )
+        await db.execute(
+            update(AIListenTask)
+            .where(
+                AIListenTask.id.in_(
+                    select(AIListenTaskSkill.task_id).where(AIListenTaskSkill.skill_id == skill_id)
+                )
+            )
+            .values(queue_hold_reason="skill_invalidated")
         )
     try:
         await db.commit()
@@ -322,12 +354,12 @@ async def patch_ai_skill(
 
 @router.delete("/skills/{skill_id}", response_model=MessageResponse)
 async def delete_ai_skill(skill_id: int, db: DbSession, _: CurrentAdmin) -> MessageResponse:
+    setting = await get_ai_setting(db, for_update=True)
     skill = await db.get(AISkill, skill_id, with_for_update=True)
     if skill is None:
         raise APIError(404, "skill_not_found", "AI skill was not found")
     skill.is_active = False
     skill.version += 1
-    setting = await get_ai_setting(db, for_update=True)
     setting.default_skill_ids = [
         selected for selected in (setting.default_skill_ids or []) if selected != skill_id
     ]
@@ -335,6 +367,15 @@ async def delete_ai_skill(skill_id: int, db: DbSession, _: CurrentAdmin) -> Mess
         update(AIUserSkillBinding)
         .where(AIUserSkillBinding.skill_id == skill_id)
         .values(is_active=False)
+    )
+    await db.execute(
+        update(AIListenTask)
+        .where(
+            AIListenTask.id.in_(
+                select(AIListenTaskSkill.task_id).where(AIListenTaskSkill.skill_id == skill_id)
+            )
+        )
+        .values(queue_hold_reason="skill_invalidated")
     )
     await db.commit()
     return MessageResponse(message="AI skill deactivated")
@@ -344,9 +385,7 @@ async def delete_ai_skill(skill_id: int, db: DbSession, _: CurrentAdmin) -> Mess
 async def list_ai_features(db: DbSession, _: CurrentAdmin) -> list[AIFeatureOut]:
     features = list(
         await db.scalars(
-            select(AIFeature)
-            .where(AIFeature.is_active.is_(True))
-            .order_by(AIFeature.id.asc())
+            select(AIFeature).where(AIFeature.is_active.is_(True)).order_by(AIFeature.id.asc())
         )
     )
     return [AIFeatureOut.model_validate(feature) for feature in features]
@@ -434,9 +473,7 @@ async def replace_user_skill_binding(
 
 
 @router.get("/users/{user_id}/profile", response_model=AIUserProfileOut)
-async def read_user_ai_profile(
-    user_id: int, db: DbSession, _: CurrentAdmin
-) -> AIUserProfileOut:
+async def read_user_ai_profile(user_id: int, db: DbSession, _: CurrentAdmin) -> AIUserProfileOut:
     user = await db.get(MonitoredUser, user_id)
     if user is None:
         raise APIError(404, "monitored_user_not_found", "监听用户不存在")
@@ -466,6 +503,8 @@ async def list_ai_jobs(
     provider: str | None = Query(default=None, max_length=32),
     manual: bool | None = None,
     source_tweet_id: int | None = None,
+    listen_task_id: int | None = None,
+    trigger_type: str | None = Query(default=None, pattern="^(manual|legacy_auto|listen_task)$"),
 ) -> Page[AIJobOut]:
     conditions = []
     if job_status:
@@ -476,6 +515,10 @@ async def list_ai_jobs(
         conditions.append(AIGenerationJob.manual == manual)
     if source_tweet_id is not None:
         conditions.append(AIGenerationJob.source_tweet_id == source_tweet_id)
+    if listen_task_id is not None:
+        conditions.append(AIGenerationJob.listen_task_id == listen_task_id)
+    if trigger_type is not None:
+        conditions.append(AIGenerationJob.trigger_type == trigger_type)
     total = int(await db.scalar(select(func.count(AIGenerationJob.id)).where(*conditions)) or 0)
     rows = (
         await db.execute(
@@ -518,6 +561,16 @@ async def get_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> AIJobDetail
 
 @router.post("/jobs/{job_id}/retry", response_model=AIJobOut)
 async def retry_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> AIJobOut:
+    await get_ai_setting(db, for_update=True)
+    task_id = await db.scalar(
+        select(AIGenerationJob.listen_task_id).where(AIGenerationJob.id == job_id)
+    )
+    if task_id is not None:
+        task = await db.scalar(
+            select(AIListenTask).where(AIListenTask.id == task_id).with_for_update()
+        )
+        if task is None or task.desired_state == "archived":
+            raise APIError(409, "ai_listen_task_archived", "已归档任务的记录不能重试")
     job = await db.scalar(
         select(AIGenerationJob)
         .where(AIGenerationJob.id == job_id)
@@ -535,6 +588,17 @@ async def retry_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> AIJobOut:
     job.claimed_by = None
     job.last_error = None
     job.completed_at = None
+    if task_id is not None:
+        db.add(
+            AIListenTaskEvent(
+                task_id=task_id,
+                job_id=job.id,
+                event_type="manual_retry",
+                summary="已手动重试生成记录",
+                details={"lifetime_attempts": job.lifetime_attempts},
+                created_at=datetime.now(UTC),
+            )
+        )
     await db.commit()
     await db.refresh(job)
     source = (
@@ -552,6 +616,39 @@ async def retry_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> AIJobOut:
     )  # type: ignore[return-value]
 
 
+@router.get("/jobs/{job_id}/attempts", response_model=Page[AIGenerationAttemptOut])
+async def list_ai_job_attempts(
+    job_id: int,
+    db: DbSession,
+    _: CurrentAdmin,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+) -> Page[AIGenerationAttemptOut]:
+    if await db.get(AIGenerationJob, job_id) is None:
+        raise APIError(404, "ai_job_not_found", "AI generation job was not found")
+    total = int(
+        await db.scalar(
+            select(func.count(AIGenerationAttempt.id)).where(AIGenerationAttempt.job_id == job_id)
+        )
+        or 0
+    )
+    attempts = list(
+        await db.scalars(
+            select(AIGenerationAttempt)
+            .where(AIGenerationAttempt.job_id == job_id)
+            .order_by(AIGenerationAttempt.lifetime_number.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+    return Page(
+        items=[AIGenerationAttemptOut.model_validate(attempt) for attempt in attempts],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
 @router.delete("/jobs/{job_id}", response_model=MessageResponse)
 async def delete_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> MessageResponse:
     job = await db.scalar(
@@ -559,6 +656,12 @@ async def delete_ai_job(job_id: int, db: DbSession, _: CurrentAdmin) -> MessageR
     )
     if job is None:
         raise APIError(404, "ai_job_not_found", "AI generation job was not found")
+    if job.listen_task_id is not None:
+        raise APIError(
+            409,
+            "listen_job_audit_preserved",
+            "监听任务生成记录需保留防重和审计信息，不能删除",
+        )
     if job.status == "running":
         raise APIError(
             409,

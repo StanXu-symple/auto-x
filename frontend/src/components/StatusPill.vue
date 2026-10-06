@@ -38,6 +38,7 @@ const tone = computed(() =>
 const labels: Record<string, string> = {
   active: '运行中',
   paused: '已暂停',
+  archived: '已归档',
   idle: '等待下次轮询',
   backfilling: '历史同步中',
   rate_limited: '请求限流',

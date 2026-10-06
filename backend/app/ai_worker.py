@@ -26,12 +26,24 @@ from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
 from app.core.time import as_utc
 from app.db.session import AsyncSessionFactory, engine
-from app.models.ai import AIDraft, AIGenerationJob, AISetting, AIUserProfile
+from app.models.ai import (
+    AIDraft,
+    AIGenerationAttempt,
+    AIGenerationJob,
+    AIListenTask,
+    AIListenTaskEvent,
+    AIListenTaskSkill,
+    AISetting,
+    AISkill,
+    AIUserProfile,
+)
 from app.models.ai_data_source import AIDataSource
+from app.models.tweet import Tweet
 from app.services.ai_data_source import (
     AIDataSourceUnavailableError,
     get_ai_data_source,
 )
+from app.services.ai_listen_backfill import process_pending_backfills
 from app.services.ai_provider import AIProviderClient, AIProviderError, ProviderRequest
 from app.services.article_media import preserve_article_media_metadata
 from app.services.metrics import (
@@ -133,16 +145,36 @@ class AIGenerationWorker:
     async def run_once(self) -> int:
         await self._heartbeat()
         now = datetime.now(UTC)
-        due_condition = or_(
-            and_(
-                AIGenerationJob.status.in_(["queued", "retry_wait"]),
-                AIGenerationJob.next_attempt_at <= now,
-            ),
-            and_(
-                AIGenerationJob.status == "running",
-                AIGenerationJob.lease_expires_at.is_not(None),
-                AIGenerationJob.lease_expires_at <= now,
-            ),
+        stale_ids: list[int]
+        async with AsyncSessionFactory() as session:
+            stale_ids = list(
+                await session.scalars(
+                    select(AIGenerationJob.id)
+                    .where(
+                        AIGenerationJob.status == "running",
+                        AIGenerationJob.lease_expires_at <= now,
+                    )
+                    .order_by(AIGenerationJob.lease_expires_at, AIGenerationJob.id)
+                    .limit(self.settings.ai_worker_batch_size)
+                )
+            )
+        # Expired claims must be finalized even while AI generation is disabled
+        # or a listening task is paused or archived.
+        for stale_id in stale_ids:
+            try:
+                await self._expire_lease(stale_id)
+            except Exception:
+                logger.exception("AI lease cleanup failed", extra={"ai_job_id": stale_id})
+        try:
+            async with AsyncSessionFactory() as backfill_session, backfill_session.begin():
+                await process_pending_backfills(
+                    backfill_session, batch_size=self.settings.ai_worker_batch_size
+                )
+        except Exception:
+            logger.exception("AI listening backfill scan failed")
+        due_condition = and_(
+            AIGenerationJob.status.in_(["queued", "retry_wait"]),
+            AIGenerationJob.next_attempt_at <= now,
         )
         async with AsyncSessionFactory() as session:
             ai_setting = await session.get(AISetting, 1)
@@ -151,10 +183,22 @@ class AIGenerationWorker:
                 or 0
             )
             if ai_setting is not None and ai_setting.enabled:
+                task_ready = (
+                    or_(
+                        AIGenerationJob.listen_task_id.is_(None),
+                        and_(
+                            AIListenTask.desired_state == "enabled",
+                            AIListenTask.queue_hold_reason.is_(None),
+                        ),
+                    )
+                    if ai_setting.auto_generate
+                    else AIGenerationJob.manual.is_(True)
+                )
                 job_ids = list(
                     await session.scalars(
                         select(AIGenerationJob.id)
-                        .where(due_condition)
+                        .outerjoin(AIListenTask, AIListenTask.id == AIGenerationJob.listen_task_id)
+                        .where(due_condition, task_ready)
                         .order_by(
                             AIGenerationJob.next_attempt_at.asc(),
                             AIGenerationJob.id.asc(),
@@ -476,20 +520,59 @@ class AIGenerationWorker:
     async def _claim(self, job_id: int, claim_token: str) -> AIGenerationJob | None:
         now = datetime.now(UTC)
         async with AsyncSessionFactory() as session, session.begin():
-            job = await session.get(AIGenerationJob, job_id, with_for_update=True)
-            if job is None:
-                return None
-            due = job.status in {"queued", "retry_wait"} and as_utc(job.next_attempt_at) <= now
-            stale = (
-                job.status == "running"
-                and job.lease_expires_at is not None
-                and as_utc(job.lease_expires_at) <= now
+            # Settings → task → job is the lock order shared with task state APIs.
+            # Read the task id first; the immutable job association is rechecked
+            # after acquiring the job row lock.
+            task_id = await session.scalar(
+                select(AIGenerationJob.listen_task_id).where(AIGenerationJob.id == job_id)
             )
-            if not due and not stale:
+            setting = await session.get(AISetting, 1, with_for_update=True)
+            if setting is None or not setting.enabled:
+                return None
+            task = (
+                await session.get(AIListenTask, task_id, with_for_update=True)
+                if task_id is not None
+                else None
+            )
+            job = await session.scalar(
+                select(AIGenerationJob)
+                .where(AIGenerationJob.id == job_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if job is None or job.listen_task_id != task_id:
+                return None
+            if not job.manual and not setting.auto_generate:
+                return None
+            if await session.get(AIDataSource, 1) is None:
+                return None
+            if task_id is not None:
+                if task is None or task.desired_state != "enabled" or task.queue_hold_reason:
+                    return None
+                selected_ids = list(
+                    await session.scalars(
+                        select(AIListenTaskSkill.skill_id).where(
+                            AIListenTaskSkill.task_id == task_id
+                        )
+                    )
+                )
+                valid_count = int(
+                    await session.scalar(
+                        select(func.count(AISkill.id)).where(
+                            AISkill.id.in_(selected_ids), AISkill.is_active.is_(True)
+                        )
+                    )
+                    or 0
+                )
+                if not selected_ids or valid_count != len(selected_ids):
+                    task.queue_hold_reason = "skill_invalidated"
+                    return None
+            due = job.status in {"queued", "retry_wait"} and as_utc(job.next_attempt_at) <= now
+            if not due:
                 return None
             if job.attempts >= job.max_attempts:
                 job.status = "failed"
-                job.last_error = "Generation lease expired after the maximum attempt count"
+                job.last_error = "Generation exceeded the maximum attempt count"
                 job.completed_at = now
                 job.claim_token = None
                 job.claimed_by = None
@@ -497,17 +580,155 @@ class AIGenerationWorker:
                 return None
             job.status = "running"
             job.attempts += 1
+            job.lifetime_attempts = (job.lifetime_attempts or 0) + 1
             job.claim_token = claim_token
             job.claimed_by = self.worker_id
             job.started_at = now
             job.completed_at = None
             job.last_error = None
             job.lease_expires_at = now + timedelta(seconds=self.settings.ai_worker_lock_ttl_seconds)
+            previous_rounds = int(
+                await session.scalar(
+                    select(func.count(AIGenerationAttempt.id)).where(
+                        AIGenerationAttempt.job_id == job.id,
+                        AIGenerationAttempt.attempt_number == 1,
+                    )
+                )
+                or 0
+            )
+            attempt = AIGenerationAttempt(
+                job_id=job.id,
+                lifetime_number=job.lifetime_attempts,
+                round_number=max(1, previous_rounds + (1 if job.attempts == 1 else 0)),
+                attempt_number=job.attempts,
+                started_at=now,
+                status="running",
+                provider=job.provider,
+                model_name=job.model_name,
+            )
+            session.add(attempt)
+            if task_id is not None:
+                session.add(
+                    AIListenTaskEvent(
+                        task_id=task_id,
+                        job_id=job.id,
+                        event_type="execution_started",
+                        summary="AI generation attempt started",
+                        details={
+                            "attempt": job.attempts,
+                            "lifetime_attempt": job.lifetime_attempts,
+                        },
+                    )
+                )
             await session.flush()
             # Materialize everything needed before leaving the session; generation never
             # lazy-loads mutable configuration after the audited enqueue snapshot.
             session.expunge(job)
             return job
+
+    async def _expire_lease(self, job_id: int) -> None:
+        now = datetime.now(UTC)
+        async with AsyncSessionFactory() as session, session.begin():
+            task_id = await session.scalar(
+                select(AIGenerationJob.listen_task_id).where(AIGenerationJob.id == job_id)
+            )
+            task = (
+                await session.get(AIListenTask, task_id, with_for_update=True)
+                if task_id is not None
+                else None
+            )
+            job = await session.scalar(
+                select(AIGenerationJob)
+                .where(AIGenerationJob.id == job_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if (
+                job is None
+                or job.status != "running"
+                or job.lease_expires_at is None
+                or as_utc(job.lease_expires_at) > now
+            ):
+                return
+            await self._finish_attempt(
+                session,
+                job,
+                status="interrupted",
+                ended_at=now,
+                error_type="lease_expired",
+                error_summary="AI worker lease expired before completion",
+            )
+            if task is not None and task.desired_state == "archived":
+                job.status = "cancelled"
+                job.completed_at = now
+            elif job.attempts >= job.max_attempts:
+                job.status = "failed"
+                job.completed_at = now
+            else:
+                job.status = "retry_wait"
+                job.next_attempt_at = now
+            job.last_error = "AI worker lease expired before completion"
+            job.claim_token = None
+            job.claimed_by = None
+            job.lease_expires_at = None
+
+    @staticmethod
+    async def _lock_job_task(session: Any, job_id: int) -> AIListenTask | None:
+        """Serialize completion events with task archive before locking the job."""
+        task_id = await session.scalar(
+            select(AIGenerationJob.listen_task_id).where(AIGenerationJob.id == job_id)
+        )
+        if task_id is not None:
+            return await session.get(AIListenTask, task_id, with_for_update=True)
+        return None
+
+    @staticmethod
+    async def _finish_attempt(
+        session: Any,
+        job: AIGenerationJob,
+        *,
+        status: str,
+        ended_at: datetime,
+        error_type: str | None = None,
+        error_summary: str | None = None,
+    ) -> None:
+        attempt = await session.scalar(
+            select(AIGenerationAttempt)
+            .where(
+                AIGenerationAttempt.job_id == job.id,
+                AIGenerationAttempt.lifetime_number == job.lifetime_attempts,
+            )
+            .with_for_update()
+        )
+        if attempt is None or attempt.status != "running":
+            return
+        attempt.status = status
+        attempt.ended_at = ended_at
+        attempt.duration_ms = max(
+            0, round((ended_at - as_utc(attempt.started_at)).total_seconds() * 1000)
+        )
+        attempt.error_type = error_type
+        attempt.error_summary = error_summary[:4000] if error_summary else None
+        attempt.provider = job.provider
+        attempt.model_name = job.model_name
+        config = (job.request_snapshot or {}).get("config") or {}
+        attempt.data_source_name = config.get("ai_data_source_name")
+        attempt.data_source_version = config.get("ai_data_source_version")
+        if job.listen_task_id is not None:
+            session.add(
+                AIListenTaskEvent(
+                    task_id=job.listen_task_id,
+                    job_id=job.id,
+                    event_type=f"execution_{status}",
+                    summary=f"AI generation attempt {status}",
+                    details={
+                        "attempt": attempt.attempt_number,
+                        "lifetime_attempt": attempt.lifetime_number,
+                        "duration_ms": attempt.duration_ms,
+                        "error_type": error_type,
+                    },
+                )
+            )
 
     async def _provider_request(self, job: AIGenerationJob) -> ProviderRequest:
         snapshot = job.request_snapshot or {}
@@ -616,6 +837,7 @@ class AIGenerationWorker:
         await self._assert_lock(lock_key, claim_token, lost_lock)
         now = datetime.now(UTC)
         async with AsyncSessionFactory() as session, session.begin():
+            await self._lock_job_task(session, job_id)
             job = await session.get(AIGenerationJob, job_id, with_for_update=True)
             if job is None or job.claim_token != claim_token or job.status != "running":
                 return False
@@ -656,6 +878,21 @@ class AIGenerationWorker:
                 profile = await session.get(
                     AIUserProfile, monitored_user_id, with_for_update=True
                 )
+                profile_is_current = True
+                if profile is not None and profile.last_source_tweet_id is not None:
+                    current_source = await session.get(Tweet, job.source_tweet_id)
+                    previous_source = await session.get(Tweet, profile.last_source_tweet_id)
+                    profile_is_current = (
+                        current_source is not None
+                        and (
+                            previous_source is None
+                            or (
+                                as_utc(current_source.posted_at), current_source.id
+                            ) >= (
+                                as_utc(previous_source.posted_at), previous_source.id
+                            )
+                        )
+                    )
                 if profile is None:
                     profile = AIUserProfile(
                         monitored_user_id=monitored_user_id,
@@ -669,7 +906,7 @@ class AIGenerationWorker:
                         last_source_tweet_id=job.source_tweet_id,
                     )
                     session.add(profile)
-                else:
+                elif profile_is_current:
                     profile.identity_summary = profile_payload.get("identity_summary", "")
                     profile.focus_summary = profile_payload.get("focus_summary", "")
                     profile.relationship_summary = profile_payload.get(
@@ -690,6 +927,7 @@ class AIGenerationWorker:
             job.claim_token = None
             job.claimed_by = None
             job.lease_expires_at = None
+            await self._finish_attempt(session, job, status="succeeded", ended_at=now)
         AI_DRAFTS.labels(provider=job.provider).inc()
         return True
 
@@ -703,21 +941,31 @@ class AIGenerationWorker:
         message: str,
         retryable: bool,
         status_code: int | None,
+        error_type: str | None = None,
     ) -> FailureCommitResult:
         await self._assert_lock(lock_key, claim_token, lost_lock)
         now = datetime.now(UTC)
         async with AsyncSessionFactory() as session, session.begin():
+            task = await self._lock_job_task(session, job_id)
             job = await session.get(AIGenerationJob, job_id, with_for_update=True)
             if job is None or job.claim_token != claim_token or job.status != "running":
                 return FailureCommitResult(outcome="superseded")
             await self._assert_lock(lock_key, claim_token, lost_lock)
-            should_retry = retryable and job.attempts < job.max_attempts
+            should_retry = (
+                retryable
+                and job.attempts < job.max_attempts
+                and (task is None or task.desired_state != "archived")
+            )
             if should_retry:
                 base = min(1800, 10 * (2 ** max(0, job.attempts - 1)))
                 delay = max(5, round(base * random.uniform(0.8, 1.2)))
                 job.status = "retry_wait"
                 job.next_attempt_at = now + timedelta(seconds=delay)
                 outcome = "retry_wait"
+            elif task is not None and task.desired_state == "archived":
+                job.status = "cancelled"
+                job.completed_at = now
+                outcome = "cancelled"
             else:
                 job.status = "failed"
                 job.completed_at = now
@@ -731,6 +979,15 @@ class AIGenerationWorker:
             job.claim_token = None
             job.claimed_by = None
             job.lease_expires_at = None
+            await self._finish_attempt(
+                session,
+                job,
+                status="failed",
+                ended_at=now,
+                error_type=error_type
+                or (f"http_{status_code}" if status_code else "generation_error"),
+                error_summary=message,
+            )
             return FailureCommitResult(
                 outcome=outcome,
                 attempt=job.attempts,
@@ -748,15 +1005,31 @@ class AIGenerationWorker:
     ) -> None:
         await self._assert_lock(lock_key, claim_token, lost_lock)
         async with AsyncSessionFactory() as session, session.begin():
+            task = await self._lock_job_task(session, job_id)
             job = await session.get(AIGenerationJob, job_id, with_for_update=True)
             if job is None or job.claim_token != claim_token or job.status != "running":
                 return
-            job.status = "retry_wait"
+            archived = task is not None and task.desired_state == "archived"
+            job.status = "cancelled" if archived else "retry_wait"
             job.next_attempt_at = datetime.now(UTC)
-            job.last_error = "AI worker stopped during generation; job was requeued"
+            job.last_error = (
+                "AI worker stopped during generation; task was archived"
+                if archived
+                else "AI worker stopped during generation; job was requeued"
+            )
+            if archived:
+                job.completed_at = datetime.now(UTC)
             job.claim_token = None
             job.claimed_by = None
             job.lease_expires_at = None
+            await self._finish_attempt(
+                session,
+                job,
+                status="interrupted",
+                ended_at=datetime.now(UTC),
+                error_type="worker_shutdown",
+                error_summary="AI worker stopped during generation",
+            )
 
     async def _renew_lease(
         self,
@@ -929,6 +1202,10 @@ class AIGenerationWorker:
             stage = "job_failed_permanently"
             message = "AI generation job failed permanently"
             log = logger.error
+        elif failure.outcome == "cancelled":
+            stage = "job_cancelled_after_archive"
+            message = "AI generation job cancelled after task archive"
+            log = logger.info
         else:
             stage = "job_failure_superseded"
             message = "AI generation failure was superseded"

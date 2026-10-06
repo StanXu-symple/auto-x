@@ -23,7 +23,7 @@ from app.core.time import as_utc
 from app.models.monitored_user import MonitoredUser
 from app.models.polling_log import PollingLog
 from app.models.tweet import Tweet
-from app.services.ai_jobs import enqueue_jobs_for_x_tweet_ids
+from app.services.ai_jobs import enqueue_jobs_for_x_tweet_ids, get_ai_setting
 from app.services.metrics import POLL_DURATION, POLL_RUNS, TWEETS_INGESTED
 from app.services.qq_notifications import create_tweet_deliveries, enqueue_qq_delivery_ids
 from app.services.settings_service import effective_interval, get_polling_settings
@@ -399,6 +399,9 @@ class PollingService:
         }
         async with self.session_factory() as session, session.begin():
             polling_settings = await get_polling_settings(session, self.settings, for_update=True)
+            # Task create/edit holds AI settings before adding a subscription FK
+            # to the user. Keep that order here before locking the user row.
+            await get_ai_setting(session, for_update=True)
             user = await session.get(MonitoredUser, claim.user_id, with_for_update=True)
             if user is None or user.poll_generation != claim.generation:
                 await self._finalize_log(
@@ -585,15 +588,12 @@ class PollingService:
         newly_inserted_x_ids: list[str] = []
         for offset in range(0, len(rows), TWEET_INSERT_CHUNK_SIZE):
             chunk = rows[offset : offset + TWEET_INSERT_CHUNK_SIZE]
-            tweet_ids = [row["tweet_id"] for row in chunk]
-            existing = set(
-                await session.scalars(select(Tweet.tweet_id).where(Tweet.tweet_id.in_(tweet_ids)))
-            )
             statement = postgres_insert(Tweet).values(chunk)
-            statement = statement.on_conflict_do_nothing(index_elements=[Tweet.tweet_id])
-            await session.execute(statement)
+            statement = statement.on_conflict_do_nothing(
+                index_elements=[Tweet.tweet_id]
+            ).returning(Tweet.tweet_id)
             new_ids = list(
-                dict.fromkeys(tweet_id for tweet_id in tweet_ids if tweet_id not in existing)
+                await session.scalars(statement)
             )
             inserted += len(new_ids)
             newly_inserted_x_ids.extend(new_ids)

@@ -48,6 +48,7 @@ export type MonitorStatus = 'active' | 'paused' | 'polling' | 'error' | 'pending
 
 export interface MonitoredUser {
   initial_sync_days?: number | null
+  archived_at?: string | null
   id: EntityId
   username: string
   x_user_id?: string | null
@@ -93,6 +94,7 @@ export interface MonitoredUserQuery extends PaginationQuery {
   search?: string
   status?: string
   is_active?: boolean
+  archived?: boolean
 }
 
 export type TweetMediaType = 'photo' | 'video' | 'animated_gif'
@@ -326,7 +328,17 @@ export interface SystemMetrics {
   monitoring?: {
     mode?: string
     error?: string
-    instances?: Array<ServiceRuntimeMetric & { service_id?: string; instance_id?: string; node?: string; name?: string; component?: string; container_name?: string; endpoint_reachable?: boolean }>
+    instances?: Array<
+      ServiceRuntimeMetric & {
+        service_id?: string
+        instance_id?: string
+        node?: string
+        name?: string
+        component?: string
+        container_name?: string
+        endpoint_reachable?: boolean
+      }
+    >
   }
 }
 
@@ -432,7 +444,24 @@ export interface QQDelivery {
   created_at: string
   updated_at: string
 }
-export interface QQScheduledTask { id:number; name:string; message:string; frequency:'secondly'|'minutely'|'hourly'|'daily'|'weekly'|'monthly'; interval_value:number; run_time:string; weekdays:number[]; month_day:number|null; is_enabled:boolean; send_immediately?:boolean; bot_ids:number[]; groups:Array<{bot_id:number;group_openid:string}>; last_run_at:string|null; next_run_at:string; created_at:string; updated_at:string }
+export interface QQScheduledTask {
+  id: number
+  name: string
+  message: string
+  frequency: 'secondly' | 'minutely' | 'hourly' | 'daily' | 'weekly' | 'monthly'
+  interval_value: number
+  run_time: string
+  weekdays: number[]
+  month_day: number | null
+  is_enabled: boolean
+  send_immediately?: boolean
+  bot_ids: number[]
+  groups: Array<{ bot_id: number; group_openid: string }>
+  last_run_at: string | null
+  next_run_at: string
+  created_at: string
+  updated_at: string
+}
 
 export interface QQBatchPushPayload {
   bot_id: EntityId
@@ -554,6 +583,7 @@ export interface AiDataSourceTestResult {
 export interface AiSettings {
   enabled: boolean
   auto_generate: boolean
+  auto_trigger_mode?: 'legacy_all' | 'listening_tasks' | string
   provider: AiProvider
   model: string
   base_url: string
@@ -647,13 +677,7 @@ export interface AiUserProfile {
   updated_at?: string | null
 }
 
-export type AiJobStatus =
-  | 'queued'
-  | 'running'
-  | 'retry_wait'
-  | 'succeeded'
-  | 'failed'
-  | 'cancelled'
+export type AiJobStatus = 'queued' | 'running' | 'retry_wait' | 'succeeded' | 'failed' | 'cancelled'
 
 export type ArticleSource = 'ai' | 'user'
 export type ArticlePublishStatus = 'unpublished' | 'queued' | 'published' | 'failed'
@@ -707,10 +731,160 @@ export interface AiJob {
   response_snapshot?: Record<string, unknown> | null
   prompt_hash?: string | null
   source_text_hash?: string | null
+  listen_task_id?: EntityId | null
+  listen_task_name?: string | null
+  trigger_type?: 'manual' | 'listen_task' | 'legacy_auto' | string
+  lifetime_attempts?: number
+  task_config_version?: number | null
 }
 
 export interface AiJobQuery extends PaginationQuery {
   status?: string
+  trigger_type?: string
+  listen_task_id?: EntityId
+}
+
+export type AiListenMode = 'all' | 'original' | 'reply' | 'retweet'
+export type AiListenTaskState = 'enabled' | 'paused' | 'archived'
+
+export interface AiListenTaskPayload {
+  name: string
+  desired_state: 'enabled' | 'paused'
+  all_monitored_users: boolean
+  monitored_user_ids: EntityId[]
+  listen_mode: AiListenMode
+  skill_ids: EntityId[]
+  initial_sync_days: number
+  max_attempts_override?: number | null
+  language_override?: string | null
+  tone_override?: string | null
+  max_output_tokens_override?: number | null
+  switch_from_legacy?: boolean
+}
+
+export type AiListenTaskPatch = Omit<
+  AiListenTaskPayload,
+  'desired_state' | 'initial_sync_days' | 'switch_from_legacy'
+> & { config_version: number }
+
+export interface AiListenTaskStats {
+  matched: number
+  queued: number
+  running: number
+  retry_wait: number
+  succeeded: number
+  failed: number
+  cancelled: number
+  lifetime_attempts: number
+}
+
+export interface AiListenTaskPage extends PaginatedResponse<AiListenTask> {
+  summary: AiListenTaskStats
+}
+
+export interface AiListenTask {
+  id: EntityId
+  name: string
+  desired_state: AiListenTaskState
+  all_monitored_users: boolean
+  monitored_user_ids: EntityId[]
+  listen_mode: AiListenMode
+  skill_ids: EntityId[]
+  initial_sync_days: number
+  max_attempts_override?: number | null
+  language_override?: string | null
+  tone_override?: string | null
+  max_output_tokens_override?: number | null
+  config_version: number
+  activated_at?: string | null
+  effective_from?: string | null
+  queue_hold_reason?: string | null
+  archived_at?: string | null
+  created_at: string
+  updated_at?: string | null
+  last_matched_at?: string | null
+  last_success_at?: string | null
+  last_failure_at?: string | null
+  last_ai_started_at?: string | null
+  data_source_name?: string | null
+  data_source_model?: string | null
+  data_source_verified_at?: string | null
+  data_source_verification_status?: string | null
+  accounts?: Array<{
+    id: EntityId
+    username: string
+    is_active?: boolean
+    include_replies?: boolean
+    include_retweets?: boolean
+    last_polled_at?: string | null
+  }>
+  skills?: Array<{ id: EntityId; name: string; is_active?: boolean }>
+  health: { status: string; reasons: string[] }
+  dependency: { status: string; reasons: string[] }
+  stats: AiListenTaskStats
+}
+
+export interface AiListenTaskQuery extends PaginationQuery {
+  q?: string
+  state?: AiListenTaskState
+  monitored_user_id?: EntityId
+  include_archived?: boolean
+}
+
+export interface AiListenTaskPreviewPayload extends AiListenTaskPayload {
+  task_id?: EntityId
+  from_at?: string
+  to_at?: string
+  exclude_legacy_generated?: boolean
+}
+
+export interface AiListenTaskPreview {
+  matched: number
+  duplicates: number
+  legacy_generated: number
+  pending: number
+  unavailable_accounts: Array<{ id?: EntityId; username?: string; reason?: string } | string>
+}
+
+export interface AiListenTaskBackfill {
+  id: EntityId
+  task_id: EntityId
+  request_id: string
+  status: string
+  from_at: string
+  to_at: string
+  scanned_count: number
+  enqueued_count: number
+  last_error?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AiListenTaskEvent {
+  id: EntityId
+  event_type: string
+  summary?: string | null
+  created_at: string
+  job_id?: EntityId | null
+  backfill_id?: EntityId | null
+}
+
+export interface AiGenerationAttempt {
+  id: EntityId
+  job_id: EntityId
+  lifetime_number: number
+  round_number: number
+  attempt_number: number
+  status: string
+  started_at: string
+  ended_at?: string | null
+  duration_ms?: number | null
+  error_type?: string | null
+  error_summary?: string | null
+  provider?: string | null
+  model_name?: string | null
+  data_source_name?: string | null
+  data_source_version?: number | null
 }
 
 export interface GenerateTweetPayload {
@@ -807,12 +981,14 @@ export interface UpdateArticlePayload extends Partial<ArticlePayload> {
 export interface ApiErrorBody {
   detail?: string | Array<{ msg?: string; loc?: Array<string | number> }>
   message?: string
-  error?: string | {
-    code?: string
-    message?: string
-    details?: unknown
-    request_id?: string
-  }
+  error?:
+    | string
+    | {
+        code?: string
+        message?: string
+        details?: unknown
+        request_id?: string
+      }
 }
 
 export interface QQPlaceholder {
@@ -827,7 +1003,6 @@ export interface QQPlaceholderField {
   label: string
   category: string
 }
-
 
 export interface QQMessageTemplatePayload {
   name: string

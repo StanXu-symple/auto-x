@@ -3,8 +3,10 @@ import logging
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.ai_worker import (
     AIGenerationWorker,
@@ -12,7 +14,10 @@ from app.ai_worker import (
     FailureCommitResult,
 )
 from app.core.config import Settings
-from app.models.ai import AIGenerationJob
+from app.db.base import Base
+from app.models.ai import AIGenerationJob, AISetting
+from app.models.monitored_user import MonitoredUser
+from app.models.tweet import Tweet
 from app.schemas.ai import GeneratedDraft
 from app.services.ai_provider import AIProviderError, ProviderRequest, ProviderResult
 
@@ -32,6 +37,7 @@ class ClaimSession:
     def __init__(self, job):
         self.job = job
         self.expunge_called = False
+        self.scalar_calls = 0
 
     async def __aenter__(self):
         return self
@@ -44,6 +50,14 @@ class ClaimSession:
 
     async def get(self, *_args, **_kwargs):
         return self.job
+
+    async def scalar(self, _statement):
+        self.scalar_calls += 1
+        if self.scalar_calls == 1:
+            return None  # No listening task is associated with this legacy job.
+        if self.scalar_calls == 2:
+            return self.job
+        return None  # A legacy in-flight claim may predate attempt auditing.
 
     async def flush(self):
         return None
@@ -72,8 +86,110 @@ def stale_job(*, attempts: int = 1, max_attempts: int = 3) -> AIGenerationJob:
     )
 
 
+async def test_auto_generation_disabled_does_not_starve_manual_jobs(monkeypatch) -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(
+            lambda sync: Base.metadata.create_all(
+                sync,
+                tables=[
+                    Base.metadata.tables[name]
+                    for name in (
+                        "ai_settings",
+                        "monitored_users",
+                        "tweets",
+                        "ai_skills",
+                        "ai_listen_tasks",
+                        "ai_generation_jobs",
+                    )
+                ],
+            )
+        )
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    now = datetime.now(UTC)
+    async with factory() as db:
+        db.add_all(
+            [
+                AISetting(
+                    id=1,
+                    enabled=True,
+                    auto_generate=False,
+                    auto_trigger_mode="legacy_all",
+                    provider="openai_responses",
+                    model_name="test-model",
+                    base_url="https://example.test/v1",
+                    language="zh-CN",
+                    tone="自然",
+                    reasoning_effort="medium",
+                    default_skill_ids=[],
+                    max_attempts=3,
+                    max_output_tokens=1000,
+                    request_timeout_seconds=30,
+                ),
+                MonitoredUser(id=1, username="alice"),
+                Tweet(
+                    id=1,
+                    tweet_id="x1",
+                    monitored_user_id=1,
+                    author_id="a",
+                    text="source",
+                    posted_at=now,
+                    raw_payload={},
+                ),
+                AIGenerationJob(
+                    id=1,
+                    source_tweet_id=1,
+                    skill_ids=[],
+                    skill_snapshot=[],
+                    idempotency_key="auto:1",
+                    status="queued",
+                    provider="openai_responses",
+                    model_name="test-model",
+                    next_attempt_at=now - timedelta(minutes=2),
+                    manual=False,
+                ),
+                AIGenerationJob(
+                    id=2,
+                    source_tweet_id=1,
+                    skill_ids=[],
+                    skill_snapshot=[],
+                    idempotency_key="manual:1",
+                    status="queued",
+                    provider="openai_responses",
+                    model_name="test-model",
+                    next_attempt_at=now - timedelta(minutes=1),
+                    manual=True,
+                ),
+            ]
+        )
+        await db.commit()
+
+    async def no_backfill(_session, **_kwargs):
+        return 0
+
+    processed: list[int] = []
+
+    async def record_job(job_id: int) -> bool:
+        processed.append(job_id)
+        return True
+
+    monkeypatch.setattr("app.ai_worker.AsyncSessionFactory", factory)
+    monkeypatch.setattr("app.ai_worker.process_pending_backfills", no_backfill)
+    worker = object.__new__(AIGenerationWorker)
+    worker.settings = Settings(_env_file=None, ai_worker_batch_size=1)
+    worker._heartbeat = AsyncMock()
+    worker.process_job = record_job
+    worker.stop_event = asyncio.Event()
+    worker.active_tasks = 0
+    try:
+        assert await worker.run_once() == 1
+        assert processed == [2]
+    finally:
+        await engine.dispose()
+
+
 @pytest.mark.asyncio
-async def test_stale_running_job_is_reclaimed_with_new_fencing_token(monkeypatch) -> None:
+async def test_stale_running_job_is_requeued_before_new_claim(monkeypatch) -> None:
     job = stale_job()
     session = ClaimSession(job)
     monkeypatch.setattr("app.ai_worker.AsyncSessionFactory", lambda: session)
@@ -81,14 +197,12 @@ async def test_stale_running_job_is_reclaimed_with_new_fencing_token(monkeypatch
     worker.settings = Settings(_env_file=None, ai_worker_lock_ttl_seconds=60)
     worker.worker_id = "worker-new"
 
-    claimed = await worker._claim(job.id, "new-claim-token")
-    assert claimed is job
-    assert job.status == "running"
-    assert job.attempts == 2
-    assert job.claim_token == "new-claim-token"
-    assert job.claimed_by == "worker-new"
-    assert job.lease_expires_at > datetime.now(UTC)
-    assert session.expunge_called
+    await worker._expire_lease(job.id)
+    assert job.status == "retry_wait"
+    assert job.attempts == 1
+    assert job.claim_token is None
+    assert job.claimed_by is None
+    assert job.lease_expires_at is None
 
 
 @pytest.mark.asyncio
@@ -100,7 +214,7 @@ async def test_stale_job_at_attempt_limit_becomes_failed(monkeypatch) -> None:
     worker.settings = Settings(_env_file=None, ai_worker_lock_ttl_seconds=60)
     worker.worker_id = "worker-new"
 
-    assert await worker._claim(job.id, "new-token") is None
+    await worker._expire_lease(job.id)
     assert job.status == "failed"
     assert job.claim_token is None
     assert job.completed_at is not None

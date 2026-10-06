@@ -11,7 +11,7 @@ from app.ai_worker import AIGenerationWorker
 from app.api.errors import APIError
 from app.api.routes.ai import delete_ai_job, patch_ai_draft
 from app.db.base import Base
-from app.models.ai import AIDraft, AIGenerationJob, AISkill
+from app.models.ai import AIDraft, AIGenerationAttempt, AIGenerationJob, AISkill, AIUserProfile
 from app.models.monitored_user import MonitoredUser
 from app.models.tweet import Tweet
 from app.models.tweet_screenshot import TweetScreenshot
@@ -35,7 +35,9 @@ async def context(tmp_path, monkeypatch):
                     TweetScreenshot.__table__,
                     AISkill.__table__,
                     AIGenerationJob.__table__,
+                    AIGenerationAttempt.__table__,
                     AIDraft.__table__,
+                    AIUserProfile.__table__,
                 ],
             )
         )
@@ -223,6 +225,62 @@ async def test_running_job_delete_keeps_draft_and_files(context):
     assert await context.db.get(AIDraft, 1) is context.draft
     assert await asyncio.to_thread(context.copy_path.exists)
     assert await asyncio.to_thread(context.upload_path.exists)
+
+
+async def test_older_same_timestamp_tweet_cannot_replace_newer_author_profile(context, monkeypatch):
+    original = await context.db.get(Tweet, 1)
+    context.db.add(
+        Tweet(
+            id=2,
+            tweet_id="124",
+            monitored_user_id=1,
+            author_id="42",
+            text="Newer source post",
+            posted_at=original.posted_at,
+            raw_payload={},
+        )
+    )
+    context.db.add(
+        AIUserProfile(
+            monitored_user_id=1,
+            identity_summary="newer profile",
+            focus_summary="newer focus",
+            relationship_summary="",
+            recurring_topics=[],
+            evidence=[],
+            confidence=0.8,
+            version=2,
+            last_source_tweet_id=2,
+        )
+    )
+    context.job.status = "running"
+    context.job.claim_token = "claim"
+    context.job.request_snapshot = {"author_context": {"author": {"monitored_user_id": 1}}}
+    await context.db.commit()
+    monkeypatch.setattr("app.ai_worker.AsyncSessionFactory", context.factory)
+    worker = object.__new__(AIGenerationWorker)
+    worker._assert_lock = AsyncMock()
+
+    assert await worker._commit_success(
+        1,
+        "claim",
+        "lock",
+        asyncio.Event(),
+        {
+            "title": "Older result",
+            "content": "Older content",
+            "author_profile": {"identity_summary": "older profile", "focus_summary": "older focus"},
+        },
+        {},
+        "a" * 64,
+        "b" * 64,
+    )
+
+    async with context.factory() as db:
+        profile = await db.get(AIUserProfile, 1)
+        assert profile.identity_summary == "newer profile"
+        assert profile.focus_summary == "newer focus"
+        assert profile.last_source_tweet_id == 2
 
 
 @pytest.mark.parametrize("preference", [None, False, True])

@@ -44,7 +44,9 @@ async function load() {
       page: filters.page,
       page_size: filters.page_size,
       search: filters.search || undefined,
-      is_active: filters.status === 'all' ? undefined : filters.status === 'active',
+      is_active:
+        filters.status === 'active' ? true : filters.status === 'paused' ? false : undefined,
+      archived: filters.status === 'archived',
     })
     items.value = result.items
     total.value = result.total
@@ -112,10 +114,10 @@ async function run(item: MonitoredUser, kind: 'toggle' | 'poll' | 'delete') {
         ? await monitoredUsersApi.pause(item.id)
         : await monitoredUsersApi.resume(item.id)
     if (kind === 'poll') await monitoredUsersApi.pollNow(item.id)
-    if (kind === 'delete') await monitoredUsersApi.remove(item.id)
+    const deleteResult = kind === 'delete' ? await monitoredUsersApi.remove(item.id) : null
     message.success(
       kind === 'delete'
-        ? '监听账号已删除'
+        ? deleteResult?.message || '监听账号已处理'
         : kind === 'poll'
           ? '轮询任务已提交'
           : item.is_active
@@ -132,7 +134,8 @@ async function run(item: MonitoredUser, kind: 'toggle' | 'poll' | 'delete') {
 function remove(item: MonitoredUser) {
   Modal.confirm({
     title: `删除 @${item.username}？`,
-    content: '此操作会同时删除该账号已采集的内容与轮询历史。',
+    content:
+      '若账号已有采集内容或被 AI 监听任务引用，将归档并保留历史，可在“已归档”筛选中恢复；空账号会彻底删除。',
     okText: '确认删除',
     okType: 'danger',
     cancelText: '取消',
@@ -165,9 +168,9 @@ onMounted(load)
         detail="正在参与轮询"
         accent="sage"
       /><MetricCard
-        label="已暂停"
+        :label="filters.status === 'archived' ? '已归档' : '已暂停'"
         :value="items.length - activeCount"
-        detail="可随时恢复"
+        :detail="filters.status === 'archived' ? '采集与生成历史已保留' : '可随时恢复'"
         accent="slate"
       /><MetricCard label="总账号数" :value="total" detail="全部监听配置" accent="ochre" />
     </div>
@@ -186,6 +189,7 @@ onMounted(load)
               { label: '全部状态', value: 'all' },
               { label: '运行中', value: 'active' },
               { label: '已暂停', value: 'paused' },
+              { label: '已归档', value: 'archived' },
             ]"
           /><a-button @click="load"><ReloadOutlined /> 刷新</a-button>
         </div>
@@ -231,6 +235,7 @@ onMounted(load)
               ><a-button
                 type="link"
                 size="small"
+                v-if="!record.archived_at"
                 :loading="action === `${record.id}-poll`"
                 @click="run(record, 'poll')"
                 ><ThunderboltOutlined /> 立即轮询</a-button
@@ -241,7 +246,9 @@ onMounted(load)
                     ><a-menu-item @click="run(record, 'toggle')">{{
                       record.is_active ? '暂停监听' : '恢复监听'
                     }}</a-menu-item
-                    ><a-menu-item danger @click="remove(record)">删除账号</a-menu-item></a-menu
+                    ><a-menu-item v-if="!record.archived_at" danger @click="remove(record)"
+                      >删除账号</a-menu-item
+                    ></a-menu
                   ></template
                 ></a-dropdown
               ></a-space

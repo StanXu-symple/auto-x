@@ -59,6 +59,7 @@ class MonitoredUserOut(APIModel):
     next_poll_at: datetime | None
     last_error: str | None
     consecutive_failures: int
+    archived_at: datetime | None = None
     tweet_count: int = 0
     created_at: datetime
     updated_at: datetime

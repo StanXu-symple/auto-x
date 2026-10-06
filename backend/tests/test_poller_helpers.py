@@ -6,6 +6,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.core.config import Settings
 from app.core.time import as_utc
+from app.models.ai import AISetting
 from app.models.monitored_user import MonitoredUser
 from app.models.polling_log import PollingLog
 from app.models.setting import AppSetting
@@ -139,12 +140,17 @@ async def test_tweet_upsert_is_chunked_and_never_uses_insert_ignore() -> None:
     class FakeSession:
         def __init__(self):
             self.statements = []
+            self.returned = iter(
+                [
+                    [str(index) for index in range(150)],
+                    [str(index) for index in range(150, 300)],
+                    ["300"],
+                ]
+            )
 
-        async def scalars(self, _statement):
-            return []
-
-        async def execute(self, statement):
+        async def scalars(self, statement):
             self.statements.append(statement)
+            return next(self.returned)
 
     session = FakeSession()
     service = PollingService(
@@ -161,6 +167,7 @@ async def test_tweet_upsert_is_chunked_and_never_uses_insert_ignore() -> None:
     assert len(session.statements) == 3
     sql = str(session.statements[0].compile(dialect=postgresql.dialect())).upper()
     assert "ON CONFLICT (TWEET_ID) DO NOTHING" in sql
+    assert "RETURNING" in sql
     assert "INSERT IGNORE" not in sql
 
 
@@ -189,6 +196,9 @@ async def test_superseded_generation_cannot_advance_cursor_or_insert() -> None:
             return None
 
     class Session:
+        def __init__(self):
+            self.lock_order = []
+
         async def __aenter__(self):
             return self
 
@@ -198,11 +208,16 @@ async def test_superseded_generation_cannot_advance_cursor_or_insert() -> None:
         def begin(self):
             return Context(None)
 
-        async def scalar(self, _statement):
+        async def scalar(self, statement):
+            if "ai_settings" in str(statement):
+                self.lock_order.append("ai_setting")
+                return AISetting(id=1)
+            self.lock_order.append("polling_setting")
             return polling
 
         async def get(self, entity, _identity, **_kwargs):
             if entity is MonitoredUser:
+                self.lock_order.append("monitored_user")
                 return user
             if entity is PollingLog:
                 return log
@@ -212,8 +227,9 @@ async def test_superseded_generation_cannot_advance_cursor_or_insert() -> None:
         async def eval(self, *_args):
             return 1
 
+    session = Session()
     service = PollingService(
-        session_factory=lambda: Session(),  # type: ignore[arg-type]
+        session_factory=lambda: session,  # type: ignore[arg-type]
         redis=Redis(),  # type: ignore[arg-type]
         x_client=object(),  # type: ignore[arg-type]
         settings=Settings(_env_file=None),
@@ -233,6 +249,7 @@ async def test_superseded_generation_cannot_advance_cursor_or_insert() -> None:
     assert not result.applied
     assert user.last_tweet_id == "100"
     assert log.status == "superseded"
+    assert session.lock_order[:3] == ["polling_setting", "ai_setting", "monitored_user"]
 
 
 @pytest.mark.asyncio
@@ -303,7 +320,11 @@ async def test_new_manual_token_is_not_overwritten_by_older_poll() -> None:
 
         async def scalar(self, _statement):
             self.scalar_calls += 1
-            return polling if self.scalar_calls == 1 else None
+            if self.scalar_calls == 1:
+                return polling
+            if self.scalar_calls == 2:
+                return AISetting(id=1)
+            return None
 
         async def get(self, entity, _identity, **_kwargs):
             if entity is MonitoredUser:

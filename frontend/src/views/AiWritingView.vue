@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { usePagedTable } from '@/composables/usePagedTable'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   DeleteOutlined,
@@ -11,11 +11,12 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
-import { aiApi, aiDataSourceApi, monitoredUsersApi, tweetsApi } from '@/services/api'
+import { aiApi, aiDataSourceApi, aiListenTasksApi, monitoredUsersApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import type {
   AiDataSourceStatus,
   AiJob,
+  AiListenTask,
   AiSettings,
   AiSkill,
   AiSkillPayload,
@@ -23,14 +24,30 @@ import type {
   AiUserSkillBinding,
   EntityId,
   MonitoredUser,
-  Tweet,
   UpdateAiSettingsPayload,
 } from '@/types'
 import MetricCard from '@/components/MetricCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
+import AiListenTasks from '@/components/AiListenTasks.vue'
+import { formatDateTime, formatDuration } from '@/utils/format'
 const route = useRoute()
-const tab = ref(typeof route.query.tab === 'string' ? route.query.tab : 'context')
+const normalizeTab = (value: unknown) =>
+  value === 'context'
+    ? 'skills'
+    : value === 'data-source'
+      ? 'source'
+      : typeof value === 'string'
+        ? value
+        : 'tasks'
+const tab = ref(normalizeTab(route.query.tab))
+const listenTasksPanel = ref<InstanceType<typeof AiListenTasks> | null>(null)
+watch(
+  () => route.query.tab,
+  (value) => {
+    tab.value = normalizeTab(value)
+  },
+)
 const draftOpen = ref(false)
 const draftSaving = ref(false)
 const binding = ref<AiUserSkillBinding | null>(null)
@@ -42,9 +59,44 @@ const skills = ref<AiSkill[]>([])
 const settings = ref<AiSettings | null>(null)
 const source = ref<AiDataSourceStatus | null>(null)
 const users = ref<MonitoredUser[]>([])
-const tweets = ref<Tweet[]>([])
 const profile = ref<AiUserProfile | null>(null)
-const filters = reactive({ status: 'all' })
+const filters = reactive({
+  status: 'all',
+  trigger_type: 'all',
+  listen_task_id: 'all' as EntityId | 'all',
+})
+const listenTaskOptions = ref<AiListenTask[]>([])
+const attemptsOpen = ref(false)
+const attemptsJob = ref<AiJob | null>(null)
+const {
+  rows: attempts,
+  loading: attemptsLoading,
+  pagination: attemptsPagination,
+  reset: resetAttempts,
+  change: changeAttempts,
+} = usePagedTable((query) => aiApi.jobAttempts(attemptsJob.value!.id, query), '无法加载执行尝试')
+const jobStatusOptions = [
+  { label: '全部状态', value: 'all' },
+  { label: '队列中', value: 'queued' },
+  { label: '执行中', value: 'running' },
+  { label: '已完成', value: 'succeeded' },
+  { label: '失败', value: 'failed' },
+  { label: '等待重试', value: 'retry_wait' },
+  { label: '已取消', value: 'cancelled' },
+]
+const jobSourceOptions = [
+  { label: '全部来源', value: 'all' },
+  { label: '监听任务', value: 'listen_task' },
+  { label: '手动生成', value: 'manual' },
+  { label: '旧自动生成', value: 'legacy_auto' },
+]
+function jobSource(job: AiJob) {
+  return job.trigger_type === 'listen_task' || job.listen_task_id
+    ? `监听任务 · ${job.listen_task_name || listenTaskOptions.value.find((task) => String(task.id) === String(job.listen_task_id))?.name || `#${job.listen_task_id || '未知'}`}`
+    : job.trigger_type === 'manual' || job.manual
+      ? '手动生成'
+      : '旧自动生成'
+}
 const skillOpen = ref(false)
 const sourceModels = ref<string[]>([])
 const editingSkill = ref<AiSkill | null>(null)
@@ -102,7 +154,12 @@ const {
   change: changeJobPage,
 } = usePagedTable(
   (query) =>
-    aiApi.jobs({ ...query, status: filters.status === 'all' ? undefined : filters.status }),
+    aiApi.jobs({
+      ...query,
+      status: filters.status === 'all' ? undefined : filters.status,
+      trigger_type: filters.trigger_type === 'all' ? undefined : filters.trigger_type,
+      listen_task_id: filters.listen_task_id === 'all' ? undefined : filters.listen_task_id,
+    }),
   '无法加载 AI 任务',
 )
 const {
@@ -235,6 +292,26 @@ async function retry(job: AiJob) {
     message.error(getErrorMessage(e, '重试失败'))
   }
 }
+async function showAttempts(job: AiJob) {
+  attemptsJob.value = job
+  attemptsOpen.value = true
+  await resetAttempts()
+}
+async function refreshJobContext() {
+  await loadJobs()
+  try {
+    listenTaskOptions.value = (
+      await aiListenTasksApi.list({ page: 1, page_size: 100, include_archived: true })
+    ).items
+  } catch {}
+}
+function refreshCurrentTab() {
+  if (tab.value === 'tasks') void listenTasksPanel.value?.refresh()
+  else if (tab.value === 'jobs') void loadJobs()
+  else if (tab.value === 'skills') void loadSkills()
+  else if (tab.value === 'settings') void loadSettings()
+  else if (tab.value === 'source') void loadSource()
+}
 async function removeJob(job: AiJob) {
   Modal.confirm({
     title: '删除这条 AI 任务？',
@@ -324,7 +401,9 @@ onMounted(async () => {
   await Promise.all([loadJobs(), loadSettings(), loadSkills(), loadSource()])
   try {
     users.value = (await monitoredUsersApi.list({ page: 1, page_size: 100 })).items
-    tweets.value = (await tweetsApi.list({ page: 1, page_size: 100 })).items
+    listenTaskOptions.value = (
+      await aiListenTasksApi.list({ page: 1, page_size: 100, include_archived: true })
+    ).items
   } catch {}
 })
 </script>
@@ -336,46 +415,16 @@ onMounted(async () => {
       title="AI 创作"
       description="把监听内容转化为可编辑、可发布的创作草稿"
       ><template #actions
-        ><a-button @click="loadJobs"><ReloadOutlined /> 刷新任务</a-button></template
+        ><a-button @click="refreshCurrentTab"><ReloadOutlined /> 刷新</a-button></template
       ></PageHeader
     ><a-tabs v-model:activeKey="tab" class="workspace-tabs"
-      ><a-tab-pane key="context" tab="监听配置"
-        ><a-card :bordered="false"
-          ><a-form layout="inline"
-            ><a-form-item label="监听账号"
-              ><a-select
-                v-model:value="selectedUser"
-                allow-clear
-                style="width: 220px"
-                :options="users.map((user) => ({ label: `@${user.username}`, value: user.id }))"
-                @change="loadContext" /></a-form-item
-            ><a-form-item label="功能点"
-              ><a-select
-                v-model:value="feature"
-                style="width: 220px"
-                :options="[
-                  { label: '文章生成', value: 'article_generation' },
-                  { label: '内容摘要', value: 'content_summary' },
-                  { label: '标题优化', value: 'title_optimization' },
-                ]"
-                @change="loadContext" /></a-form-item></a-form
-          ><a-descriptions v-if="profile" bordered :column="1" style="margin-top: 20px"
-            ><a-descriptions-item label="作者">@{{ profile.username }}</a-descriptions-item
-            ><a-descriptions-item label="身份">{{ profile.identity_summary }}</a-descriptions-item
-            ><a-descriptions-item label="近期关注">{{ profile.focus_summary }}</a-descriptions-item
-            ><a-descriptions-item label="长期主题">{{
-              profile.recurring_topics.join('、') || '暂无'
-            }}</a-descriptions-item></a-descriptions
-          ><a-space v-if="binding" direction="vertical" style="width: 100%; margin-top: 20px"
-            ><span class="muted">绑定 Skills</span
-            ><a-checkbox-group
-              v-model:value="bindingIds"
-              :options="skills.map((skill) => ({ label: skill.name, value: skill.id }))"
-            /><a-button type="primary" :loading="bindingLoading" @click="saveBinding"
-              >保存绑定</a-button
-            ></a-space
-          ><a-empty v-else description="选择账号后查看画像" /></a-card></a-tab-pane
-      ><a-tab-pane key="jobs" tab="生成任务"
+      ><a-tab-pane key="tasks" tab="监听任务"
+        ><AiListenTasks
+          ref="listenTasksPanel"
+          @edit-draft="editDraft"
+          @changed="refreshJobContext"
+          @navigate="(value) => (tab = value)" /></a-tab-pane
+      ><a-tab-pane key="jobs" tab="生成记录"
         ><div class="metric-grid">
           <MetricCard label="运行中" :value="running" detail="当前页队列 / 执行中" /><MetricCard
             label="草稿数"
@@ -390,18 +439,26 @@ onMounted(async () => {
               <a-select
                 v-model:value="filters.status"
                 style="width: 150px"
-                :options="
-                  ['all', 'queued', 'running', 'succeeded', 'failed'].map((value) => ({
-                    label: value === 'all' ? '全部状态' : value,
-                    value,
-                  }))
-                "
+                :options="jobStatusOptions"
+                @change="resetJobs"
+              /><a-select
+                v-model:value="filters.trigger_type"
+                style="width: 150px"
+                :options="jobSourceOptions"
+                @change="resetJobs"
+              /><a-select
+                v-model:value="filters.listen_task_id"
+                style="width: 180px"
+                :options="[
+                  { label: '全部监听任务', value: 'all' },
+                  ...listenTaskOptions.map((task) => ({ label: task.name, value: task.id })),
+                ]"
                 @change="resetJobs"
               /><a-button type="primary" @click="tab = 'settings'"
                 ><ThunderboltOutlined /> 配置 AI</a-button
               >
             </div>
-            <span class="toolbar__hint">共 {{ jobsTotal }} 条任务</span>
+            <span class="toolbar__hint">共 {{ jobsTotal }} 条生成记录</span>
           </div>
           <a-table
             :data-source="jobs"
@@ -425,9 +482,7 @@ onMounted(async () => {
                 </p></template
               ></a-table-column
             ><a-table-column title="任务来源"
-              ><template #default="{ record }">{{
-                record.manual ? '手动生成' : '监听自动生成'
-              }}</template></a-table-column
+              ><template #default="{ record }">{{ jobSource(record) }}</template></a-table-column
             ><a-table-column title="状态"
               ><template #default="{ record }"
                 ><StatusPill :value="record.status" /></template></a-table-column
@@ -435,65 +490,27 @@ onMounted(async () => {
               ><template #default="{ record }">{{
                 record.draft?.title || '尚未生成'
               }}</template></a-table-column
+            ><a-table-column title="尝试"
+              ><template #default="{ record }"
+                >{{ record.attempts }}/{{ record.max_attempts }}
+                <div class="muted">
+                  累计 {{ record.lifetime_attempts ?? record.attempts }}
+                </div></template
+              ></a-table-column
             ><a-table-column title="操作"
               ><template #default="{ record }"
                 ><a-space
                   ><a-button v-if="record.draft" type="link" @click="editDraft(record)"
                     >编辑草稿</a-button
+                  ><a-button type="link" @click="showAttempts(record)">尝试明细</a-button
                   ><a-button v-if="record.status === 'failed'" type="link" @click="retry(record)"
                     >重试</a-button
-                  ><a-button type="link" danger @click="removeJob(record)"
+                  ><a-button
+                    v-if="!record.listen_task_id"
+                    type="link"
+                    danger
+                    @click="removeJob(record)"
                     ><DeleteOutlined /></a-button></a-space></template></a-table-column></a-table></a-card></a-tab-pane
-      ><a-tab-pane key="settings" tab="创作设置"
-        ><a-card :bordered="false"
-          ><a-form layout="vertical" style="max-width: 760px"
-            ><a-form-item label="创作开关"
-              ><a-switch v-model:checked="settingsForm.enabled" /><span
-                class="muted"
-                style="margin-left: 10px"
-                >启用后允许创建生成任务</span
-              ></a-form-item
-            ><a-form-item label="采集后自动生成"
-              ><a-switch
-                v-model:checked="settingsForm.auto_generate"
-                :disabled="!settingsForm.enabled" /></a-form-item
-            ><a-form-item label="语言与语气"
-              ><a-space
-                ><a-input v-model:value="settingsForm.language" placeholder="语言" /><a-input
-                  v-model:value="settingsForm.tone"
-                  placeholder="语气" /></a-space></a-form-item
-            ><a-form-item label="默认提示词"
-              ><a-textarea v-model:value="settingsForm.prompt_template" :rows="5" /></a-form-item
-            ><a-form-item label="推理强度"
-              ><a-select
-                v-model:value="settingsForm.reasoning_effort"
-                :options="
-                  ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((value) => ({
-                    label: value,
-                    value,
-                  }))
-                "
-                style="width: 220px" /></a-form-item
-            ><a-form-item label="运行参数"
-              ><a-space
-                ><a-input-number
-                  v-model:value="settingsForm.max_attempts"
-                  addon-before="重试"
-                  :min="1"
-                  :max="10" /><a-input-number
-                  v-model:value="settingsForm.max_output_tokens"
-                  addon-before="Token"
-                  :min="128"
-                  :max="100000" /><a-input-number
-                  v-model:value="settingsForm.request_timeout_seconds"
-                  addon-before="超时"
-                  :min="10"
-                  :max="600" /></a-space></a-form-item
-            ><a-button type="primary" :loading="loading.settings" @click="saveSettings"
-              ><SaveOutlined /> 保存配置</a-button
-            ></a-form
-          ></a-card
-        ></a-tab-pane
       ><a-tab-pane key="skills" tab="Skills">
         <a-card :bordered="false">
           <div class="toolbar">
@@ -545,7 +562,119 @@ onMounted(async () => {
               </template>
             </a-table-column>
           </a-table>
+          <a-collapse style="margin-top: 20px">
+            <a-collapse-panel key="legacy" header="旧策略 · 账号与功能点 Skill 绑定">
+              <a-alert
+                type="info"
+                show-icon
+                message="此处保留旧策略和手动生成所需的账号 Skill 绑定；监听任务使用任务中明确选择的 Skills。"
+                style="margin-bottom: 16px"
+              />
+              <a-form layout="inline">
+                <a-form-item label="监听账号"
+                  ><a-select
+                    v-model:value="selectedUser"
+                    style="width: 220px"
+                    :options="users.map((user) => ({ label: `@${user.username}`, value: user.id }))"
+                    @change="loadContext"
+                /></a-form-item>
+                <a-form-item label="功能点"
+                  ><a-select
+                    v-model:value="feature"
+                    style="width: 220px"
+                    :options="[
+                      { label: '文章生成', value: 'article_generation' },
+                      { label: '内容摘要', value: 'content_summary' },
+                      { label: '标题优化', value: 'title_optimization' },
+                    ]"
+                    @change="loadContext"
+                /></a-form-item>
+              </a-form>
+              <a-descriptions v-if="profile" bordered :column="1" style="margin-top: 18px"
+                ><a-descriptions-item label="作者">@{{ profile.username }}</a-descriptions-item
+                ><a-descriptions-item label="身份">{{
+                  profile.identity_summary
+                }}</a-descriptions-item
+                ><a-descriptions-item label="近期关注">{{
+                  profile.focus_summary
+                }}</a-descriptions-item
+                ><a-descriptions-item label="长期主题">{{
+                  profile.recurring_topics.join('、') || '暂无'
+                }}</a-descriptions-item></a-descriptions
+              >
+              <a-space v-if="binding" direction="vertical" style="width: 100%; margin-top: 18px"
+                ><span class="muted">绑定 Skills</span
+                ><a-checkbox-group
+                  v-model:value="bindingIds"
+                  :options="skills.map((skill) => ({ label: skill.name, value: skill.id }))"
+                /><a-button type="primary" :loading="bindingLoading" @click="saveBinding"
+                  >保存绑定</a-button
+                ></a-space
+              >
+              <a-empty v-else description="选择账号后查看画像和绑定" />
+            </a-collapse-panel>
+          </a-collapse>
         </a-card> </a-tab-pane
+      ><a-tab-pane key="settings" tab="创作设置"
+        ><a-card :bordered="false"
+          ><a-alert
+            v-if="settings?.auto_trigger_mode === 'legacy_all'"
+            type="warning"
+            show-icon
+            message="当前仍使用旧自动生成兼容模式。首次启用监听任务时会提示切换；切换后自动触发范围由监听任务决定。"
+            style="margin-bottom: 18px"
+          /><a-form layout="vertical" style="max-width: 760px"
+            ><a-form-item label="创作开关"
+              ><a-switch v-model:checked="settingsForm.enabled" /><span
+                class="muted"
+                style="margin-left: 10px"
+                >启用后允许创建生成任务</span
+              ></a-form-item
+            ><a-form-item label="自动触发总开关"
+              ><a-switch
+                v-model:checked="settingsForm.auto_generate"
+                :disabled="!settingsForm.enabled"
+              />
+              <div class="muted">
+                启用监听任务后，仅由任务配置决定哪些内容自动生成。
+              </div></a-form-item
+            ><a-form-item label="语言与语气"
+              ><a-space
+                ><a-input v-model:value="settingsForm.language" placeholder="语言" /><a-input
+                  v-model:value="settingsForm.tone"
+                  placeholder="语气" /></a-space></a-form-item
+            ><a-form-item label="默认提示词"
+              ><a-textarea v-model:value="settingsForm.prompt_template" :rows="5" /></a-form-item
+            ><a-form-item label="推理强度"
+              ><a-select
+                v-model:value="settingsForm.reasoning_effort"
+                :options="
+                  ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((value) => ({
+                    label: value,
+                    value,
+                  }))
+                "
+                style="width: 220px" /></a-form-item
+            ><a-form-item label="运行参数"
+              ><a-space
+                ><a-input-number
+                  v-model:value="settingsForm.max_attempts"
+                  addon-before="重试"
+                  :min="1"
+                  :max="10" /><a-input-number
+                  v-model:value="settingsForm.max_output_tokens"
+                  addon-before="Token"
+                  :min="128"
+                  :max="100000" /><a-input-number
+                  v-model:value="settingsForm.request_timeout_seconds"
+                  addon-before="超时"
+                  :min="10"
+                  :max="600" /></a-space></a-form-item
+            ><a-button type="primary" :loading="loading.settings" @click="saveSettings"
+              ><SaveOutlined /> 保存配置</a-button
+            ></a-form
+          ></a-card
+        ></a-tab-pane
       ><a-tab-pane key="source" tab="AI 数据源"
         ><a-card :bordered="false"
           ><a-alert
@@ -581,6 +710,36 @@ onMounted(async () => {
           ></a-card
         ></a-tab-pane
       ></a-tabs
+    ><a-modal
+      v-model:open="attemptsOpen"
+      :title="`执行尝试 · 记录 #${attemptsJob?.id || ''}`"
+      :footer="null"
+      width="760px"
+      ><a-table
+        :data-source="attempts"
+        :loading="attemptsLoading"
+        row-key="id"
+        :pagination="attemptsPagination"
+        :scroll="{ x: 650 }"
+        @change="changeAttempts"
+        ><a-table-column title="开始时间"
+          ><template #default="{ record }">{{
+            formatDateTime(record.started_at)
+          }}</template></a-table-column
+        ><a-table-column title="轮次/序号"
+          ><template #default="{ record }"
+            >{{ record.round_number }} / {{ record.attempt_number }}</template
+          ></a-table-column
+        ><a-table-column title="结果" data-index="status" /><a-table-column title="耗时"
+          ><template #default="{ record }">{{
+            formatDuration(record.duration_ms)
+          }}</template></a-table-column
+        ><a-table-column title="模型" data-index="model_name" /><a-table-column title="错误"
+          ><template #default="{ record }">{{
+            record.error_summary || record.error_type || '—'
+          }}</template></a-table-column
+        ></a-table
+      ></a-modal
     ><a-modal
       v-model:open="skillOpen"
       :title="editingSkill ? '编辑 Skill' : '新建 Skill'"
