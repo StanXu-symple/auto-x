@@ -1113,3 +1113,13 @@ bash kejilion.sh app auto-x
 - tc-2 七项服务全部 healthy，目标镜像 OCI revision 等于完整 SHA，frontend 8080、backend `/api/v1/health/ready`、auth-center 就绪接口均返回 HTTP 200；`.auto-x-services` 仍为原完整七项。
 - 管理员登录后，`/ai-writing` 出现真实“监听任务”页、任务状态/统计/回溯/尝试记录，生成记录状态选择显示中文；空监听任务列表不会触发自动生成。任务创建、历史回溯和 AI 调用由管理员在业务使用时再复测。
 - hn-1 四项服务与原镜像保持健康，tc-1 Nacos 正常；Nacos 三份 JSON 的值与备份对照，除安装器重新序列化外不应出现业务值变化。
+
+### 2026-10-07 实际发布与验收
+
+业务接入和状态中文化已提交 `dev` 并快进合入 `main`，运行镜像 SHA 为 `692a2e465e48fc34103095341d8dc6e7ce579961`。[GitHub Actions 37495552099](https://github.com/StanXu-symple/auto-x/actions/runs/37495552099) 全部成功。tc-2 从官方 GHCR 预拉 backend、frontend 两镜像完成，OCI revision 均与完整 SHA 一致。安装器使用上方菜单 2 等价入口，日志 `/root/auto-x-ai-listen-692a2e4-update.log`、退出码文件 `/root/auto-x-ai-listen-692a2e4-update.exit`，退出码 0。
+
+完整备份见上文；在实际迁移前又保存即时数据库转储和引导文件至 `/home/docker/auto-x/backups/pre-ai-listen-migrate-20261006T163334Z/`。该 custom dump 为 1,056,788 字节，经 `pg_restore --list` 和 SHA256 校验；迁移前版本仍为 `0031_tweet_screenshots`，原生成记录及草稿各 5 条。
+
+更新后 tc-2 源码与七项业务容器 revision 都是目标 SHA，七项 healthy；Compose `migrate` 为 `exited|0`。数据库版本为 `0032_ai_listen_tasks`，`ai_settings.auto_trigger_mode=legacy_all`，原生成记录 5 条、草稿 5 条保留，新监听任务、历史回溯与逐次尝试记录均为 0。frontend 8080、backend 就绪、auth-center 就绪均返回 HTTP 200；未认证访问新监听任务及预览 API 返回 401。前端资源包含“监听任务”和中文“全部状态”文案。未创建真实任务，也未调用 AI 数据源。
+
+原七项服务清单、Compose 覆盖、安装定义逐字一致；`.env` 仅 `IMAGE_TAG` 和 `FRONTEND_IMAGE_TAG` 两键变化。三份 Nacos Data ID 均返回 HTTP 200，JSON 语义与备份一致。`article_uploads` 和 `tweet_screenshots` 两卷逐文件摘要与备份一致，无文件增删改。本轮 hn-1 未升级。
