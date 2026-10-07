@@ -1159,3 +1159,39 @@ bash kejilion.sh app auto-x
 与本轮备份对照，Nacos `x-sentinel-config.json` 的语义差异仅为新增 `SERVICE_CLIENT_AI_WORKER_SECRET` 和 `SERVICE_AUTH_CLIENTS_JSON.ai-worker`；其余 93 个既有键值相同。`x-sentinel-monitor-nodes.json`、`x-sentinel-monitor-topology.json` 与备份语义相同。Nacos 中的凭据与 tc-2 本机 `ai-worker.secret` 一致，两处客户端身份哈希都与该凭据匹配；`ai-worker` 到 `xhs-worker:xhs:execute` 的授权存在。核验只输出摘要和结论，未输出密钥。
 
 hn-1 保持原四项服务，均 healthy、无重启或 OOM，镜像 revision 仍为 `48aca12ed3054608aa86190c7765359fbff59910`；本机 8006、8007 的 `/health/live` 及 tc-2 backend 容器访问这两个公网健康接口均返回 HTTP 200。tc-2 的 `.env` 相对本轮备份仅 `IMAGE_TAG`、`FRONTEND_IMAGE_TAG` 两键变化；原七项服务清单逐字相同。`article_uploads` 的 4 项、`tweet_screenshots` 的 50 项与备份逐文件 SHA 相同，无增删改。上述检查验证部署与授权准备；尚未创建真实监听任务，也未实际向小红书或 QQ 推送。真实投递需管理员明确选择渠道、具备对应小红书登录态或 QQ 机器人及群授权，在产生新内容后逐渠道核对投递记录与平台结果。
+
+## 二十八、文章、AI 与 QQ 列表刷新按钮更新
+
+2026-10-07，`dev` 上连续四个前端提交：`b3dc358` 为 `/ai-writing` 的生成记录和 Skills 加刷新按钮，`2f053e5` 为 `/articles` 加刷新按钮，`c1fc4d9` 为 `/qq-notifications` 各 Tab 提供刷新入口，`d99fa98` 为 `/qq-tasks` 加刷新按钮。目标完整 SHA 为 `d99fa9886e3cf675ee091960f1044976331c7d01`；[GitHub Actions 37560568246](https://github.com/StanXu-symple/auto-x/actions/runs/37560568246) 构建成功。四个提交相对上次部署只修改 frontend；本轮仅在 **tc-2** 使用第六节的 frontend-only 模式执行安装器菜单 `2. 更新`，无需数据库迁移、Nacos 配置同步或 hn-1 更新。
+
+### 更新前备份与镜像校验
+
+先在 tc-2 记录原七项服务清单、`.env`、Compose 覆盖、`/root/apps/auto-x.conf` 和全部容器的名称、ID、镜像、状态与创建时间，保存到权限受限的新备份目录。按第六节核对当前 frontend、backend、migrate 和数据库版本。此模式不运行迁移，因此本轮无需新增数据库转储；若实际发布范围扩大，应重新确定更新服务并按第二节备份数据库。
+
+本次首次备份校验遇到 `Extra data`：tc-2 的 `docker compose ps -a --format json` 实际输出为每行一个 JSON 对象（JSON Lines），备份校验脚本误将整份输出按单一 JSON 数组解析。此时备份**尚未通过校验**，未进入镜像或安装器更新，线上服务未改动。恢复时逐行解析非空记录，核对解析出的容器数量与 `docker compose ps -a -q` 的数量及预期服务清单一致，再为完整备份生成并验证 SHA256 manifest；只有全部校验通过后才继续预拉与菜单 2。不要把这次未校验的备份标记为有效回滚基线。修正后备份为 `/home/docker/auto-x/backups/pre-refresh-tabs-tc-2-20261007T021142Z-q7kpBE`，目录权限 700，8 个文件权限均为 600；保存 `.env`、原七项清单、Compose 覆盖、安装定义、`kejilion.sh`、11 条 Compose 和 11 条 Docker 容器记录。`sha256sum -c` 全部通过，manifest SHA256 为 `64f83193df7ef54bd655f053fa2b4f4d6a19b17397c1d9de033c3284997397e1`。
+
+确认 Actions 对完整 SHA 构建成功后，在 tc-2 从官方 GHCR 预拉 `ghcr.io/stanxu-symple/auto-x-frontend:sha-d99fa9886e3cf675ee091960f1044976331c7d01`。只有 `docker pull` 退出码为 0，且镜像 OCI `org.opencontainers.image.revision` 等于目标完整 SHA，才使用下文的 `KJ_AUTO_X_SKIP_PULL=1`。本次 Actions 运行成功，镜像预拉退出 0，OCI revision 与目标 SHA 一致，摘要为 `sha256:cf547ae64320b01db949273e87182f22317c2240e901869fbf2cfeb20bd10ebd`。
+
+### 通过安装器菜单 2 更新
+
+在 tc-2 的 `/root` 执行 `bash kejilion.sh app auto-x`，运行环境选择 `3`（default），应用菜单选择 `2`（更新）。若 `/root/apps` 已核对为包含 frontend-only 模式的正确安装定义，可使用以下同一菜单的非交互等价入口；否则先正常刷新安装定义，不设置 `KJ_APPS_SKIP_REFRESH=1`：
+
+```bash
+cd /root
+TERM=xterm COMPOSE_PROGRESS=plain \
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-d99fa9886e3cf675ee091960f1044976331c7d01 \
+KJ_AUTO_X_UPDATE_FRONTEND_ONLY=1 KJ_AUTO_X_SKIP_PULL=1 \
+AUTO_X_SERVICES=frontend \
+bash kejilion.sh app auto-x
+```
+
+frontend-only 模式只重建 frontend，保留全局 `IMAGE_TAG` 和原 `.auto-x-services`。本节点 `FRONTEND_IMAGE` 已是官方 GHCR 地址，预期 `.env` 仅 `FRONTEND_IMAGE_TAG` 更新；若旧节点仍为安装器已知历史默认镜像源，显式指定 `KJ_AUTO_X_IMAGE_REGISTRY` 还可能归一化 `FRONTEND_IMAGE`，用户自定义地址会保留。安装器报错时保留现场，先向用户报告并确认，再修复、重试且把新问题补入本节。本次在 2026-10-07 10:14（北京时间）执行，日志为 `/root/auto-x-refresh-tabs-d99fa98-update.log`，退出码 0；安装器显示 frontend 已更新且容器 healthy。Compose 因本次仅选择 frontend 打印 monitor-agent orphan 提示，命令未使用 `--remove-orphans`；验收须确认该服务容器未被移除或重建。
+
+### 验收与实际结果
+
+核对新 frontend 为 healthy、OCI revision 等于目标 SHA、8080 页面返回 HTTP 200；backend 就绪接口仍返回 200。登录后检查 `/ai-writing` 的生成记录与 Skills、`/articles`、`/qq-notifications` 全部 Tab、`/qq-tasks` 的刷新按钮均能重新请求当前列表，并保留原筛选和页码。对照更新前记录，其他 10 个容器的 ID、镜像与启动时间不变，`migrate` 退出状态与数据库 `0034_ai_publish_dispatches` 不变；原七项服务清单、Compose 覆盖与安装定义保持，`.env` 仅 `FRONTEND_IMAGE_TAG` 改变。hn-1 四项服务保持健康，无需更新。
+
+本次只读验收：tc-2 frontend 容器 `7b3599eeaa1b` 为 running/healthy，镜像 OCI revision 等于 `d99fa9886e3cf675ee091960f1044976331c7d01`，宿主与公网 8080 首页均 HTTP 200；backend 容器的 `:8200/api/v1/health/ready` 返回 200。公网 HTTP 首页及四个页面构建 JS 的 SHA256 均与容器内文件一致；构建 JS 包含刷新按钮文案，源码对应 `/ai-writing` 两个 Tab、`/articles`、`/qq-notifications` 五个 Tab 和 `/qq-tasks` 的加载入口。数据库仍为 `0034_ai_publish_dispatches`。与本轮备份 JSON Lines 对照，11 项 Compose 服务集合一致，除 frontend 外其余 10 个容器 ID 与创建时间均不变；原七项清单、Compose 覆盖和安装定义 SHA 不变，`.env` 仅 `FRONTEND_IMAGE_TAG` 改变。hn-1 原四项服务均 running/healthy。浏览器登录后的实际点击和列表请求仍待业务复测。
