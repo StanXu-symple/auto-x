@@ -9,6 +9,7 @@ import {
   ExportOutlined,
   HistoryOutlined,
   PlusOutlined,
+  ReloadOutlined,
   SendOutlined,
   UploadOutlined,
 } from '@ant-design/icons-vue'
@@ -303,7 +304,7 @@ watch(
               { label: '已发布', value: 'published' },
               { label: '失败', value: 'failed' },
             ]"
-          />
+          /><a-button :loading="loading" @click="load"><ReloadOutlined /> 刷新</a-button>
         </div>
         <span class="toolbar__hint">共 {{ total }} 篇</span>
       </div>
