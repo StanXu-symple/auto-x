@@ -248,7 +248,10 @@ onMounted(load)
   <div class="page-stack">
     <PageHeader eyebrow="CHANNEL / 03" title="QQ 任务" description="配置定时消息任务和投递范围"
       ><template #actions
-        ><a-button type="primary" @click="edit()"><PlusOutlined /> 新建任务</a-button></template
+        ><a-space
+          ><a-button :loading="loading" @click="load"><ReloadOutlined /> 刷新</a-button
+          ><a-button type="primary" @click="edit()"><PlusOutlined /> 新建任务</a-button></a-space
+        ></template
       ></PageHeader
     >
     <div class="metric-grid">
