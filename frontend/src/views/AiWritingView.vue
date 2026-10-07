@@ -455,7 +455,9 @@ onMounted(async () => {
                   ...listenTaskOptions.map((task) => ({ label: task.name, value: task.id })),
                 ]"
                 @change="resetJobs"
-              /><a-button type="primary" @click="tab = 'settings'"
+              /><a-button :loading="jobsLoading" @click="loadJobs"
+                ><ReloadOutlined /> 刷新</a-button
+              ><a-button type="primary" @click="tab = 'settings'"
                 ><ThunderboltOutlined /> 配置 AI</a-button
               >
             </div>
@@ -521,6 +523,7 @@ onMounted(async () => {
           <div class="toolbar">
             <div class="toolbar__controls">
               <a-button type="primary" @click="editSkill()"><PlusOutlined /> 新建 Skill</a-button>
+              <a-button :loading="skillsLoading" @click="loadSkills"><ReloadOutlined /> 刷新</a-button>
               <span class="toolbar__hint">用可复用的提示指令控制输出结构</span>
             </div>
             <span class="toolbar__hint">共 {{ skillsTotal }} 条 Skills</span>
