@@ -29,6 +29,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import MetricCard from '@/components/MetricCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
 const tab = ref('bots')
+const templatesPanel = ref<InstanceType<typeof QQMessageTemplates> | null>(null)
+const placeholdersPanel = ref<InstanceType<typeof QQPlaceholderSettings> | null>(null)
 const loading = ref(false)
 const overview = ref<QQOverview | null>(null)
 const botOptions = ref<QQBotAccount[]>([])
@@ -170,6 +172,11 @@ async function loadAll() {
   } finally {
     loading.value = false
   }
+}
+function refreshCurrentTab() {
+  if (tab.value === 'templates') void templatesPanel.value?.refresh()
+  else if (tab.value === 'placeholders') void placeholdersPanel.value?.refresh()
+  else void loadAll()
 }
 function editBot(item?: QQBotAccount) {
   editingBot.value = item || null
@@ -404,7 +411,9 @@ onMounted(loadAll)
   <div class="page-stack">
     <PageHeader eyebrow="CHANNEL / 02" title="QQ 推送" description="管理机器人、群目标与投递记录"
       ><template #actions
-        ><a-button @click="loadAll"><ReloadOutlined /> 刷新</a-button></template
+        ><a-button :loading="loading" @click="refreshCurrentTab"
+          ><ReloadOutlined /> 刷新</a-button
+        ></template
       ></PageHeader
     >
     <div class="metric-grid">
@@ -434,7 +443,13 @@ onMounted(loadAll)
         ><a-tab-pane key="bots" tab="机器人"
           ><div class="toolbar">
             <span class="toolbar__hint">官方 QQ 机器人账号 · 共 {{ botTotal }} 个</span
-            ><a-button type="primary" @click="editBot()"><PlusOutlined /> 新增机器人</a-button>
+            ><a-space
+              ><a-button :loading="botsLoading" @click="loadBots"
+                ><ReloadOutlined /> 刷新</a-button
+              ><a-button type="primary" @click="editBot()"
+                ><PlusOutlined /> 新增机器人</a-button
+              ></a-space
+            >
           </div>
           <a-table
             :data-source="bots"
@@ -460,7 +475,13 @@ onMounted(loadAll)
         ><a-tab-pane key="targets" tab="群目标"
           ><div class="toolbar">
             <span class="toolbar__hint">将监听内容发送到指定群 · 共 {{ targetTotal }} 个</span
-            ><a-button type="primary" @click="editTarget()"><PlusOutlined /> 新增目标</a-button>
+            ><a-space
+              ><a-button :loading="targetsLoading" @click="loadTargets"
+                ><ReloadOutlined /> 刷新</a-button
+              ><a-button type="primary" @click="editTarget()"
+                ><PlusOutlined /> 新增目标</a-button
+              ></a-space
+            >
           </div>
           <a-table
             :data-source="targets"
@@ -510,12 +531,16 @@ onMounted(loadAll)
         ><a-tab-pane key="deliveries" tab="投递记录"
           ><div class="toolbar">
             <span class="toolbar__hint">共 {{ deliveryTotal }} 条投递记录</span
-            ><a-button
-              danger
-              :loading="clearingDeliveries"
-              :disabled="deletingDeliveries.size > 0"
-              @click="clearDeliveries"
-              ><DeleteOutlined /> 一键清除</a-button
+            ><a-space
+              ><a-button :loading="deliveriesLoading" @click="loadDeliveries"
+                ><ReloadOutlined /> 刷新</a-button
+              ><a-button
+                danger
+                :loading="clearingDeliveries"
+                :disabled="deletingDeliveries.size > 0"
+                @click="clearDeliveries"
+                ><DeleteOutlined /> 一键清除</a-button
+              ></a-space
             >
           </div>
           <a-table
@@ -559,10 +584,13 @@ onMounted(loadAll)
                       ><DeleteOutlined /></a-button></a-tooltip></a-space></template></a-table-column></a-table></a-tab-pane
         ><a-tab-pane key="templates" tab="消息模板"
           ><QQMessageTemplates
+            ref="templatesPanel"
             :revision="templateRevision"
             @changed="templateRevision++" /></a-tab-pane
         ><a-tab-pane key="placeholders" tab="占位符配置"
-          ><QQPlaceholderSettings @changed="loadTemplateFields" /></a-tab-pane></a-tabs></a-card
+          ><QQPlaceholderSettings
+            ref="placeholdersPanel"
+            @changed="loadTemplateFields" /></a-tab-pane></a-tabs></a-card
     ><a-modal
       v-model:open="botOpen"
       :title="editingBot ? '编辑机器人' : '新增机器人'"

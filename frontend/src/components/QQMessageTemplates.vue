@@ -15,6 +15,7 @@ const { rows, loading, pagination, load, reset, change } = usePagedTable(
   (query) => qqApi.messageTemplates({ ...query, search: search.value || undefined }),
   '无法加载消息模板',
 )
+defineExpose({ refresh: load })
 const open = ref(false)
 const saving = ref(false)
 const editing = ref<number | null>(null)

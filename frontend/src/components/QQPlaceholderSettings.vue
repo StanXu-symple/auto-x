@@ -47,6 +47,7 @@ async function load() {
     error.value = getErrorMessage(e, '读取原始字段失败')
   }
 }
+defineExpose({ refresh: load })
 async function edit(row?: QQPlaceholder) {
   // Always request the complete backend field catalog when opening the editor.
   fieldLoading.value = true
