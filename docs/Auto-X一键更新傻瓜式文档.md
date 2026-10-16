@@ -1237,3 +1237,38 @@ bash kejilion.sh app auto-x
 - hn-1 原四项服务仍 healthy、运行原 `48aca12ed3054608aa86190c7765359fbff59910` 版本，小红书 8006 和 Camoufox 8007 存活接口均 HTTP 200。
 
 本节作为独立文档提交发布，不重新构建已验收的运行镜像。`0035` 只增加可空字段；后续若需回退应用版本，先核对兼容性，避免直接恢复旧整库而丢失升级后的业务数据。
+
+## 三十、X 主帖时间链接识别修复
+
+2026-10-16 排查确认：10 月 12 日最后一次截图成功，13 日起的 23 条任务都在三次尝试后报 `Requested X post was not found; it may require login or be unavailable`。hn-1 的 Camoufox 能打开帖子、读取正确作者和正文，但 X 已给主帖时间链接增加 `data-status="active"`；原识别器据此将合法时间链接排除，不能确认帖子 ID。旧成功帖子复测也会失败。该错误不能直接解释为登录过期、删帖或网络中断。
+
+修复改为按“时:分 + 日期”识别公开页时间链接，兼容中英文、日文及数字日期；浏览量、回复按钮、正文链接与引用卡片不能提供原帖身份。作者、精确帖子 ID/路径和正文校验保留。25 项真实浏览器 DOM 测试及 23 项捕获单元测试通过，Ruff 和 `git diff --check` 通过。功能执行位置为 **hn-1 的 camoufox-worker**；现有 tc-2 worker 可继续调用新浏览器 API，无需业务数据库迁移。
+
+### 安装器更新范围检查
+
+先核对 `/root/apps/auto-x.conf` 的实际能力。`24016c6` 只有 frontend 单服务模式；普通菜单 2 更新会自动加入 monitor-agent、修改全局 `IMAGE_TAG`、重写服务清单并执行 `--remove-orphans`。直接指定 `AUTO_X_SERVICES=camoufox-worker` 会遗漏其他服务的 Compose 片段，可能移除 hn-1 的 xhs-worker 和 monitor-center。遇到这一情况先报告确认，选择新增 Camoufox 单服务模式，或按原四项清单更新；不要直接执行仅包含 Camoufox 的普通更新命令。
+
+用户确认后新增 `KJ_AUTO_X_UPDATE_CAMOUFOX_ONLY=1`。此模式仍走原应用菜单 `2`，只拉取和重建 camoufox-worker，使用独立 `CAMOUFOX_WORKER_IMAGE_TAG`，保留全局 `IMAGE_TAG` 和原四项清单。Compose 的基础文件与独立服务定义都支持独立标签，未配置时回落到全局标签；后续显式指定版本的完整更新会同步独立标签，避免浏览器一直停留在旧版本。仅更新模式不执行迁移、Nacos 同步或 `--remove-orphans`；两个单服务模式不能同时启用。
+
+先发布 Auto-X 与应用市场 `apps/stanxu` 的安装定义，等待目标完整 SHA 的 Actions 全部成功。在 hn-1 备份原 `/root/apps/auto-x.conf` 并刷新到已核验的新版本。预拉 `ghcr.io/stanxu-symple/auto-x-camoufox-worker:sha-<完整SHA>`，只有 Docker 退出 0 且 OCI revision 等于目标 SHA 才设置 `KJ_AUTO_X_SKIP_PULL=1`。以下为菜单 2 的等价入口：
+
+```bash
+cd /root
+TERM=xterm COMPOSE_PROGRESS=plain \
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io KJ_AUTO_X_IMAGE_TAG=sha-<完整SHA> \
+KJ_AUTO_X_UPDATE_CAMOUFOX_ONLY=1 KJ_AUTO_X_SKIP_PULL=1 \
+AUTO_X_SERVICES=camoufox-worker \
+bash kejilion.sh app auto-x
+```
+
+验收 Camoufox healthy、revision 正确，内存上限仍为 2 GiB、共享内存 512 MiB、浏览器资料原卷继续挂载；其余三个容器 ID 和启动时间不变。原四项清单、Compose 部署覆盖、控制面和 Nacos 配置保留，`.env` 只新增或修改 `CAMOUFOX_WORKER_IMAGE_TAG`；若显式镜像源覆盖了已知历史默认地址，浏览器镜像地址也可能归一化。核查 8007 本机及 tc-2 跨节点健康接口返回 200。
+
+### 备份和失败任务恢复
+
+更新前保存 hn-1 的 `.env`、原四项清单、Compose、安装定义、控制面、Nacos 三份配置、容器及镜像记录，以及 `xhs_home` 浏览器资料和 Cookie 一致性快照；生成并复验 SHA256 清单。确认浏览器没有执行中的任务，旧镜像保留以便回退。目标镜像必须使用完整 SHA，等待 Actions 全部成功并核对拉取退出码、OCI revision 后，再通过 `bash kejilion.sh app auto-x` 菜单 `2` 或其等价非交互入口更新。
+
+本次首次在线备份遇到 `sqlite3.OperationalError: database is locked`：Firefox 锁住 Cookie 数据库，备份未通过校验，该目录不能作为恢复基线。用户确认在新镜像拉取并核验后短暂停止 camoufox-worker，再完整复制浏览器资料及 SQLite/WAL 文件、离线验证 Cookie 数据库和 SHA256，然后由安装器启动新版本。其余容器继续运行。不要直接关闭 SQLite 锁检查，也不要将在线不完整归档标记为有效备份。
+
+更新成功后，先验证一条本次失败任务：通过现有管理员 `POST /api/v1/tweets/{tweet_id}/screenshot` 接口重新排队，确认 `succeeded`、PNG 可读及作者/原帖地址正确，再对固定的其余失败 ID 批量重试。批量恢复只选择本次故障的 23 个 ID 中仍为 failed 且错误相同的记录，不重试原生转推等其他失败原因，不覆盖已有成功图片。文章会动态关联来源帖的成功截图，刷新文章后即可查看；无需重新生成 AI 文章或向平台重新发布。

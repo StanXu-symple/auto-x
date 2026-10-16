@@ -79,7 +79,7 @@ services:
     networks: [control, app, data, monitoring]
 
   camoufox-worker:
-    image: ${CAMOUFOX_WORKER_IMAGE:-x-sentinel-camoufox-worker}:${IMAGE_TAG:-latest}
+    image: ${CAMOUFOX_WORKER_IMAGE:-x-sentinel-camoufox-worker}:${CAMOUFOX_WORKER_IMAGE_TAG:-${IMAGE_TAG:-latest}}
     command: ["uvicorn", "app.camoufox_service:app", "--host", "0.0.0.0", "--port", "8007"]
     environment:
       CAMOUFOX_SERVICE_NAME: xsentinel-camoufox-worker

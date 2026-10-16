@@ -120,6 +120,21 @@ _ARTICLE_DOM_HELPERS = r"""
     for (const img of clone.querySelectorAll('img[alt]')) img.replaceWith(img.alt);
     return clone.textContent || '';
   };
+  const timestampText = value => {
+    const text = value.replace(/\s+/g, ' ').trim();
+    // X currently marks both the timestamp and the views link with
+    // data-status="active".  Identify the timestamp by its time + date label,
+    // rather than by that shared implementation detail.
+    const hasClock = /\b\d{1,2}:\d{2}\b/.test(text);
+    const months = 'Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|'
+      + 'Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?';
+    // A numeric year works regardless of the localized month name/order.
+    const hasDate = /\b(?:19|20)\d{2}\b/.test(text)
+      || new RegExp('\\b(?:' + months + ')\\b', 'i').test(text)
+      || /\b\d{1,4}[./-]\d{1,2}(?:[./-]\d{1,4})?\b/.test(text)
+      || /\b\d{4}\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?/.test(text);
+    return hasClock && hasDate;
+  };
 """
 
 
@@ -168,8 +183,7 @@ _ARTICLE_METADATA = r"""() => {
     const time_urls = elements('a[href]').filter(a => statusURL(a)
       && !textNodes.some(el => el.contains(a))
       && (a.querySelector('time') || (a.hasAttribute('data-base-ui-tooltip-trigger')
-        && !a.hasAttribute('data-status') && textOf(a).trim()
-        && !a.querySelector('img,svg')))).map(a => a.href);
+        && timestampText(textOf(a)) && !a.querySelector('img,svg')))).map(a => a.href);
     return {index, username, time_urls, text};
   });
 }"""

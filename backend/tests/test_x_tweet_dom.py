@@ -118,7 +118,8 @@ def public_content(username, tweet_id, text="hello", *, body=True):
       <div><a href="https://x.com/{username}">Author name</a>
         <a href="https://x.com/{username}"><span>@{username}</span></a></div>
       {f'<div dir="auto">{text}</div>' if body else ''}
-      <span><a data-base-ui-tooltip-trigger href="https://x.com/{username}/status/{tweet_id}">
+      <span><a data-base-ui-tooltip-trigger data-status="active"
+        href="https://x.com/{username}/status/{tweet_id}">
         6:12 AM · Sep 30, 2026</a><script>window.formatTimestamp('not body');</script></span>
       <a data-base-ui-tooltip-trigger data-status="active"
         href="https://x.com/{username}/status/{tweet_id}">785K Views</a>
@@ -134,6 +135,52 @@ def test_public_dom_matches_author_body_and_timestamp_without_legacy_testids():
     assert candidate["text"] == "What’s up dot"
     assert candidate["time_urls"] == ["https://x.com/thsottiaux/status/123"]
     assert choose_tweet_article(result["candidates"], "123", "thsottiaux") == 0
+
+
+@pytest.mark.parametrize("timestamp", [
+    "5:51 AM · Oct 16, 2026",
+    "5:51 AM · October 16",
+    "17:51 · 16 oct. 2026",
+    "2026年10月16日 上午5:51",
+    "午前5:51 · 2026年10月16日",
+    "05:51 · 16/10/2026",
+])
+def test_public_dom_active_timestamp_is_not_confused_with_active_views(timestamp):
+    html = public_content('thsottiaux', '123').replace(
+        '6:12 AM · Sep 30, 2026', timestamp
+    )
+    # The real target detail page marks both links active; replies need not be.
+    # Exactly one time URL ensures that the views link did not qualify too.
+    html = html.replace('>785K Views</a>', '>882.8K Views</a>')
+    result = dom(f"<article>{html}</article>")
+    assert result["candidates"][0]["time_urls"] == ["https://x.com/thsottiaux/status/123"]
+    assert choose_tweet_article(result["candidates"], "123", "thsottiaux") == 0
+
+
+def test_public_dom_timestamp_without_active_marker_remains_supported():
+    html = public_content('user', '123').replace(' data-status="active"', '')
+    result = dom(f"<article>{html}</article>")
+    assert result["candidates"][0]["time_urls"] == ["https://x.com/user/status/123"]
+
+
+@pytest.mark.parametrize("label", ["882.8K Views", "2026 Views", "播放次数 2026", "Reply"])
+def test_public_dom_active_engagement_label_cannot_supply_target_timestamp(label):
+    html = public_content('user', '123').replace('6:12 AM · Sep 30, 2026', label)
+    result = dom(f"<article>{html}</article>")
+    assert result["candidates"][0]["time_urls"] == []
+    assert choose_tweet_article(result["candidates"], "123", "user") is None
+
+
+def test_public_dom_active_timestamp_retains_author_and_exact_post_checks():
+    html = f"""
+      <article>{public_content('other', '123')}</article>
+      <article>{public_content('user', '1234')}</article>
+      <article>{public_content('user', '333')}
+        <div role="link">{public_content('user', '123')}</div>
+      </article>
+    """
+    result = dom(html)
+    assert choose_tweet_article(result["candidates"], "123", "user") is None
 
 
 def test_public_dom_does_not_match_quoted_post_or_adjacent_reply():
@@ -189,7 +236,7 @@ def test_public_dom_preserves_mentions_emoji_linebreaks_and_removes_outbound_lab
 
 
 def test_public_dom_requires_an_own_timestamp_not_engagement_links():
-    html = public_content('user', '123').replace('data-base-ui-tooltip-trigger href=', 'href=')
+    html = public_content('user', '123').replace('data-base-ui-tooltip-trigger', '')
     result = dom(f"<article>{html}</article>")
     assert choose_tweet_article(result["candidates"], "123", "user") is None
 
