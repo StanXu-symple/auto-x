@@ -1272,3 +1272,20 @@ bash kejilion.sh app auto-x
 本次首次在线备份遇到 `sqlite3.OperationalError: database is locked`：Firefox 锁住 Cookie 数据库，备份未通过校验，该目录不能作为恢复基线。用户确认在新镜像拉取并核验后短暂停止 camoufox-worker，再完整复制浏览器资料及 SQLite/WAL 文件、离线验证 Cookie 数据库和 SHA256，然后由安装器启动新版本。其余容器继续运行。不要直接关闭 SQLite 锁检查，也不要将在线不完整归档标记为有效备份。
 
 更新成功后，先验证一条本次失败任务：通过现有管理员 `POST /api/v1/tweets/{tweet_id}/screenshot` 接口重新排队，确认 `succeeded`、PNG 可读及作者/原帖地址正确，再对固定的其余失败 ID 批量重试。批量恢复只选择本次故障的 23 个 ID 中仍为 failed 且错误相同的记录，不重试原生转推等其他失败原因，不覆盖已有成功图片。文章会动态关联来源帖的成功截图，刷新文章后即可查看；无需重新生成 AI 文章或向平台重新发布。
+
+### 2026-10-17 首次升级与剩余问题定位
+
+首次修复 `f458e630466f0f22f6c4b27ad03aaadcabeb9db1` 已发布到 dev/main，[Actions 38921981171](https://github.com/StanXu-symple/auto-x/actions/runs/38921981171) 全部成功；应用定义 `cfbdc0bbc5f2fdcd8e59b06acd6d62907f8008f2` 已发布到 apps/stanxu。发布辅助脚本曾因 Git 默认转义中文路径而中止；修正为读取未转义路径、逐项核对 blob/tree/commit SHA 后重新发布，远端引用均已回读确认。不要把失败命令退出视为远端状态未变化的证据。
+
+hn-1 官方 GHCR 后台预拉退出 0，Camoufox 镜像摘要为 `sha256:bdc095510873c7753f72810f1c05f1be45bf11a65cb5e01f38488469310cfef3`，OCI revision 与上述完整 SHA 一致。仅停止空闲的 Camoufox 后，完整离线备份位于 `/home/docker/auto-x/backups/pre-x-screenshot-dom-hn1-offline-20261016T161251Z-a0Ni41`（UTC 时间戳）；37 个文件及 Cookie SQLite 一致性检查通过，SHA256 清单摘要为 `56e940e2816af87dc0872825f74edc5eaba8f515096cde19b761bfec7f1245c1`。随后通过菜单 2 的 Camoufox-only 入口更新，日志 `/root/auto-x-x-screenshot-f458e63-update.log`，退出 0。
+
+验收新浏览器 healthy、内存 2 GiB、共享内存 512 MiB、原持久卷挂载不变；其他三个容器的 ID、镜像与启动时间不变，三份 Nacos、控制面、原四项清单与 Compose 部署覆盖均保留，`.env` 仅 `CAMOUFOX_WORKER_IMAGE_TAG` 改变。hn-1 本机及 tc-2 backend 容器访问 8006/8007 存活接口均 HTTP 200。
+
+恢复前快照为 tc-2 的 `/home/docker/auto-x/backups/pre-x-screenshot-retry-tc2-20261016T155802Z-K138R5`，包含 85 条记录与 54 个原有 PNG 摘要。先恢复 `2110971985417441512`，认证取图接口 HTTP 200，PNG 为 568×157，生产 PNG 解析、SHA、ETag 及文章动态关联均通过。再恢复其他 22 条，最终 21/23 成功，原有 54 个 PNG 摘要保持；其中两条仍需分别处理，不能通过放宽身份校验将它们统一标为成功：
+
+- `2110151780478927344`：公开页 HTTP 200，作者与正文正确，但已编辑帖的时间链接为 `/thsottiaux/status/2110151780478927344/history`，包含 `<time>` 和 “Last edited” 标签。需要仅对这一精确编辑历史时间链接提取原帖身份，保留作者、精确 ID、正文及引用隔离检查。
+- `2110315297374937103`：隔离 Camoufox 公开页 HTTP 404、标题 “Post Not Found”，没有 article；x.com 与 twitter.com 的独立 HTTP 复核也为 404。当前不能获得可校验的截图，需保留失败并给出明确的 HTTP 404 原因，不能用其他帖子、登录提示或错误页替代。
+
+上述页面诊断使用不挂载业务卷、不注入 Cookie 的隔离临时浏览器，退出即清理。用户已授权继续采用推荐修复方案；后续补丁仍需 dev→main→Actions、固定完整 SHA 预拉、离线备份及同一菜单 2 更新后，再恢复可访问的编辑帖。不可访问帖的失败状态属于真实来源限制，最终验收须与已恢复截图分开说明。
+
+补丁仅将精确的 `/history` 时间链接规范为 `/status/帖子ID`，不接受 `/historyevil`、`/history/extra`、图片/统计页或外站地址；正文内链接、引用、互动区域及嵌套文章不能提供主帖身份。主页面返回真实 HTTP 404 时立即报 `Requested X post returned HTTP 404 (not found)`，不等待 65 秒、不保存错误页；仍沿用失败任务状态和重试次数。26 项捕获单元测试与 38 项真实 Chrome DOM 测试全部通过，无跳过；Ruff、`git diff --check` 和独立代码审查通过。本次仍只需 hn-1 的 camoufox-worker，无数据库迁移或 Nacos 配置变更。补丁部署后先重试编辑帖并验证文章 16 的动态截图，再通过现有 API 复核原 404 帖，保留其真实失败原因；最终预期为 22 张成功截图和 1 条明确来源不可访问记录。

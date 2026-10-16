@@ -102,6 +102,7 @@ class FakePage:
         self.scrolled = False
         self.screenshots = []
         self.obstructed = False
+        self.navigation_response = None
 
     def set_default_timeout(self, _timeout):
         pass
@@ -110,7 +111,7 @@ class FakePage:
         pass
 
     def goto(self, _url, **_kwargs):
-        pass
+        return self.navigation_response
 
     def evaluate(self, script, *_args):
         if '[role="dialog"]' in script:
@@ -162,6 +163,7 @@ def test_selects_exact_author_and_post_among_parent_replies_and_quotes():
 @pytest.mark.parametrize("url", [
     "https://x.com.evil.example/user/status/123", "https://user:secret@x.com/user/status/123",
     "https://x.com:invalid/user/status/123", "https://x.com/user/status/123/photo/1",
+    "https://x.com/user/status/123/history",
     "http://x.com/user/status/123", "https://x.com/user/status/1234",
 ])
 def test_rejects_untrusted_or_different_status_urls(url):
@@ -203,6 +205,20 @@ def test_capture_waits_for_media_and_saves_only_verified_article(monkeypatch):
     assert result["width"] == 600
     assert result["height"] == 800
     assert result["canonical_url"] == "https://x.com/user/status/123"
+
+
+@pytest.mark.parametrize("candidates", [[], [candidate(0)]])
+def test_capture_reports_http_404_without_waiting_or_saving(monkeypatch, candidates):
+    page = FakePage(candidates)
+    page.url += "?session=private-query"
+    page.navigation_response = type("Response", (), {"status": 404})()
+    with pytest.raises(TweetCaptureError) as exc:
+        capture(page, monkeypatch)
+    assert str(exc.value) == "Requested X post returned HTTP 404 (not found)"
+    assert page.clock == 0
+    assert page.media_checks == 0
+    assert page.closed
+    assert not page.screenshots
 
 
 def test_expands_long_text_before_comparing_and_capturing(monkeypatch):

@@ -163,6 +163,88 @@ def test_public_dom_timestamp_without_active_marker_remains_supported():
     assert result["candidates"][0]["time_urls"] == ["https://x.com/user/status/123"]
 
 
+def edited_content(username="user", tweet_id="123"):
+    # Public SSR detail pages link the edited timestamp to this exact suffix.
+    html = public_content(username, tweet_id)
+    timestamp = (
+        f'<a href="https://x.com/{username}/status/{tweet_id}/history">'
+        '<time>Last edited 11:32 PM · Oct 13, 2026</time>'
+        '<span>Opens edit history</span></a>'
+    )
+    return html.replace(
+        f'<a data-base-ui-tooltip-trigger data-status="active"\n'
+        f'        href="https://x.com/{username}/status/{tweet_id}">\n'
+        '        6:12 AM · Sep 30, 2026</a>', timestamp, 1,
+    )
+
+
+def test_public_dom_edited_timestamp_normalizes_exact_history_suffix():
+    result = dom(f"<article>{edited_content()}</article>")
+    item = result["candidates"][0]
+    assert item["username"] == "user"
+    assert item["text"] == "hello"
+    assert item["time_urls"] == ["https://x.com/user/status/123"]
+    assert choose_tweet_article(result["candidates"], "123", "user") == 0
+
+
+@pytest.mark.parametrize("username,tweet_id", [("other", "123"), ("user", "1234")])
+def test_public_dom_edited_timestamp_retains_exact_author_and_id(username, tweet_id):
+    result = dom(f"<article>{edited_content(username, tweet_id)}</article>")
+    assert choose_tweet_article(result["candidates"], "123", "user") is None
+
+
+@pytest.mark.parametrize("path", ["/history/extra", "/historyevil", "/photo/1", "/analytics"])
+def test_public_dom_edited_timestamp_rejects_other_suffixes(path):
+    html = edited_content().replace('/status/123/history', f'/status/123{path}')
+    result = dom(f"<article>{html}</article>")
+    assert result["candidates"][0]["time_urls"] == []
+    assert choose_tweet_article(result["candidates"], "123", "user") is None
+
+
+def test_public_dom_edited_timestamp_rejects_foreign_host():
+    html = edited_content().replace(
+        'https://x.com/user/status/123/history',
+        'https://x.com.evil.example/user/status/123/history',
+    )
+    result = dom(f"<article>{html}</article>")
+    assert result["candidates"][0]["time_urls"] == []
+
+
+def test_public_dom_body_history_link_cannot_supply_post_identity():
+    html = public_content('user', '333', text=(
+        '<a href="https://x.com/user/status/123/history">'
+        '<time>Last edited 11:32 PM · Oct 13, 2026</time></a>'
+    ))
+    result = dom(f"<article>{html}</article>")
+    assert result["candidates"][0]["time_urls"] == ["https://x.com/user/status/333"]
+    assert choose_tweet_article(result["candidates"], "123", "user") is None
+
+
+@pytest.mark.parametrize("wrapper", [
+    '<div data-testid="quoteTweet">{}</div>',
+    '<div role="link">{}</div>',
+    '<div data-engagement-action="reply">{}</div>',
+])
+def test_public_dom_quoted_or_engagement_history_cannot_supply_post_identity(wrapper):
+    html = f"<article>{public_content('user', '333')}{wrapper.format(edited_content())}</article>"
+    result = dom(html)
+    assert result["candidates"][0]["time_urls"] == ["https://x.com/user/status/333"]
+    assert result["candidates"][0]["text"] == "hello"
+    assert choose_tweet_article(result["candidates"], "123", "user") is None
+
+
+def test_public_dom_history_anchor_wrapped_quote_body_is_excluded():
+    html = f"""
+      <article>{public_content('user', '333')}
+        <a href="https://x.com/user/status/123/history"><div dir="auto">quoted body</div></a>
+      </article>
+    """
+    result = dom(html)
+    assert result["candidates"][0]["time_urls"] == ["https://x.com/user/status/333"]
+    assert result["candidates"][0]["text"] == "hello"
+    assert choose_tweet_article(result["candidates"], "123", "user") is None
+
+
 @pytest.mark.parametrize("label", ["882.8K Views", "2026 Views", "播放次数 2026", "Reply"])
 def test_public_dom_active_engagement_label_cannot_supply_target_timestamp(label):
     html = public_content('user', '123').replace('6:12 AM · Sep 30, 2026', label)

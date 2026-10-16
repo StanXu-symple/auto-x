@@ -100,8 +100,13 @@ _ARTICLE_DOM_HELPERS = r"""
   };
   const statusURL = a => {
     const u = xURL(a.href);
-    return u && /^\/[A-Za-z0-9_]{1,15}\/status\/[0-9]{1,32}\/?$/.test(u.pathname)
-      ? u.href : null;
+    const match = u?.pathname.match(
+      /^(\/[A-Za-z0-9_]{1,15}\/status\/[0-9]{1,32})(?:\/history)?\/?$/);
+    if (!match) return null;
+    // Edited posts link their own timestamp to the edit history. Normalize only
+    // that exact suffix; Python still verifies the canonical author and post ID.
+    u.pathname = match[1];
+    return u.href;
   };
   const own = (article, el) => {
     if (el.closest('article') !== article) return false;
@@ -183,7 +188,7 @@ _ARTICLE_METADATA = r"""() => {
     const time_urls = elements('a[href]').filter(a => statusURL(a)
       && !textNodes.some(el => el.contains(a))
       && (a.querySelector('time') || (a.hasAttribute('data-base-ui-tooltip-trigger')
-        && timestampText(textOf(a)) && !a.querySelector('img,svg')))).map(a => a.href);
+        && timestampText(textOf(a)) && !a.querySelector('img,svg')))).map(statusURL);
     return {index, username, time_urls, text};
   });
 }"""
@@ -267,9 +272,11 @@ def capture_tweet(
         page = context.new_page()
         page.set_viewport_size({"width": 1280, "height": 1000})
         page.set_default_timeout(10000)
-        page.goto(canonical_url, wait_until="domcontentloaded", timeout=30000)
+        response = page.goto(canonical_url, wait_until="domcontentloaded", timeout=30000)
         if not _matches_post_url(page.url, tweet_id, username):
             raise TweetCaptureError("X navigation did not reach the requested post")
+        if response is not None and response.status == 404:
+            raise TweetCaptureError("Requested X post returned HTTP 404 (not found)")
         target_index = None
         candidates: list[dict[str, Any]] = []
         while time.monotonic() < deadline:
