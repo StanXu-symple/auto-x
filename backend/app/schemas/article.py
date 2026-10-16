@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import Field, StrictBool, field_validator, model_validator
 
-from app.schemas.ai_publish import AIPublishDispatchOut
+from app.schemas.ai_publish import AIPublishDispatchOut, PublishReconciliationResult
 from app.schemas.common import APIModel
 
 ArticleSource = Literal["ai", "user"]
@@ -127,6 +127,11 @@ class ArticlePublishHistoryOut(APIModel):
     target_summary: str
     delivery_count: int
     error: str | None
+    reconciliation_result: PublishReconciliationResult | None = None
+    reconciliation_note: str | None = None
+    published_url: str | None = None
+    reconciled_at: datetime | None = None
+    reconciled_by_admin_id: int | None = None
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime

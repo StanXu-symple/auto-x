@@ -692,9 +692,21 @@ export interface AutoPublishDispatch {
   attempts: number
   article_publish_attempt_id: string | null
   last_error: string | null
+  reconciliation_result?: 'published' | 'not_published' | 'uncertain' | null
+  reconciliation_note?: string | null
+  published_url?: string | null
+  reconciled_at?: string | null
   started_at: string | null
   completed_at: string | null
   updated_at: string
+}
+
+export type ArticlePublishReconcileDecision = 'published' | 'not_published' | 'uncertain'
+
+export interface ArticlePublishReconcilePayload {
+  decision: ArticlePublishReconcileDecision
+  published_url?: string | null
+  note?: string | null
 }
 
 export interface AiDraft {
@@ -991,6 +1003,11 @@ export interface ArticlePublishHistory {
   target_summary: string
   delivery_count: number
   error?: string | null
+  reconciliation_result?: ArticlePublishReconcileDecision | null
+  reconciliation_note?: string | null
+  published_url?: string | null
+  reconciled_at?: string | null
+  reconciled_by_admin_id?: EntityId | null
   started_at?: string | null
   completed_at?: string | null
   created_at: string

@@ -426,6 +426,13 @@ class ArticlePublishAttempt(Base):
     target_summary: Mapped[str] = mapped_column(String(1000))
     delivery_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reconciliation_result: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    reconciliation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Kept as an audit id without an FK to preserve the worker's Admin→dispatch
+    # lock order while reconciliation locks dispatch first.
+    reconciled_by_admin_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

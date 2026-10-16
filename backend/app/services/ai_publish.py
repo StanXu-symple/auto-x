@@ -105,8 +105,10 @@ async def initialize_publish_dispatches(
 async def retry_failed_dispatch(
     session: AsyncSession, dispatch_id: int
 ) -> AIPublishDispatch | None:
-    """Reset a preflight failure only; sent or ambiguous requests cannot be replayed."""
-    row = await session.get(AIPublishDispatch, dispatch_id, with_for_update=True)
+    """Reset an unsent or manually confirmed unpublished failure for explicit replay."""
+    row = await session.get(
+        AIPublishDispatch, dispatch_id, with_for_update=True, populate_existing=True
+    )
     if row is None or row.status != "failed" or row.article_publish_attempt_id is not None:
         return None
     row.status = "pending"
@@ -114,6 +116,11 @@ async def retry_failed_dispatch(
     row.last_error = None
     row.completed_at = None
     row.rejection_attempts = 0
+    row.reconciliation_result = None
+    row.reconciliation_note = None
+    row.published_url = None
+    row.reconciled_at = None
+    row.reconciled_by_admin_id = None
     return row
 
 

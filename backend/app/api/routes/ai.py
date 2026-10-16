@@ -25,6 +25,7 @@ from app.models.ai import (
     AISkill,
     AIUserProfile,
     AIUserSkillBinding,
+    ArticlePublishAttempt,
 )
 from app.models.ai_data_source import AIDataSource
 from app.models.ai_publish import AIPublishDispatch
@@ -47,7 +48,7 @@ from app.schemas.ai import (
     AIUserSkillBindingReplace,
     ManualGenerateRequest,
 )
-from app.schemas.ai_publish import AIPublishDispatchOut
+from app.schemas.ai_publish import AIPublishDispatchOut, AIPublishReconcileRequest
 from app.schemas.common import MessageResponse, Page
 from app.services.ai_jobs import (
     create_manual_job,
@@ -590,14 +591,26 @@ async def retry_ai_publish_dispatch(
     owner_admin_id = (dispatch.payload_snapshot or {}).get("owner_admin_id")
     if owner_admin_id is not None and owner_admin_id != admin.id:
         raise APIError(403, "ai_publish_dispatch_forbidden", "不能重试其他管理员的自动推送")
+    # Block concurrent content edits while permitting the worker's FK KEY SHARE
+    # lock when it creates an attempt before taking the dispatch row lock.
     draft = await db.scalar(
         select(AIDraft)
         .where(AIDraft.id == dispatch.draft_id)
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     if draft is None:
         raise APIError(404, "article_not_found", "关联文章不存在")
+    dispatch = await db.get(
+        AIPublishDispatch, dispatch_id, with_for_update=True, populate_existing=True
+    )
+    if dispatch is None:
+        raise APIError(404, "ai_publish_dispatch_not_found", "自动推送记录不存在")
+    owner_admin_id = dispatch.owner_admin_id or (dispatch.payload_snapshot or {}).get(
+        "owner_admin_id"
+    )
+    if owner_admin_id is not None and owner_admin_id != admin.id:
+        raise APIError(403, "ai_publish_dispatch_forbidden", "不能重试其他管理员的自动推送")
     if (dispatch.payload_snapshot or {}).get("draft_revision") != draft.revision:
         raise APIError(
             409,
@@ -619,6 +632,86 @@ async def retry_ai_publish_dispatch(
         )
     await db.commit()
     return AIPublishDispatchOut.model_validate(retried)
+
+
+@router.post(
+    "/publish-dispatches/{dispatch_id}/reconcile", response_model=AIPublishDispatchOut
+)
+async def reconcile_ai_publish_dispatch(
+    dispatch_id: int,
+    payload: AIPublishReconcileRequest,
+    db: DbSession,
+    admin: CurrentAdmin,
+) -> AIPublishDispatchOut:
+    """Record a human check after an XHS request did not return a definite result."""
+    # Lock only the dispatch. The worker reserves the admin row before this row;
+    # locking the draft here would create an avoidable cross-service lock cycle.
+    dispatch = await db.get(
+        AIPublishDispatch, dispatch_id, with_for_update=True, populate_existing=True
+    )
+    if dispatch is None:
+        raise APIError(404, "ai_publish_dispatch_not_found", "自动推送记录不存在")
+    draft = await db.get(AIDraft, dispatch.draft_id)
+    if draft is None:
+        raise APIError(404, "article_not_found", "关联文章不存在")
+    # Refreshing under the lock prevents stale sessions from overwriting a result.
+    owner_admin_id = dispatch.owner_admin_id or (dispatch.payload_snapshot or {}).get(
+        "owner_admin_id"
+    )
+    if owner_admin_id != admin.id:
+        raise APIError(403, "ai_publish_dispatch_forbidden", "只能核对自己账号的自动推送")
+    if dispatch.status != "uncertain" or dispatch.channel != "xhs":
+        raise APIError(
+            409,
+            "ai_publish_dispatch_not_reconcilable",
+            "只有小红书结果待核对的自动推送记录可以核对，请刷新后重试",
+            {"status": dispatch.status},
+        )
+    attempt = (
+        await db.get(ArticlePublishAttempt, dispatch.article_publish_attempt_id)
+        if dispatch.article_publish_attempt_id else None
+    )
+    if (
+        attempt is None
+        or attempt.channel != "xhs"
+        or attempt.article_id != draft.id
+    ):
+        raise APIError(
+            409, "ai_publish_attempt_not_found", "关联发布尝试记录不完整，暂时无法核对"
+        )
+    now = datetime.now(UTC)
+    dispatch.reconciliation_result = payload.decision
+    dispatch.reconciliation_note = payload.note
+    dispatch.published_url = payload.published_url
+    dispatch.reconciled_at = now
+    dispatch.reconciled_by_admin_id = admin.id
+    attempt.reconciliation_result = payload.decision
+    attempt.reconciliation_note = payload.note
+    attempt.published_url = payload.published_url
+    attempt.reconciled_at = now
+    attempt.reconciled_by_admin_id = admin.id
+    if payload.decision == "published":
+        dispatch.status = "published"
+        dispatch.last_error = None
+        dispatch.completed_at = now
+        attempt.status = "published"
+        attempt.error = None
+        attempt.completed_at = now
+    elif payload.decision == "not_published":
+        dispatch.status = "failed"
+        dispatch.last_error = payload.note or "人工核对确认平台未发布"
+        dispatch.completed_at = now
+        # The old attempt is retained as failed history. Clearing this pointer makes
+        # the existing retry endpoint safe to use after the user's confirmation.
+        dispatch.article_publish_attempt_id = None
+        attempt.status = "failed"
+        attempt.error = dispatch.last_error
+        attempt.completed_at = now
+    else:
+        dispatch.status = "uncertain"
+        dispatch.last_error = payload.note or dispatch.last_error
+    await db.commit()
+    return AIPublishDispatchOut.model_validate(dispatch)
 
 
 @router.post("/jobs/{job_id}/retry", response_model=AIJobOut)

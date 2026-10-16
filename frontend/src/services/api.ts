@@ -30,6 +30,7 @@ import type {
   ArticlePublishHistory,
   ArticlePublishPayload,
   ArticlePublishResult,
+  ArticlePublishReconcilePayload,
   ArticlePayload,
   ArticleQuery,
   ApiEnvelope,
@@ -437,6 +438,11 @@ export const aiApi = {
   },
   async retryPublishDispatch(id: EntityId) {
     return dataOf(await http.post<Wrapped<AutoPublishDispatch>>(`/ai/publish-dispatches/${id}/retry`))
+  },
+  async reconcilePublishDispatch(id: EntityId, payload: ArticlePublishReconcilePayload) {
+    return dataOf(
+      await http.post<Wrapped<AutoPublishDispatch>>(`/ai/publish-dispatches/${id}/reconcile`, payload),
+    )
   },
   async removeJob(id: EntityId) {
     await http.delete(`/ai/jobs/${id}`)

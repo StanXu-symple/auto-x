@@ -6,9 +6,15 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.api.errors import APIError
-from app.api.routes.ai import get_ai_job, list_ai_jobs, retry_ai_publish_dispatch
-from app.models.ai import AIDraft, AIGenerationJob
+from app.api.routes.ai import (
+    get_ai_job,
+    list_ai_jobs,
+    reconcile_ai_publish_dispatch,
+    retry_ai_publish_dispatch,
+)
+from app.models.ai import AIDraft, AIGenerationJob, ArticlePublishAttempt
 from app.models.ai_publish import AIPublishDispatch
+from app.schemas.ai_publish import AIPublishReconcileRequest
 
 
 def _job(now: datetime) -> AIGenerationJob:
@@ -143,4 +149,41 @@ async def test_retry_auto_publish_rejects_edited_draft_before_resetting_dispatch
     session.commit.assert_not_awaited()
     locked_draft_query = session.scalar.await_args.args[0]
     sql = str(locked_draft_query.compile(dialect=postgresql.dialect()))
-    assert "FOR UPDATE" in sql
+    assert "FOR NO KEY UPDATE" in sql
+
+
+def test_reconcile_request_requires_a_real_xiaohongshu_link() -> None:
+    payload = AIPublishReconcileRequest(
+        decision="published", published_url="https://www.xiaohongshu.com/explore/abc123"
+    )
+    assert payload.published_url.endswith("abc123")
+    with pytest.raises(ValueError):
+        AIPublishReconcileRequest(decision="published", published_url="https://example.com/post")
+    with pytest.raises(ValueError):
+        AIPublishReconcileRequest(decision="uncertain", published_url="https://xhslink.com/a")
+
+
+async def test_reconcile_uncertain_xhs_as_not_published_makes_safe_retry() -> None:
+    now = datetime.now(UTC)
+    dispatch = _dispatch(now)
+    dispatch.channel = "xhs"
+    dispatch.status = "uncertain"
+    dispatch.owner_admin_id = 9
+    dispatch.payload_snapshot = {"owner_admin_id": 9}
+    draft = AIDraft(id=20, article_source="ai", title="文章", content="正文", revision=1)
+    attempt = ArticlePublishAttempt(
+        attempt_id="attempt-1", article_id=20, channel="xhs", status="queued", target_summary="xhs"
+    )
+    session = AsyncMock()
+    session.get.side_effect = [dispatch, draft, attempt]
+    result = await reconcile_ai_publish_dispatch(
+        15,
+        AIPublishReconcileRequest(decision="not_published", note="账号里没有这篇笔记"),
+        session,
+        SimpleNamespace(id=9),
+    )
+    assert result.status == "failed"
+    assert dispatch.reconciliation_result == "not_published"
+    assert dispatch.article_publish_attempt_id is None
+    assert attempt.status == "failed"
+    assert session.commit.await_count == 1

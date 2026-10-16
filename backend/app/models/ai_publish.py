@@ -49,6 +49,13 @@ class AIPublishDispatch(Base):
     payload_snapshot: Mapped[dict] = mapped_column(JSON)
     article_publish_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reconciliation_result: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    reconciliation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Deliberately not a database FK: the XHS worker locks Admin before this row;
+    # an FK check here would reverse that lock order and risk a deadlock.
+    reconciled_by_admin_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

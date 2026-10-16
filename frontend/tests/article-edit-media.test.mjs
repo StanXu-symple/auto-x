@@ -27,10 +27,12 @@ function mockImport(line, module) {
     return 'const useXhsVerification = (...args) => globalThis.articleEditMediaMocks.useXhsVerification(...args);'
   if (module === '@/services/api')
     return `const articlesApi = new Proxy({}, { get: (_target, method) => (...args) => globalThis.articleEditMediaMocks.api[method](...args) });
-      const qqApi = {}; const xhsApi = { verification() {} };`
+      const aiApi = {}; const qqApi = {}; const xhsApi = { verification() {} };`
   if (module === '@/services/http')
     return 'const getErrorMessage = (error, fallback) => error?.message || fallback;'
   if (module === '@/utils/format') return 'const formatDateTime = () => "";'
+  if (module === '@/utils/publishReconciliation')
+    return 'const reconciliationLabels = {}; const safeXhsPublishedUrl = () => undefined;'
   if (module === 'ant-design-vue')
     return `const message = new Proxy({}, { get: (_target, method) => (...args) => globalThis.articleEditMediaMocks.messages.push([method, ...args]) });
       const Modal = { confirm() {} };`

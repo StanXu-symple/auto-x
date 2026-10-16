@@ -14,17 +14,20 @@ import {
   UploadOutlined,
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
-import { articlesApi, qqApi, xhsApi } from '@/services/api'
+import { aiApi, articlesApi, qqApi, xhsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import type {
   Article,
   ArticlePayload,
   ArticlePublishStatus,
+  ArticlePublishReconcilePayload,
+  AutoPublishDispatch,
   EntityId,
   QQBotAccount,
   QQJoinedGroup,
 } from '@/types'
 import { formatDateTime } from '@/utils/format'
+import { reconciliationLabels, safeXhsPublishedUrl } from '@/utils/publishReconciliation'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import AutoPublishStatus from '@/components/AutoPublishStatus.vue'
@@ -37,6 +40,15 @@ const open = ref(false)
 const publishOpen = ref(false)
 const previewOpen = ref(false)
 const historyOpen = ref(false)
+const reconcileOpen = ref(false)
+const reconcileSubmitting = ref(false)
+const reconciling = ref<Article | null>(null)
+const reconcileDispatch = ref<AutoPublishDispatch | null>(null)
+const reconcileForm = reactive<ArticlePublishReconcilePayload>({
+  decision: 'uncertain',
+  published_url: '',
+  note: '',
+})
 const editing = ref<Article | null>(null)
 const publishing = ref<Article | null>(null)
 const previewing = ref<Article | null>(null)
@@ -259,6 +271,76 @@ async function showHistory(article: Article) {
   historyOpen.value = true
   await resetHistory()
 }
+function uncertainXhsDispatch(article: Article) {
+  return article.auto_publish_dispatches?.find(
+    (dispatch) => dispatch.channel === 'xhs' && dispatch.status === 'uncertain',
+  )
+}
+function hasManualPublish(article: Article) {
+  return Boolean(article.publish_channel && article.publish_status !== 'unpublished')
+}
+function visibleAutoDispatches(article: Article) {
+  return (article.auto_publish_dispatches || []).filter(
+    (dispatch) =>
+      !(
+        hasManualPublish(article) &&
+        dispatch.channel === article.publish_channel &&
+        dispatch.reconciliation_result === 'not_published'
+      ),
+  )
+}
+function manualPublishLabel(article: Article) {
+  const channel = article.publish_channel === 'xhs' ? '小红书' : 'QQ'
+  const status = {
+    unpublished: '未发布',
+    queued: '发布中',
+    published: '已发布',
+    failed: '发布失败',
+  }[article.publish_status]
+  return `${channel}（手动）：${status}`
+}
+function reconciliationLabel(result: keyof typeof reconciliationLabels) {
+  return reconciliationLabels[result]
+}
+function prepareReconcile(article: Article) {
+  if (reconcileSubmitting.value) return
+  const dispatch = uncertainXhsDispatch(article)
+  if (!dispatch) return
+  reconciling.value = article
+  reconcileDispatch.value = dispatch
+  Object.assign(reconcileForm, { decision: 'uncertain', published_url: '', note: '' })
+  reconcileOpen.value = true
+}
+async function submitReconcile() {
+  if (!reconciling.value || !reconcileDispatch.value || reconcileSubmitting.value) return
+  const note = reconcileForm.note?.trim() || ''
+  const publishedUrl = reconcileForm.published_url?.trim() || ''
+  if (reconcileForm.decision === 'published' && !publishedUrl)
+    return message.warning('请填写已发布的小红书笔记链接')
+  if (reconcileForm.decision === 'published' && !safeXhsPublishedUrl(publishedUrl))
+    return message.warning('请填写有效的 HTTPS 小红书笔记链接或 xhslink.com 分享链接')
+  reconcileSubmitting.value = true
+  try {
+    await aiApi.reconcilePublishDispatch(reconcileDispatch.value.id, {
+      decision: reconcileForm.decision,
+      published_url: reconcileForm.decision === 'published' ? publishedUrl : null,
+      note: note || null,
+    })
+    reconcileOpen.value = false
+    message.success(
+      reconcileForm.decision === 'published'
+        ? '已记录为已推送'
+        : reconcileForm.decision === 'not_published'
+          ? '已记录为未发布，可以重新发布'
+          : '已保存核对说明，继续保留待核对状态',
+    )
+    await load()
+  } catch (e) {
+    message.error(getErrorMessage(e, '保存核对结果失败'))
+  } finally {
+    reconcileSubmitting.value = false
+  }
+}
 onMounted(load)
 watch(
   () => [filters.article_source, filters.publish_status],
@@ -335,17 +417,28 @@ watch(
           }}</template></a-table-column
         ><a-table-column title="状态"
           ><template #default="{ record }"
-            ><AutoPublishStatus
-              v-if="record.auto_publish_dispatches?.length"
-              :dispatches="record.auto_publish_dispatches" />
-            <StatusPill v-else :value="record.publish_status" /></template></a-table-column
+            ><a-space direction="vertical" size="small">
+              <AutoPublishStatus
+                v-if="visibleAutoDispatches(record).length"
+                :dispatches="visibleAutoDispatches(record)"
+              />
+              <a-tooltip
+                v-if="hasManualPublish(record)"
+                :title="record.publish_error || '手动发布结果'"
+              >
+                <StatusPill :value="record.publish_status" :label="manualPublishLabel(record)" />
+              </a-tooltip>
+              <StatusPill
+                v-if="!record.auto_publish_dispatches?.length && !hasManualPublish(record)"
+                :value="record.publish_status"
+              /> </a-space></template></a-table-column
         ><a-table-column title="更新时间"
           ><template #default="{ record }">{{
             formatDateTime(record.updated_at)
           }}</template></a-table-column
-        ><a-table-column title="操作"
+        ><a-table-column title="操作" :width="310"
           ><template #default="{ record }"
-            ><a-space
+            ><a-space style="flex-wrap: wrap"
               ><a-tooltip title="查看文章"
                 ><a-button type="link" aria-label="查看文章" @click="view(record)"
                   ><EyeOutlined /></a-button></a-tooltip
@@ -355,6 +448,11 @@ watch(
                 ><SendOutlined /></a-button
               ><a-button type="link" aria-label="查看发布历史" @click="showHistory(record)"
                 ><HistoryOutlined /></a-button
+              ><a-button
+                v-if="uncertainXhsDispatch(record)"
+                type="link"
+                @click="prepareReconcile(record)"
+                >核对发布结果</a-button
               ><a-button type="link" danger aria-label="删除文章" @click="remove(record)"
                 ><DeleteOutlined /></a-button></a-space></template></a-table-column
       ></a-table>
@@ -493,6 +591,72 @@ watch(
                 }))
               " /></a-form-item></template></a-form
     ></a-modal>
+    <a-modal
+      v-model:open="reconcileOpen"
+      title="核对小红书发布结果"
+      ok-text="保存核对结果"
+      cancel-text="取消"
+      width="620px"
+      :confirm-loading="reconcileSubmitting"
+      :closable="!reconcileSubmitting"
+      :mask-closable="!reconcileSubmitting"
+      :keyboard="!reconcileSubmitting"
+      :cancel-button-props="{ disabled: reconcileSubmitting }"
+      @ok="submitReconcile"
+    >
+      <a-alert
+        type="warning"
+        show-icon
+        message="请先到小红书 App 或创作中心核对该笔记"
+        description="结果待核对表示笔记可能已经发布。请确认实际结果后再保存，避免重复发布。"
+        style="margin-bottom: 20px"
+      />
+      <p>
+        <strong>{{ reconciling?.title }}</strong>
+      </p>
+      <p v-if="reconcileDispatch?.last_error" class="muted">
+        待核对原因：{{ reconcileDispatch.last_error }}
+      </p>
+      <a-form layout="vertical" :disabled="reconcileSubmitting">
+        <a-form-item label="核对结论" required>
+          <a-radio-group v-model:value="reconcileForm.decision">
+            <a-radio value="published">确认已发布</a-radio>
+            <a-radio value="not_published">确认未发布</a-radio>
+            <a-radio value="uncertain">暂不确定</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-form-item
+          v-if="reconcileForm.decision === 'published'"
+          label="小红书笔记链接"
+          required
+          extra="填写在平台上核对到的笔记链接，保存后更新为已推送。"
+        >
+          <a-input
+            v-model:value="reconcileForm.published_url"
+            placeholder="https://www.xiaohongshu.com/explore/…"
+            :maxlength="2048"
+          />
+        </a-form-item>
+        <a-form-item
+          label="核对说明"
+          :extra="
+            reconcileForm.decision === 'not_published'
+              ? '可说明核对方式和未发布的依据。保存后可手动重新发布，不会立即重发。'
+              : reconcileForm.decision === 'uncertain'
+                ? '保留待核对状态，之后可以继续核对。'
+                : '可补充核对方式、账号和时间。'
+          "
+        >
+          <a-textarea
+            v-model:value="reconcileForm.note"
+            :rows="3"
+            :maxlength="2000"
+            show-count
+            placeholder="例如：已在当前账号的笔记管理中核对"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
     <XhsVerificationModal :open="verifyOpen" :image="verifyImage" />
     <a-modal v-model:open="historyOpen" title="发布历史" :footer="null"
       ><a-list
@@ -509,8 +673,28 @@ watch(
               ><span class="muted">
                 · {{ item.target_summary }} · {{ formatDateTime(item.created_at) }}</span
               >
+              <div v-if="item.reconciliation_result" style="margin-top: 8px">
+                {{ reconciliationLabel(item.reconciliation_result) }}
+                <span v-if="item.reconciled_at" class="muted">
+                  · {{ formatDateTime(item.reconciled_at) }}
+                </span>
+                <p v-if="item.reconciliation_note" class="muted">
+                  核对说明：{{ item.reconciliation_note }}
+                </p>
+                <a
+                  v-if="safeXhsPublishedUrl(item.published_url)"
+                  :href="safeXhsPublishedUrl(item.published_url)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >查看笔记</a
+                >
+              </div>
             </div>
-            <StatusPill :value="item.status" /></a-list-item></template></a-list
+            <StatusPill
+              :value="item.status"
+              :label="
+                item.reconciliation_result === 'not_published' ? '已核对未发布' : undefined
+              " /></a-list-item></template></a-list
     ></a-modal>
   </div>
 </template>
