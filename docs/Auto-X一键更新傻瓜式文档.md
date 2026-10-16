@@ -1195,3 +1195,45 @@ frontend-only 模式只重建 frontend，保留全局 `IMAGE_TAG` 和原 `.auto-
 核对新 frontend 为 healthy、OCI revision 等于目标 SHA、8080 页面返回 HTTP 200；backend 就绪接口仍返回 200。登录后检查 `/ai-writing` 的生成记录与 Skills、`/articles`、`/qq-notifications` 全部 Tab、`/qq-tasks` 的刷新按钮均能重新请求当前列表，并保留原筛选和页码。对照更新前记录，其他 10 个容器的 ID、镜像与启动时间不变，`migrate` 退出状态与数据库 `0034_ai_publish_dispatches` 不变；原七项服务清单、Compose 覆盖与安装定义保持，`.env` 仅 `FRONTEND_IMAGE_TAG` 改变。hn-1 四项服务保持健康，无需更新。
 
 本次只读验收：tc-2 frontend 容器 `7b3599eeaa1b` 为 running/healthy，镜像 OCI revision 等于 `d99fa9886e3cf675ee091960f1044976331c7d01`，宿主与公网 8080 首页均 HTTP 200；backend 容器的 `:8200/api/v1/health/ready` 返回 200。公网 HTTP 首页及四个页面构建 JS 的 SHA256 均与容器内文件一致；构建 JS 包含刷新按钮文案，源码对应 `/ai-writing` 两个 Tab、`/articles`、`/qq-notifications` 五个 Tab 和 `/qq-tasks` 的加载入口。数据库仍为 `0034_ai_publish_dispatches`。与本轮备份 JSON Lines 对照，11 项 Compose 服务集合一致，除 frontend 外其余 10 个容器 ID 与创建时间均不变；原七项清单、Compose 覆盖和安装定义 SHA 不变，`.env` 仅 `FRONTEND_IMAGE_TAG` 改变。hn-1 原四项服务均 running/healthy。浏览器登录后的实际点击和列表请求仍待业务复测。
+
+## 二十九、小红书发布结果人工核对更新
+
+2026-10-16，功能提交 `223ddea0b156f3eee73615f5f0a4b3f4b8d8edb4` 已推送 `dev` 并快进合入 `main`，[GitHub Actions 38897027393](https://github.com/StanXu-symple/auto-x/actions/runs/38897027393) 构建成功。本次只在 **tc-2** 选择 `backend,frontend` 执行普通更新，安装器自动加入 `auth-center,monitor-agent`，并运行迁移 `0035_publish_reconciliation`。不能使用 frontend-only 模式，因为它不会运行迁移。hn-1 不需要更新。
+
+功能入口在 `/articles` 的待核对小红书自动投递操作栏。支持“确认已发布”（必须填写笔记链接）、“确认未发布”（允许显式重新发布，但不立即重发）、“暂不确定”（保留待核对状态）；发布历史保留核对说明、链接、时间和操作管理员。实际核对结论由管理员检查小红书平台后填写，升级验收不代替人工核对。
+
+### 发布与备份恢复记录
+
+- 本机 `github.com:443` 连接失败，但 `api.github.com` 可访问。先核对远端 `dev/main` SHA，确认 `dev` 包含完整功能且远端 `main` 是其祖先，再用已配置的 GitHub 凭据通过 Git refs API 将 `main` 快进到该 SHA（`force=false`），随后核对远端引用与 Actions 的 `head_sha`。凭据只在进程内使用，不输出或写入文档。不要使用强制推送，也不要因 Git 命令失败就假定远端没有变化。
+- 首次备份校验因容器 ID 长度不同失败：Compose JSON Lines 输出 12 位 ID，`docker inspect` 输出 64 位 ID。用户确认后，校验按 12 位唯一前缀并结合容器名匹配，要求两边完整服务集合一致；不通过时不得进入安装器更新。
+- 本次有效备份为 `/home/docker/auto-x/backups/pre-reconciliation-tc-2-20261016T115918Z-ZCQV9m`，包含数据库 custom dump、转储目录校验、三份 Nacos JSON、`.env`、原七项服务清单、Compose 文件、安装器、控制面归档、11 个容器记录和两个媒体目录归档及逐文件摘要。目录权限 700、文件 600；`SHA256SUMS` 全部复验通过，清单 SHA256 为 `b90f6cc7973c9de0b7f39364acff0d951fb42b471604c1c19d59c8dbcee231fd`。首次未通过校验的目录不作为恢复基线。
+
+### 通过安装器菜单 2 更新
+
+先在 tc-2 从官方 GHCR 拉取固定 SHA 的 backend、frontend 镜像。只有 `docker pull` 成功且 OCI revision 等于目标 SHA，才设置 `KJ_AUTO_X_SKIP_PULL=1`。本次 backend 摘要为 `sha256:6fd17274c888893d9e11859119f1a2270474fe909c0af1e7ddca2d6d8363e678`，frontend 为 `sha256:7265b36663c446edc90ba0ce84c9777a0fcf65d99f42c062156e1ce620dc0b14`。
+
+本轮核对 `/root/apps/auto-x.conf` 为已发布安装定义（SHA256 `f07bf9d0c1dfaedab0a29259322602352c2be4498d09fe57563e57eb2aad7aa5`），因此使用菜单 `2. 更新` 的非交互等价入口：
+
+```bash
+cd /root
+TERM=xterm COMPOSE_PROGRESS=plain \
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-223ddea0b156f3eee73615f5f0a4b3f4b8d8edb4 \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1 \
+AUTO_X_SERVICES=backend,frontend \
+bash kejilion.sh app auto-x
+```
+
+安装器日志为 `/root/auto-x-reconciliation-223ddea.log`，退出状态保存在同前缀 `.exit` 文件中；本次为 `0`。成功后已从本轮备份恢复原七项 `.auto-x-services`，不会因本次部分更新缩小下次默认更新范围。正常交互执行仍为运行环境 `3`（default）、应用菜单 `2`（更新）。
+
+### 实际验收
+
+- tc-2 `backend,frontend,auth-center,monitor-agent` 均 healthy，镜像 OCI revision 为目标完整 SHA；`migrate` 退出 0，数据库为 `0035_publish_reconciliation`，两张发布表各新增五项核对字段。
+- frontend 8080、backend `/api/v1/health/ready`、auth-center 就绪接口均 HTTP 200；新核对 API 在未认证请求下返回 401。只读事务调用正式文章列表及历史响应，20 篇文章中 6 条小红书待核对投递及原发布尝试均可读取新增字段；没有保存核对结论或重新发送。
+- 公网返回 `ArticlesView-DD-rOz0H.js` 与容器文件逐字一致，SHA256 为 `ab4a1035fe655c76df6027e3b45351d34574cfce50885cd04a099c3d1769f6ed`，包含核对入口、三种结论及保存按钮文案。管理员刷新页面后可对真实笔记进行人工核对；本次未点击保存真实核对结果。
+- 未选择的 `worker,ai-worker,qq-worker,postgres,redis` 的容器 ID、镜像、创建和启动时间与备份相同；原七项清单逐字一致。`.env` 仅 `IMAGE_TAG,FRONTEND_IMAGE_TAG` 改变，三份 Nacos 配置语义一致；文章图片 9 项、帖子截图 54 项逐文件摘要一致。
+- hn-1 原四项服务仍 healthy、运行原 `48aca12ed3054608aa86190c7765359fbff59910` 版本，小红书 8006 和 Camoufox 8007 存活接口均 HTTP 200。
+
+本节作为独立文档提交发布，不重新构建已验收的运行镜像。`0035` 只增加可空字段；后续若需回退应用版本，先核对兼容性，避免直接恢复旧整库而丢失升级后的业务数据。
