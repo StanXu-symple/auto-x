@@ -1288,4 +1288,16 @@ hn-1 官方 GHCR 后台预拉退出 0，Camoufox 镜像摘要为 `sha256:bdc0955
 
 上述页面诊断使用不挂载业务卷、不注入 Cookie 的隔离临时浏览器，退出即清理。用户已授权继续采用推荐修复方案；后续补丁仍需 dev→main→Actions、固定完整 SHA 预拉、离线备份及同一菜单 2 更新后，再恢复可访问的编辑帖。不可访问帖的失败状态属于真实来源限制，最终验收须与已恢复截图分开说明。
 
-补丁仅将精确的 `/history` 时间链接规范为 `/status/帖子ID`，不接受 `/historyevil`、`/history/extra`、图片/统计页或外站地址；正文内链接、引用、互动区域及嵌套文章不能提供主帖身份。主页面返回真实 HTTP 404 时立即报 `Requested X post returned HTTP 404 (not found)`，不等待 65 秒、不保存错误页；仍沿用失败任务状态和重试次数。26 项捕获单元测试与 38 项真实 Chrome DOM 测试全部通过，无跳过；Ruff、`git diff --check` 和独立代码审查通过。本次仍只需 hn-1 的 camoufox-worker，无数据库迁移或 Nacos 配置变更。补丁部署后先重试编辑帖并验证文章 16 的动态截图，再通过现有 API 复核原 404 帖，保留其真实失败原因；最终预期为 22 张成功截图和 1 条明确来源不可访问记录。
+补丁仅将精确的 `/history` 时间链接规范为 `/status/帖子ID`，不接受 `/historyevil`、`/history/extra`、图片/统计页或外站地址；正文内链接、引用、互动区域及嵌套文章不能提供主帖身份。主页面返回真实 HTTP 404 时立即报 `Requested X post returned HTTP 404 (not found)`，不等待 65 秒、不保存错误页；仍沿用失败任务状态和重试次数。26 项捕获单元测试与 38 项真实 Chrome DOM 测试全部通过，无跳过；Ruff、`git diff --check` 和独立代码审查通过。本次仍只需 hn-1 的 camoufox-worker，无数据库迁移或 Nacos 配置变更。验收顺序为先重试编辑帖并验证文章 16 的动态截图，再通过现有 API 复核原 404 帖，保留其真实失败原因；实际部署与恢复结果见下节。
+
+### 2026-10-17 第二次升级与最终验收
+
+编辑帖补丁 `d5a251757037fbb8a2c4511e7a981c943e8414ae` 已发布到 dev/main，[Actions 38933880547](https://github.com/StanXu-symple/auto-x/actions/runs/38933880547) 全部成功。hn-1 从官方 GHCR 拉取 `ghcr.io/stanxu-symple/auto-x-camoufox-worker:sha-d5a251757037fbb8a2c4511e7a981c943e8414ae`，退出 0，OCI revision 与完整 SHA 一致，镜像摘要为 `sha256:16cca02a353b2d76039306bf11de4f0c87f5eda4453c78cae7268eaba25461ca`。
+
+目标镜像就绪、浏览器空闲后，仅停止 Camoufox 并完成第二份离线备份：`/home/docker/auto-x/backups/pre-x-screenshot-dom-hn1-offline-20261016T164627Z-yKHzIj`。备份状态为 complete，37 个文件及 Cookie SQLite 一致性校验通过，SHA256 清单摘要为 `dccad9c5ef08ba92645912b62062bfd90719e879bb2bc750c17dbb3afae14d8f`。恢复前另在 tc-2 保存 `/home/docker/auto-x/backups/pre-x-history-retry-tc2-20261016T164332Z-dqo4v3qr`，包含 85 条截图记录和 75 个 PNG 摘要，校验通过；以上备份目录使用 UTC 时间戳，实际操作日期为北京时间 2026-10-17。
+
+随后通过 `bash kejilion.sh app auto-x` 菜单 2 的 Camoufox-only 等价入口更新。日志 `/root/auto-x-x-screenshot-d5a2517-update.log`，退出码文件 `/root/auto-x-x-screenshot-d5a2517-update.exit`，退出码为 0。Camoufox healthy、重启次数 0、无 OOM，内存上限 2 GiB、共享内存 512 MiB、原持久卷挂载不变；xhs-worker、monitor-center、monitor-agent 的容器 ID、镜像与启动时间不变。三份 Nacos 配置、控制面、原四项服务清单、Compose 部署覆盖及 XHS 业务 Cookie 文件均保留，`.env` 仅 `CAMOUFOX_WORKER_IMAGE_TAG` 改变。本机及 tc-2 backend 容器访问 hn-1 的 8006、8007 健康接口均为 HTTP 200。
+
+通过原截图 API 重试后，固定 23 条任务最终为 **22 条 succeeded、1 条 failed**。编辑帖 `2110151780478927344` 在本轮第 1 次尝试成功，PNG 为 568×257，SHA256 为 `254acd421979dfb159df7535c52170c135c7cd4ade6e55b3c51b61b2be3aa56b`；认证取图接口 HTTP 200，PNG 类型、ETag、响应摘要和尺寸均核验。唯一失败的 `2110315297374937103` 完成 3 次尝试，错误为 `Requested X post returned HTTP 404 (not found)`；它仍不能获得有效截图，且没有关联文章。
+
+最终只读验收使用生产 PNG 解析器逐项核验 22 个成功文件的完整性、SHA、尺寸、作者、精确原帖 URL 和捕获时间，并通过正式文章响应逻辑确认文章 14–20 共 7 篇全部动态关联正确来源截图，其中文章 16 的编辑帖截图已恢复。第一轮备份中的 54 个、第二轮备份中的 75 个已有 PNG 均保持原 SHA，当前共 76 个 PNG，包含 568×3507 等长图。管理员刷新 `/articles` 列表即可查看恢复的来源截图，无需重新生成文章。本轮未创建文章、调用 AI 或向 QQ/小红书重新发布；无需数据库迁移，tc-2 未升级。本节验收记录作为独立文档提交发布，线上 Camoufox 继续运行上述 `d5a2517` 镜像，无需为文档提交再次更新。
