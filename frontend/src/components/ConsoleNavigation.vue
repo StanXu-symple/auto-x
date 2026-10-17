@@ -42,13 +42,13 @@ const groups = [
       { path: '/articles', label: '文章管理', icon: BookOutlined },
       { path: '/qq-notifications', label: 'QQ 推送', icon: BellOutlined },
       { path: '/qq-tasks', label: '定时任务', icon: ScheduleOutlined },
-      { path: '/xhs', label: '小红书', icon: PictureOutlined },
     ],
   },
   {
     label: '配置',
     items: [
       { path: '/x-authorization', label: 'X 数据源', icon: KeyOutlined },
+      { path: '/xhs', label: '小红书数据源', icon: PictureOutlined },
       { path: '/settings', label: '系统设置', icon: SettingOutlined },
     ],
   },
