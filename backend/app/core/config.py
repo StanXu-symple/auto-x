@@ -468,6 +468,7 @@ class Settings(BaseSettings):
     xhs_worker_metrics_port: int = Field(default=8005, ge=0, le=65535)
     xhs_transport: Literal["redis", "http"] = "redis"
     xhs_service_name: str = "xsentinel-xhs-worker"
+    xhs_result_service_name: str = Field(default="xsentinel-backend", min_length=1)
     xhs_service_port: int = Field(default=8006, ge=1, le=65535)
     xhs_service_advertise_ip: str = ""
     xhs_service_advertise_port: int = Field(default=8006, ge=1, le=65535)

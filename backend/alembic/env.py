@@ -16,6 +16,7 @@ from app.models import (  # noqa: F401
     AISkill,
     AppSetting,
     ArticlePublishAttempt,
+    BrowserJobResult,
     MonitoredUser,
     PollingLog,
     QQBotAccount,

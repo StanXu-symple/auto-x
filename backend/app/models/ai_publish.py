@@ -40,14 +40,17 @@ class AIPublishDispatch(Base):
         ForeignKey("admins.id", ondelete="SET NULL"), nullable=True, index=True
     )
     channel: Mapped[str] = mapped_column(String(16))
-    # pending/retry_wait -> dispatching (XHS) or accepted (QQ) -> published;
-    # failed and uncertain require a human decision and are never auto retried.
+    # pending/retry_wait -> dispatching/reconciling (XHS) or accepted (QQ)
+    # -> published/failed. Uncertain execution keeps checking the original job;
+    # only a known failure or manual not-published decision permits replay.
     status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending")
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     rejection_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     payload_snapshot: Mapped[dict] = mapped_column(JSON)
     article_publish_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Persisted before submission and reused through both HTTP worker layers.
+    xhs_job_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     reconciliation_result: Mapped[str | None] = mapped_column(String(24), nullable=True)
     reconciliation_note: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -325,11 +325,12 @@ class XiaohongshuBrowserPool:
                     result = await asyncio.shield(future)
                 except asyncio.CancelledError:
                     # Cancellation cannot stop Playwright's synchronous thread. Keep
-                    # its slot and upload files until it finishes, then retire it.
-                    with suppress(BaseException):
-                        await asyncio.shield(future)
-                    await self._discard(lease)
-                    raise
+                    # its slot and files until it finishes. Preserve the actual late
+                    # success/failure so the durable job and callback can report it.
+                    try:
+                        result = await asyncio.shield(future)
+                    finally:
+                        await self._discard(lease)
                 if isinstance(result, dict):
                     return result
                 return {"success": bool(result)}

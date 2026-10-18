@@ -19,7 +19,7 @@ from app.core.config import Settings
 from app.schemas.camoufox import BrowserJobRequest
 from app.services.browser_job_api import XHSRuntime
 from app.services.camoufox_client import CamoufoxServiceClient
-from app.services.xhs_jobs import XHSWorkerUnavailableError
+from app.services.xhs_jobs import XHSJobNotAcceptedError
 
 
 class MemoryRedis:
@@ -240,7 +240,7 @@ async def test_client_uses_xhs_identity_and_sends_image_bytes_without_retry(tmp_
         raise httpx.ConnectError("unavailable")
 
     client.http = httpx.AsyncClient(transport=httpx.MockTransport(unavailable))
-    with pytest.raises(XHSWorkerUnavailableError):
+    with pytest.raises(XHSJobNotAcceptedError):
         await client.submit(
             operation="post", admin_id=7, payload=payload, timeout_seconds=10, job_id="b" * 32
         )

@@ -21,6 +21,7 @@ from app.control_plane.auth_store import (
     LEGACY_CLIENTS_BOOTSTRAP_ID,
     LEGACY_PRIVATE_KEY_RETIRED_MARKER,
     USER_AUDIENCE,
+    XHS_RESULT_GRANT_BOOTSTRAP_ID,
     AuthStore,
     KeyEncryptionKeyMismatchError,
     decrypt_private_key,
@@ -56,6 +57,8 @@ class _BootstrapState:
         self.lock = asyncio.Lock()
         self.markers: dict[tuple[str, str], ServiceAuthBootstrapState] = {}
         self.clients: set[str] = set()
+        self.disabled_clients: set[str] = set()
+        self.grants: dict[tuple[str, str], ServiceAuthGrant] = {}
         self.credential_rows = 0
         self.grant_rows = 0
 
@@ -71,6 +74,8 @@ class _BootstrapTransaction:
         if exc_type is None and self.session.pending_marker is not None:
             marker = self.session.pending_marker
             self.session.state.markers[(marker.bootstrap_id, marker.source_sha256)] = marker
+        if exc_type is None:
+            self.session.state.grants.update(self.session.pending_grants)
         if self.session.has_lock:
             self.session.state.lock.release()
 
@@ -88,6 +93,7 @@ class _BootstrapSession:
         self.state = state
         self.pending_marker: ServiceAuthBootstrapState | None = None
         self.pending_clients: set[str] = set()
+        self.pending_grants: dict[tuple[str, str], ServiceAuthGrant] = {}
         self.has_lock = False
 
     async def __aenter__(self):
@@ -118,14 +124,21 @@ class _BootstrapSession:
         assert self.has_lock
         if model is ServiceAuthBootstrapState:
             assert isinstance(key, tuple)
-            assert key[0] == LEGACY_CLIENTS_BOOTSTRAP_ID
+            assert key[0] in {LEGACY_CLIENTS_BOOTSTRAP_ID, XHS_RESULT_GRANT_BOOTSTRAP_ID}
             return self.state.markers.get(key)
+        if model is ServiceAuthGrant:
+            return self.state.grants.get(key)
         assert model is ServiceAuthClient
-        return ServiceAuthClient(client_id=key) if key in self.state.clients else None
+        return (
+            ServiceAuthClient(client_id=key, is_active=key not in self.state.disabled_clients)
+            if key in self.state.clients else None
+        )
 
     def add(self, row: Any) -> None:
         if isinstance(row, ServiceAuthBootstrapState):
             self.pending_marker = row
+        elif isinstance(row, ServiceAuthGrant):
+            self.pending_grants[(row.client_id, row.audience)] = row
         else:
             assert isinstance(row, ServiceAuthClient)
             self.pending_clients.add(row.client_id)
@@ -282,16 +295,20 @@ async def test_initialize_validates_signing_key_before_importing_clients(
     async def bootstrap():
         events.append("clients")
 
+    async def callback_grant():
+        events.append("callback-grant")
+
     def retire(_kid: str):
         events.append("retire")
 
     monkeypatch.setattr(store, "ensure_active_signing_key", ensure)
     monkeypatch.setattr(store, "_bootstrap_legacy_clients", bootstrap)
+    monkeypatch.setattr(store, "_bootstrap_xhs_result_grant", callback_grant)
     monkeypatch.setattr(store, "_retire_legacy_private_key", retire)
 
     await store.initialize()
 
-    assert events == ["signing", "clients", "retire"]
+    assert events == ["signing", "clients", "callback-grant", "retire"]
 
 
 def test_production_requires_a_dedicated_non_placeholder_kek() -> None:
@@ -391,6 +408,65 @@ async def test_legacy_clients_bootstrap_is_cluster_wide_exactly_once(
     await stores[0]._bootstrap_legacy_clients()
     assert state.credential_rows == 0
     assert state.grant_rows == 0
+
+
+async def test_xhs_callback_grant_upgrade_is_once_and_preserves_later_revocation() -> None:
+    state = _BootstrapState()
+    state.clients.add("xhs-worker")
+    stores = [AuthStore(
+        _BootstrapSessionFactory(state),  # type: ignore[arg-type]
+        master_secret="a-shared-key-encryption-secret-with-32-bytes",
+    ) for _ in range(2)]
+
+    await asyncio.gather(*(store._bootstrap_xhs_result_grant() for store in stores))
+
+    assert len(state.markers) == 1
+    assert state.grants[("xhs-worker", "backend")].scopes == "xhs:result"
+    state.grants.clear()
+    await stores[0]._bootstrap_xhs_result_grant()
+    assert state.grants == {}
+
+
+@pytest.mark.parametrize("existing_scopes", ["custom:result", ""])
+async def test_xhs_callback_grant_upgrade_preserves_existing_audience(existing_scopes) -> None:
+    state = _BootstrapState()
+    state.clients.add("xhs-worker")
+    existing = ServiceAuthGrant(
+        client_id="xhs-worker", audience="backend", scopes=existing_scopes
+    )
+    state.grants[("xhs-worker", "backend")] = existing
+    store = AuthStore(
+        _BootstrapSessionFactory(state),  # type: ignore[arg-type]
+        master_secret="a-shared-key-encryption-secret-with-32-bytes",
+    )
+
+    await store._bootstrap_xhs_result_grant()
+
+    assert state.grants[("xhs-worker", "backend")] is existing
+    assert len(state.markers) == 1
+    state.grants.clear()
+    await store._bootstrap_xhs_result_grant()
+    assert state.grants == {}
+
+
+async def test_xhs_callback_grant_upgrade_skips_absent_and_disabled_identity() -> None:
+    state = _BootstrapState()
+    store = AuthStore(
+        _BootstrapSessionFactory(state),  # type: ignore[arg-type]
+        master_secret="a-shared-key-encryption-secret-with-32-bytes",
+    )
+
+    await store._bootstrap_xhs_result_grant()
+    assert state.grants == {}
+    assert state.markers == {}
+    state.clients.add("xhs-worker")
+    state.disabled_clients.add("xhs-worker")
+    await store._bootstrap_xhs_result_grant()
+    assert state.grants == {}
+    assert len(state.markers) == 1
+    state.disabled_clients.clear()
+    await store._bootstrap_xhs_result_grant()
+    assert state.grants == {}
 
 
 def test_imported_legacy_private_key_is_erased_when_unlink_is_blocked(

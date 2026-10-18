@@ -23,7 +23,7 @@ path = sys.argv[1]
 with open(path, encoding="utf-8") as stream:
     clients = json.load(stream)
 grants_by_client = {
-    "xhs-worker": {"camoufox-worker": "browser:execute"},
+    "xhs-worker": {"camoufox-worker": "browser:execute", "backend": "xhs:result"},
     "screenshot-worker": {"camoufox-worker": "browser:execute"},
     "runtime-logs": {"xhs-worker": "logs:read", "camoufox-worker": "logs:read"},
     "ai-worker": {"xhs-worker": "xhs:execute"},

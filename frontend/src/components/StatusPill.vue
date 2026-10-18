@@ -31,6 +31,7 @@ const tone = computed(() =>
           'backfilling',
           'pending',
           'dispatching',
+          'reconciling',
           'accepted',
         ].includes(normalized.value)
       ? 'info'
@@ -74,6 +75,7 @@ const labels: Record<string, string> = {
   partial: '部分成功',
   retry_wait: '等待重试',
   dispatching: '推送中',
+  reconciling: '自动确认结果中',
   accepted: '投递中',
   uncertain: '结果待核对',
 }

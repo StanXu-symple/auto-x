@@ -609,7 +609,9 @@ async function retryPublishDispatch(id: EntityId) {
 }
 function retryableDispatches(job: AiJob) {
   return (job.auto_publish_dispatches || []).filter(
-    (dispatch) => dispatch.status === 'failed' && dispatch.article_publish_attempt_id === null,
+    (dispatch) =>
+      dispatch.status === 'failed' &&
+      (dispatch.article_publish_attempt_id === null || Boolean(dispatch.xhs_job_id)),
   )
 }
 function editRecordDraft(job: AiJob) {

@@ -1,6 +1,10 @@
 import asyncio
 import logging
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from app.camoufox_executor import (
     _capture_cli_stream,
@@ -10,6 +14,7 @@ from app.camoufox_executor import (
     _parse_cli_stage_line,
     _strip_cli_stage_lines,
 )
+from app.services.xhs_jobs import XHSJobFailedError, XHSJobTimeoutError
 from app.xhs_worker import (
     RELEASE_HEARTBEAT_SCRIPT,
     XiaohongshuWorker,
@@ -53,6 +58,49 @@ async def test_dependency_wait_stops_during_retry() -> None:
     worker.stop_event.set()
 
     assert await worker._wait_for_dependencies(attempts=2) is False
+
+
+async def test_post_preparation_failure_never_calls_browser_or_exposes_sql(monkeypatch):
+    import app.xhs_worker as worker_module
+
+    worker = object.__new__(XiaohongshuWorker)
+    worker.settings = SimpleNamespace(xhs_job_timeout_seconds=300)
+    worker.browser_client = SimpleNamespace(submit=AsyncMock())
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=object())
+    session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(worker_module, "AsyncSessionFactory", lambda: session)
+    monkeypatch.setattr(worker_module, "get_xhs_credentials", AsyncMock(side_effect=RuntimeError(
+        "SQL failed with web_session=secret-password"
+    )))
+    with pytest.raises(XHSJobFailedError) as error:
+        await worker._post(7, {"title": "title", "content": "content", "images": []}, "a" * 32)
+    assert "尚未调用浏览器" in str(error.value)
+    assert "RuntimeError" in str(error.value)
+    assert "secret-password" not in str(error.value)
+    worker.browser_client.submit.assert_not_awaited()
+
+
+async def test_post_response_loss_is_not_converted_to_preparation_failure(monkeypatch):
+    import app.xhs_worker as worker_module
+
+    worker = object.__new__(XiaohongshuWorker)
+    worker.settings = SimpleNamespace(xhs_job_timeout_seconds=300)
+    worker.browser_client = SimpleNamespace(
+        submit=AsyncMock(side_effect=XHSJobTimeoutError("lost"))
+    )
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=object())
+    session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(worker_module, "AsyncSessionFactory", lambda: session)
+    monkeypatch.setattr(
+        worker_module, "get_xhs_credentials",
+        AsyncMock(return_value=SimpleNamespace(a1="cookie", web_session="session", version=1)),
+    )
+    monkeypatch.setattr(worker_module, "encrypt_token", lambda *_: "encrypted")
+    with pytest.raises(XHSJobTimeoutError):
+        await worker._post(7, {"title": "title", "content": "content", "images": []}, "a" * 32)
+    worker.browser_client.submit.assert_awaited_once()
 
 
 def test_cgroup_memory_snapshot(tmp_path: Path) -> None:

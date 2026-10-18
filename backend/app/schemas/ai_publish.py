@@ -9,7 +9,8 @@ from pydantic import Field, field_validator, model_validator
 from app.schemas.common import APIModel
 
 AutoPublishStatus = Literal[
-    "pending", "retry_wait", "dispatching", "accepted", "published", "failed", "uncertain"
+    "pending", "retry_wait", "dispatching", "reconciling", "accepted",
+    "published", "failed", "uncertain",
 ]
 PublishReconciliationResult = Literal["published", "not_published", "uncertain"]
 
@@ -60,6 +61,7 @@ class AIPublishDispatchOut(APIModel):
     status: AutoPublishStatus
     attempts: int
     article_publish_attempt_id: str | None
+    xhs_job_id: str | None = None
     last_error: str | None
     reconciliation_result: PublishReconciliationResult | None = None
     reconciliation_note: str | None = None

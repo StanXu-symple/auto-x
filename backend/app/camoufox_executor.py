@@ -15,7 +15,7 @@ from typing import Any
 
 from app.services.x_credentials import decrypt_token
 from app.services.xhs_browser_pool import XiaohongshuBrowserPool
-from app.services.xhs_jobs import publish_error
+from app.services.xhs_jobs import XHSJobFailedError, XHSJobReconciliationError, publish_error
 
 logger = logging.getLogger(__name__)
 XHS_STAGE_LOG_PREFIX = "XHS_STAGE "
@@ -135,10 +135,13 @@ class CamoufoxExecutor:
                 expected_text=payload["expected_text"],
                 expected_media_count=payload.get("expected_media_count", 0),
             )
-        cookies = {
-            "a1": decrypt_token(payload["encrypted_a1"], self.settings),
-            "web_session": decrypt_token(payload["encrypted_web_session"], self.settings),
-        }
+        try:
+            cookies = {
+                "a1": decrypt_token(payload["encrypted_a1"], self.settings),
+                "web_session": decrypt_token(payload["encrypted_web_session"], self.settings),
+            }
+        except Exception as exc:
+            raise XHSJobFailedError("浏览器登录凭据读取失败，尚未执行发布") from exc
         if job["operation"] == "login":
             code, out, err = await self._run_cli(
                 admin_id,
@@ -161,8 +164,14 @@ class CamoufoxExecutor:
                 content=payload["content"],
                 image_paths=payload["images"],
             )
+        except XHSJobReconciliationError:
+            raise
         except Exception as exc:
-            raise RuntimeError(publish_error("", str(exc))) from exc
+            # Browser startup/pre-click failures cannot have published a note.
+            # publish_note_compat marks every ambiguous post-click exception.
+            raise XHSJobFailedError(publish_error("", str(exc))) from exc
+        if not result.get("success"):
+            raise XHSJobReconciliationError("小红书未返回明确的发布结果")
         return {"message": "笔记发布成功", "result": result}
 
     async def close(self):

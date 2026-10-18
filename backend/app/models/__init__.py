@@ -17,6 +17,7 @@ from app.models.ai import (
 )
 from app.models.ai_data_source import AIDataSource
 from app.models.ai_publish import AIPublishDispatch
+from app.models.browser_job import BrowserJobResult
 from app.models.monitored_user import MonitoredUser
 from app.models.polling_log import PollingLog
 from app.models.qq import (
@@ -65,6 +66,7 @@ __all__ = [
     "AIUserSkillBinding",
     "ArticlePublishAttempt",
     "AIPublishDispatch",
+    "BrowserJobResult",
     "AppSetting",
     "MonitoredUser",
     "PollingLog",

@@ -29,9 +29,18 @@ class XHSJobRequest(BaseModel):
 
 class XHSJobState(BaseModel):
     job_id: str
-    state: Literal["running", "succeeded", "failed"]
+    # ``reconciling`` means the worker has accepted the job, but the caller
+    # lost the HTTP response while the browser may still be finishing it.
+    # ``uncertain`` state is reserved for a worker/browser interruption where the
+    # platform outcome cannot be proven; it must never be treated as success
+    # or as permission to submit the post a second time.
+    state: Literal["running", "reconciling", "succeeded", "failed", "uncertain"]
     data: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+    # Old workers reported every exception as failed, including interrupted
+    # publications. Missing this marker must retain that uncertainty during
+    # rolling upgrades; only the new executor proves a safe failed outcome.
+    failure_confirmed: bool = False
 
 
 class XHSServiceStatus(BaseModel):

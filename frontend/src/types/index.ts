@@ -683,7 +683,7 @@ export type ArticleSource = 'ai' | 'user'
 export type ArticlePublishStatus = 'unpublished' | 'queued' | 'published' | 'failed'
 export type ArticlePublishChannel = 'qq' | 'xhs'
 export type AutoPublishDispatchStatus =
-  'pending' | 'retry_wait' | 'dispatching' | 'accepted' | 'published' | 'failed' | 'uncertain'
+  'pending' | 'retry_wait' | 'dispatching' | 'reconciling' | 'accepted' | 'published' | 'failed' | 'uncertain'
 
 export interface AutoPublishDispatch {
   id: EntityId
@@ -691,6 +691,7 @@ export interface AutoPublishDispatch {
   status: AutoPublishDispatchStatus
   attempts: number
   article_publish_attempt_id: string | null
+  xhs_job_id?: string | null
   last_error: string | null
   reconciliation_result?: 'published' | 'not_published' | 'uncertain' | null
   reconciliation_note?: string | null

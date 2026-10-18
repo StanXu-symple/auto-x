@@ -20,6 +20,7 @@ from app import __version__
 from app.api.errors import APIError
 from app.api.router import api_router
 from app.control_plane.nacos import start_service_registration
+from app.control_plane.security import ServiceVerifier
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.init_db import initialize_database
@@ -46,6 +47,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.auth_center = AuthCenterClient(settings)
+    app.state.xhs_result_verifier = ServiceVerifier(
+        None, "backend", "xhs:result",
+        http=app.state.auth_center.http,
+        auth_center_url=settings.service_auth_url,
+        nacos=app.state.auth_center.nacos,
+    )
     if settings.nacos_server_addr or (settings.monitor_center_url and settings.service_auth_url):
         system_health.MONITORING_CLIENT = system_health.MonitoringClient(settings)
     if settings.xhs_transport == "http":

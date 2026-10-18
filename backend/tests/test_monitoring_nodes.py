@@ -84,6 +84,7 @@ async def test_http_xhs_service_publishes_and_stops_redis_heartbeat(monkeypatch,
     from app.core.config import Settings
     from app.xhs_service import create_app
     from app.control_plane.nacos import NacosClient
+    from app.services.browser_job_store import BrowserJobStore
     import app.xhs_worker as worker_module
 
     emitted = asyncio.Event()
@@ -103,8 +104,13 @@ async def test_http_xhs_service_publishes_and_stops_redis_heartbeat(monkeypatch,
     monkeypatch.setattr(NacosClient, 'register', AsyncMock())
     monkeypatch.setattr(NacosClient, 'deregister', AsyncMock())
     monkeypatch.setattr(NacosClient, 'beat', AsyncMock())
+    monkeypatch.setattr(BrowserJobStore, 'recovery_jobs', AsyncMock(return_value=[]))
+    monkeypatch.setattr(BrowserJobStore, 'callback_jobs', AsyncMock(return_value=[]))
+    secret = tmp_path / 'xhs-worker.secret'
+    secret.write_text('a' * 64)
     settings = Settings(nacos_server_addr='', nacos_config_required=False,
-                        xhs_service_advertise_ip='127.0.0.1')
+                        xhs_service_advertise_ip='127.0.0.1',
+                        service_client_secret_file=str(secret))
     app = create_app(settings=settings, worker_factory=lambda _: worker)
     async with app.router.lifespan_context(app):
         await asyncio.wait_for(emitted.wait(), timeout=1)

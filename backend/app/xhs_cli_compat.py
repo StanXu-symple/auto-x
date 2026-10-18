@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlunparse
 
+from app.services.xhs_jobs import XHSJobFailedError, XHSJobReconciliationError
 from app.services.xhs_verification import (
     clear_verification_image,
     cli_admin_id,
@@ -1324,7 +1325,7 @@ def _open_creator_publish_page(client: Any, *, admin_id: int | None = None) -> N
                 f"小红书创作页加载超时（{CREATOR_NAVIGATION_TIMEOUT_SECONDS} 秒）"
                 if not load_finished else "小红书创作页检查超时"
             )
-            raise RuntimeError(f"{message}，尚未开始上传，请检查网络或稍后重试") from exc
+            raise XHSJobFailedError(f"{message}，尚未开始上传，请检查网络或稍后重试") from exc
         raise
     finally:
         for event, handler in registered:
@@ -1348,6 +1349,29 @@ def publish_note_compat(
     content: str = "",
     return_detail: bool = False,
     admin_id: int | None = None,
+) -> bool | dict[str, str | bool]:
+    # The request can have reached Xiaohongshu as soon as the click starts.
+    # Keep this boundary explicit instead of guessing from an exception string.
+    progress = {"submitted": False}
+    try:
+        return _publish_note_compat(
+            client, title, image_paths, content, return_detail, admin_id, progress
+        )
+    except (XHSJobFailedError, XHSJobReconciliationError):
+        raise
+    except Exception as exc:
+        error_type = XHSJobReconciliationError if progress["submitted"] else XHSJobFailedError
+        raise error_type(str(exc) or "小红书页面执行失败") from exc
+
+
+def _publish_note_compat(
+    client: Any,
+    title: str,
+    image_paths: list[str],
+    content: str,
+    return_detail: bool,
+    admin_id: int | None,
+    progress: dict[str, bool],
 ) -> bool | dict[str, str | bool]:
     admin_id = admin_id if admin_id is not None else cli_admin_id()
     if admin_id is not None:
@@ -1454,6 +1478,7 @@ def publish_note_compat(
     )
     diagnostics = _arm_publish_diagnostics(page, publish_button)
     try:
+        progress["submitted"] = True
         _click_publish(page, publish_button)
     except Exception:
         diagnostic_snapshot = _publish_diagnostics_snapshot(
@@ -1561,7 +1586,7 @@ def publish_note_compat(
             last_feedback = feedback
             if any(marker in feedback for marker in ("最多支持", "不能超过")):
                 _publish_diagnostics_snapshot(page, publish_button, diagnostics)
-                raise RuntimeError(f"小红书页面校验未通过：{feedback}")
+                raise XHSJobFailedError(f"小红书页面校验未通过：{feedback}")
         time.sleep(0.5)
     current_url = page.url or ""
     diagnostic_snapshot = _publish_diagnostics_snapshot(
@@ -1569,7 +1594,7 @@ def publish_note_compat(
     )
     logger.warning("Xiaohongshu publish diagnostics: %s", diagnostic_snapshot)
     if diagnostic_snapshot.get("securityRequired") or verification_captured:
-        raise RuntimeError(
+        raise XHSJobFailedError(
             "小红书返回 HTTP 461，要求账号安全扫码验证；"
             "请在发布期间使用已登录的小红书 App 扫描页面二维码后等待发布完成"
         )

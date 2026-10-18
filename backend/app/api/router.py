@@ -18,6 +18,7 @@ from app.api.routes import (
     x_credentials,
     x_sources,
     xhs,
+    xhs_results,
 )
 
 api_router = APIRouter()
@@ -41,4 +42,5 @@ api_router.include_router(settings.router)
 api_router.include_router(x_credentials.router)
 api_router.include_router(x_sources.router)
 api_router.include_router(xhs.router)
+api_router.include_router(xhs_results.router)
 api_router.include_router(health.router)

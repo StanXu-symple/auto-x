@@ -39,6 +39,11 @@ from app.services.browser_screenshot_artifacts import (
     store_artifact,
 )
 from app.services.runtime_logs import log_path, stream_log
+from app.services.xhs_jobs import (
+    XHSJobFailedError,
+    XHSWorkerUnavailableError,
+    safe_job_error,
+)
 from app.services.xhs_verification import clear_verification_image, read_verification_image
 
 logger = logging.getLogger(__name__)
@@ -54,12 +59,17 @@ RELEASE_LOCK = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call(
 
 
 class XHSRuntime:
-    def __init__(self, worker, settings: Settings, ip: str, namespace="xhs", artifact_root=None):
+    def __init__(
+        self, worker, settings: Settings, ip: str, namespace="xhs", artifact_root=None,
+        *, store=None,
+    ):
         self.namespace = namespace
         self.worker = worker
         self.settings = settings
         self.ip = ip
+        self.store = store
         self.tasks: set[asyncio.Task] = set()
+        self.inflight_job_ids: set[str] = set()
         self.submit_lock = asyncio.Lock()
         self.semaphore = asyncio.Semaphore(settings.xhs_browser_max_concurrency)
         self.artifact_root = artifact_root or (
@@ -91,6 +101,13 @@ class XHSRuntime:
         for path in paths:
             digest.update(await asyncio.to_thread(Path(path).read_bytes))
         fingerprint = digest.hexdigest()
+        durable = self.store is not None and job.payload.operation == "post"
+        if durable:
+            old_row = await self.store.get(self.namespace, job.job_id)
+            if old_row is not None:
+                if old_row.fingerprint != fingerprint:
+                    raise HTTPException(409, "Job ID already used with different data")
+                return self.row_state(old_row)
         old = await self.worker.redis.get(key)
         if old:
             record = json.loads(old)
@@ -108,7 +125,21 @@ class XHSRuntime:
             raise HTTPException(409, "Account already has an active job")
         state = XHSJobState(job_id=job.job_id, state="running")
         claimed = False
+        handed_off = False
+        created = False
         try:
+            if durable:
+                try:
+                    row, created = await self.store.accept(
+                        self.namespace, job.job_id, job.admin_id, fingerprint,
+                        worker_id=self.worker.worker_id, lease_seconds=ttl,
+                    )
+                except ValueError:
+                    raise HTTPException(409, "Job ID already used with different data") from None
+                if not created:
+                    if row.fingerprint != fingerprint:
+                        raise HTTPException(409, "Job ID already used with different data")
+                    return self.row_state(row)
             claimed = bool(
                 await self.worker.redis.set(
                     key,
@@ -123,30 +154,52 @@ class XHSRuntime:
                 self.execute(job, directory, paths, key, fingerprint, active_key, route)
             )
             directory._xsentinel_handoff = True
+            handed_off = True
             self.tasks.add(task)
+            self.inflight_job_ids.add(job.job_id)
             task.add_done_callback(self.tasks.discard)
+            task.add_done_callback(lambda _: self.inflight_job_ids.discard(job.job_id))
         finally:
-            if not claimed:
+            if not handed_off:
+                if created:
+                    # We have not handed the payload to an executor, so this
+                    # failure is definite even if the Redis write failed.
+                    await self.store.finish(
+                        self.namespace, job.job_id, "failed",
+                        error="任务未能启动，尚未执行小红书发布",
+                    )
                 await self.worker.redis.eval(RELEASE_LOCK, 1, active_key, route)
         return state
 
-    async def renew(self, key, active_key, route):
+    async def renew(self, key, active_key, route, job=None):
         ttl = int(self.settings.xhs_job_timeout_seconds) + 60
         while True:
             await asyncio.sleep(10)
-            await self.worker.redis.eval(
-                RENEW_LOCK,
-                2,
-                active_key,
-                key,
-                route,
-                ttl,
-                ttl + self.settings.xhs_job_result_ttl_seconds,
-            )
+            try:
+                await self.worker.redis.eval(
+                    RENEW_LOCK,
+                    2,
+                    active_key,
+                    key,
+                    route,
+                    ttl,
+                    ttl + self.settings.xhs_job_result_ttl_seconds,
+                )
+            except Exception:
+                logger.warning("Unable to renew browser active-job cache")
+            if self.store is not None and job is not None and job.payload.operation == "post":
+                try:
+                    await self.store.renew(
+                        self.namespace, job.job_id, self.worker.worker_id, ttl
+                    )
+                except Exception:
+                    logger.warning("Unable to renew browser result lease", extra={
+                        "job_id": job.job_id
+                    })
 
     async def execute(self, job, directory, paths, key, fingerprint, active_key, route):
         self.worker.active_tasks += 1
-        renewal = asyncio.create_task(self.renew(key, active_key, route))
+        renewal = asyncio.create_task(self.renew(key, active_key, route, job))
         try:
             payload = job.payload.model_dump(exclude={"operation", "image_count"})
             if isinstance(job.payload, PostJob):
@@ -168,30 +221,172 @@ class XHSRuntime:
                     )
             state = XHSJobState(job_id=job.job_id, state="succeeded", data=result)
         except (Exception, asyncio.CancelledError) as exc:
-            logger.exception("XHS HTTP job failed", extra={"job_id": job.job_id})
-            state = XHSJobState(
-                job_id=job.job_id,
-                state="failed",
-                error=(
-                    (str(exc)[:1000] or "X 截图超时或服务重启")
-                    if job.payload.operation == "x_screenshot"
-                    else "小红书执行失败或服务重启，请核对发布结果并查看 Worker 日志"
-                ),
+            logger.warning(
+                "Browser HTTP job did not complete normally",
+                extra={"job_id": job.job_id, "error_type": type(exc).__name__,
+                       "error": safe_job_error(str(exc))},
             )
+            state = self.failure_state(job, exc)
+        finally:
+            self.worker.active_tasks -= 1
+            with suppress(OSError):
+                await asyncio.to_thread(directory.cleanup)
+        try:
+            if self.store is not None and job.payload.operation == "post":
+                # Retain the observed outcome in this task while PostgreSQL is
+                # transiently unavailable. Never replace a known success with
+                # an execution failure because its persistence failed.
+                while True:
+                    try:
+                        row = await self.store.finish(
+                            self.namespace, job.job_id, state.state,
+                            data=state.data, error=state.error,
+                        )
+                        break
+                    except Exception:
+                        logger.exception(
+                            "Unable to persist browser completion; retrying",
+                            extra={"job_id": job.job_id},
+                        )
+                        await asyncio.sleep(5)
+                state = self.row_state(row)
+            try:
+                await self.worker.redis.set(
+                    key,
+                    json.dumps({"fingerprint": fingerprint, "result": state.model_dump()}),
+                    ex=self.settings.xhs_job_result_ttl_seconds,
+                )
+            except Exception:
+                logger.exception("Unable to cache browser completion", extra={"job_id": job.job_id})
         finally:
             renewal.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await renewal
-            self.worker.active_tasks -= 1
-            await asyncio.to_thread(directory.cleanup)
-        try:
-            await self.worker.redis.set(
-                key,
-                json.dumps({"fingerprint": fingerprint, "result": state.model_dump()}),
-                ex=self.settings.xhs_job_result_ttl_seconds,
+            with suppress(Exception):
+                await self.worker.redis.eval(RELEASE_LOCK, 1, active_key, route)
+
+    @staticmethod
+    def row_state(row) -> XHSJobState:
+        return XHSJobState(
+            job_id=row.job_id, state=row.state, data=row.data or {}, error=row.error,
+            failure_confirmed=row.state == "failed",
+        )
+
+    def failure_state(self, job, exc) -> XHSJobState:
+        if job.payload.operation != "post":
+            return XHSJobState(
+                job_id=job.job_id, state="failed",
+                error=safe_job_error(str(exc)) or "任务超时或服务重启",
             )
+        if isinstance(exc, XHSJobFailedError):
+            return XHSJobState(
+                job_id=job.job_id, state="failed",
+                error=safe_job_error(str(exc)) or "小红书已确认发布失败",
+                failure_confirmed=True,
+            )
+        # A transport exception does not mean that the browser did not publish.
+        # The XHS worker will query the SAME browser job until its final result
+        # is available; it never recreates a post as part of reconciliation.
+        if self.namespace == "xhs":
+            return XHSJobState(
+                job_id=job.job_id, state="reconciling",
+                error="正在自动获取浏览器的最终发布结果，请勿重复发布",
+            )
+        return XHSJobState(
+            job_id=job.job_id, state="uncertain",
+            error="浏览器执行中断，未取得平台的明确发布结果，请勿重复发布",
+        )
+
+    async def job_state(self, job_id: str) -> XHSJobState | None:
+        if self.store is not None:
+            row = await self.store.get(self.namespace, job_id)
+            if row is not None:
+                return self.row_state(row)
+        raw = await self.worker.redis.get(f"xsentinel:{self.namespace}:http:job:{job_id}")
+        return XHSJobState.model_validate(json.loads(raw)["result"]) if raw else None
+
+    async def recover_once(self):
+        """Recover accepted posts after a lost response or a worker restart."""
+        if self.store is None:
+            return
+        for row in await self.store.recovery_jobs(self.namespace):
+            if row.job_id in self.inflight_job_ids:
+                continue
+            if self.namespace == "camoufox":
+                # No living lease and no execution owned by this process. The
+                # browser may have clicked Publish before the process exited.
+                if row.state == "running":
+                    await self.store.finish(
+                        self.namespace, row.job_id, "uncertain",
+                        error="浏览器服务执行中断，平台发布结果尚未确认，请勿重复发布",
+                        require_expired_lease=True,
+                    )
+                continue
+            # The result journal is shared across replicas. A browser may have
+            # persisted its successful completion and then stopped before any
+            # HTTP caller received it; no live browser instance is needed to
+            # recover that already verified result.
+            browser_row = await self.store.get("camoufox", row.job_id)
+            if (browser_row is not None and browser_row.admin_id == row.admin_id
+                and browser_row.state in {
+                "succeeded", "failed", "uncertain"
+            }):
+                await self.store.finish(
+                    self.namespace, row.job_id, browser_row.state,
+                    data=browser_row.data, error=browser_row.error,
+                    require_expired_lease=row.state == "running",
+                )
+                continue
+            try:
+                state = await self.worker.browser_client.job_status(
+                    job_id=row.job_id, admin_id=row.admin_id
+                )
+            except XHSWorkerUnavailableError:
+                # Keep the durable job for the next scan. No publication retry.
+                continue
+            if state is None:
+                await self.store.finish(
+                    self.namespace, row.job_id, "uncertain",
+                    error="浏览器未返回原任务记录，无法确认平台发布结果，请勿重复发布",
+                    require_expired_lease=row.state == "running",
+                )
+            elif state.state in {"succeeded", "failed", "uncertain"}:
+                await self.store.finish(
+                    self.namespace, row.job_id,
+                    "uncertain" if state.state == "failed" and not state.failure_confirmed
+                    else state.state,
+                    data=state.data, error=state.error,
+                    require_expired_lease=row.state == "running",
+                )
+            elif row.state == "running":
+                await self.store.finish(
+                    self.namespace, row.job_id, "reconciling",
+                    error="浏览器仍在执行原任务，正在自动等待最终结果",
+                    require_expired_lease=True,
+                )
+
+    async def maintenance(self, completion_delivery=None):
+        async def loop(action):
+            while True:
+                try:
+                    await action()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Unable to recover browser results or deliver completion")
+                await asyncio.sleep(5)
+
+        tasks = [asyncio.create_task(loop(self.recover_once))]
+        if completion_delivery is not None:
+            # An unreachable old browser task must not delay callbacks for
+            # other posts whose final outcome is already known.
+            tasks.append(asyncio.create_task(loop(completion_delivery.deliver_once)))
+        try:
+            await asyncio.gather(*tasks)
         finally:
-            await self.worker.redis.eval(RELEASE_LOCK, 1, active_key, route)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def create_app(
@@ -204,7 +399,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        from app.db.session import engine
+        from app.db.session import AsyncSessionFactory, engine
         from app.xhs_worker import UPLOAD_DIR, XiaohongshuWorker
 
         config = settings or get_settings()
@@ -232,7 +427,17 @@ def create_app(
         await worker._wait_for_dependencies()
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         app.state.upload_root = UPLOAD_DIR
-        app.state.runtime = XHSRuntime(worker, config, ip, namespace, UPLOAD_DIR / ".screenshots")
+        from app.services.browser_job_store import BrowserJobStore
+        from app.services.xhs_completion_delivery import XHSCompletionDelivery
+        app.state.job_store = BrowserJobStore(AsyncSessionFactory)
+        app.state.runtime = XHSRuntime(
+            worker, config, ip, namespace, UPLOAD_DIR / ".screenshots",
+            store=app.state.job_store,
+        )
+        app.state.completion_delivery = (
+            XHSCompletionDelivery(config, app.state.job_store)
+            if namespace == "xhs" else None
+        )
         async with httpx.AsyncClient(timeout=5, trust_env=False) as http:
             nacos = NacosClient(
                 http,
@@ -261,6 +466,9 @@ def create_app(
             beat = None
             worker_beat = None
             artifact_gc = None
+            maintenance = asyncio.create_task(
+                app.state.runtime.maintenance(app.state.completion_delivery)
+            )
             metadata = {"component": f"{namespace}-worker", "version": __version__}
             try:
                 await nacos.register(
@@ -283,6 +491,11 @@ def create_app(
                     artifact_gc = asyncio.create_task(app.state.runtime.expire_screenshots())
                 yield
             finally:
+                maintenance.cancel()
+                with suppress(asyncio.CancelledError):
+                    await maintenance
+                if app.state.completion_delivery:
+                    await app.state.completion_delivery.close()
                 if artifact_gc:
                     artifact_gc.cancel()
                     with suppress(asyncio.CancelledError):
@@ -421,10 +634,10 @@ def create_app(
     async def result(job_id: str) -> XHSJobState:
         if len(job_id) != 32 or any(c not in "0123456789abcdef" for c in job_id):
             raise HTTPException(422, "Invalid job ID")
-        raw = await app.state.runtime.worker.redis.get(f"xsentinel:{namespace}:http:job:{job_id}")
-        if not raw:
+        state = await app.state.runtime.job_state(job_id)
+        if state is None:
             raise HTTPException(404, "Job result not found or expired")
-        return XHSJobState.model_validate(json.loads(raw)["result"])
+        return state
 
     @app.get("/v1/verification/{admin_id}", dependencies=[Depends(authorize)])
     async def verification(admin_id: int, version: str | None = None) -> XHSVerification:

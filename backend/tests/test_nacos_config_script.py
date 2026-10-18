@@ -564,7 +564,9 @@ def test_camoufox_caller_upgrade_preserves_remote_clients_and_secret(tmp_path):
     assert values == first
     clients = json.loads(values['SERVICE_AUTH_CLIENTS_JSON'])
     assert clients['backend'] == remote['backend']
-    assert clients['xhs-worker']['grants'] == {'camoufox-worker': 'browser:execute'}
+    assert clients['xhs-worker']['grants'] == {
+        'camoufox-worker': 'browser:execute', 'backend': 'xhs:result'
+    }
     secret = values['SERVICE_CLIENT_XHS_WORKER_SECRET']
     assert clients['xhs-worker']['secret_sha256'] == hashlib.sha256(secret.encode()).hexdigest()
     module.write_control_plane_values(tmp_path, values)
@@ -647,6 +649,18 @@ def test_nacos_sync_seeds_ai_identity_only_for_ai_or_auth_nodes(monkeypatch, tmp
         monkeypatch.setattr(sys, "argv", argv)
         assert module.main() == 0
         assert bool(calls) is expected
+
+
+def test_xhs_result_receiver_is_nacos_managed_and_preserves_custom_service_name():
+    module = load_script()
+    values = {}
+    module.ensure_xhs_result_defaults(values)
+    assert values == {"XHS_RESULT_SERVICE_NAME": "xsentinel-backend"}
+    values["XHS_RESULT_SERVICE_NAME"] = "custom-backend"
+    module.ensure_xhs_result_defaults(values)
+    assert values["XHS_RESULT_SERVICE_NAME"] == "custom-backend"
+    assert "XHS_RESULT_SERVICE_NAME" in module.RUNTIME_CONFIG_KEYS
+    assert "XHS_RESULT_SERVICE_NAME" not in module.EXCLUDED_KEYS
 
 
 def test_camoufox_runtime_config_is_remote_but_port_and_image_are_local():
@@ -841,6 +855,9 @@ def test_control_plane_init_fresh_install_seeds_ai_worker_client(tmp_path):
         "grants": {"xhs-worker": "xhs:execute"},
     }
     assert clients["backend"]["grants"]["xhs-worker"] == "xhs:execute"
+    assert clients["xhs-worker"]["grants"] == {
+        "camoufox-worker": "browser:execute", "backend": "xhs:result"
+    }
 
 
 def test_monitor_upgrade_adds_only_selected_browser_and_preserves_remote(monkeypatch, tmp_path):

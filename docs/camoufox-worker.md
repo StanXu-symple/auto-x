@@ -23,6 +23,7 @@
 | CAMOUFOX_MAX_CONCURRENCY | 1 | 同时执行的浏览器任务数 |
 | CAMOUFOX_JOB_TIMEOUT_SECONDS | 290 | 浏览器任务超时 |
 | CAMOUFOX_JOB_RESULT_TTL_SECONDS | 600 | 结果保存时间 |
+| XHS_RESULT_SERVICE_NAME | xsentinel-backend | 小红书发布完成通知的接收服务，使用 Nacos 服务发现 |
 
 `XHS_JOB_TIMEOUT_SECONDS` 默认 300 秒，应留出浏览器上传和结果回传的时间；延长浏览器超时时，也应相应延长 XHS 任务超时。浏览器同步 SDK 在超时后仍可能正在结束操作，服务会保留它的槽位和上传文件直到退出，避免同时创建额外浏览器。
 
@@ -33,6 +34,16 @@
 xhs-worker 持有独立 `xhs-worker.secret`；polling worker 持有独立 `screenshot-worker.secret`，以客户端身份 `screenshot-worker` 调用截图任务。两者均向 `xsentinel-auth-center` 申请 audience 为 `camoufox-worker` 的 JWT。浏览器 API 校验签名、签发者、有效期、audience 和 `browser:execute` scope，使用认证中心 JWKS 支持密钥轮换。
 
 安装器生成新身份，将摘要和授权并入 `SERVICE_AUTH_CLIENTS_JSON`，将秘密保存在 `SERVICE_CLIENT_XHS_WORKER_SECRET` / `SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET` 并同步到各节点的受限文件。既有客户端、已撤销授权不会被恢复。认证中心在启动时把新增身份导入 PostgreSQL，因此已有集群升级需要同步并重启认证中心节点。浏览器服务只拉取公钥，不挂载私钥、客户端秘密或完整 clients.json。
+
+### 小红书发布完成通知的授权
+
+发布结果先落 PostgreSQL，再由 xhs-worker 向 Nacos 中的 `XHS_RESULT_SERVICE_NAME` 发送完成通知：`POST /api/v1/internal/xhs/jobs/{job_id}/completion`。它使用现有 `xhs-worker` 服务身份向认证中心申请 **audience=`backend`、scope=`xhs:result`** 的 JWT；服务发现名和 JWT audience 是不同用途，不需要填写服务器 IP 或回调 URL。接收端按任务 ID 读取数据库中的权威结果，不能通过请求正文伪造发布成功。
+
+已有集群需要更新 **auth-center**：认证中心启动时执行一次 `xhs-result-grant-v1` 授权升级，仅为已启用的 xhs-worker 且尚无 `backend` audience 授权的情况补入 `xhs:result`。已有 `backend` 授权及其自定义 scope 不会覆盖，禁用的服务不会启用；处理记录保存于 `service_auth_bootstrap_state`，后续重启不会恢复人工撤销的授权。既有身份的 PostgreSQL 授权不会被 Nacos 的历史 `SERVICE_AUTH_CLIENTS_JSON` 覆盖。新安装的身份默认包含该回调授权。
+
+安装器同步 Nacos 时只补缺失的 `XHS_RESULT_SERVICE_NAME=xsentinel-backend`，已有自定义服务名保留。跨主机部署需让 xhs-worker 所在节点可访问 Nacos 注册的 backend 地址和端口，并先完成认证中心和 backend 更新，再更新 xhs-worker；回调认证失败不能通过放宽接口鉴权解决，应核对 PostgreSQL 中 xhs-worker 的启用状态与 `backend → xhs:result` 授权。
+
+本次自动发布结果改造还需迁移 `0036`，并在恢复监听前完成浏览器、XHS 和 AI Worker 升级。完整状态说明与升级顺序见 [小红书发布结果回传](xhs-publish-results.md)。
 
 ## API
 

@@ -187,6 +187,7 @@ RUNTIME_CONFIG_KEYS = {
     "QQ_WORKER_HEARTBEAT_TTL_SECONDS",
     "XHS_JOB_TIMEOUT_SECONDS",
     "XHS_JOB_RESULT_TTL_SECONDS",
+    "XHS_RESULT_SERVICE_NAME",
     "XHS_BROWSER_POOL_SIZE",
     "CAMOUFOX_SERVICE_NAME",
     "CAMOUFOX_BROWSER_POOL_SIZE",
@@ -390,6 +391,11 @@ def ensure_camoufox_defaults(values: dict) -> None:
         values.setdefault(key, value)
 
 
+def ensure_xhs_result_defaults(values: dict) -> None:
+    """Discover completion receivers through Nacos, preserving custom names."""
+    values.setdefault("XHS_RESULT_SERVICE_NAME", "xsentinel-backend")
+
+
 def ensure_camoufox_caller(values: dict) -> None:
     """Seed only the new XHS identity; preserve existing authority/grant choices."""
     import hashlib
@@ -404,7 +410,7 @@ def ensure_camoufox_caller(values: dict) -> None:
         secret = secret or secrets.token_hex(32)
         clients["xhs-worker"] = {
             "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
-            "grants": {"camoufox-worker": "browser:execute"},
+            "grants": {"camoufox-worker": "browser:execute", "backend": "xhs:result"},
         }
         values["SERVICE_AUTH_CLIENTS_JSON"] = json.dumps(clients, ensure_ascii=False)
         values["SERVICE_CLIENT_XHS_WORKER_SECRET"] = secret
@@ -1071,6 +1077,7 @@ def main() -> int:
     merged = dict(local)
     merged.update(remote)
     ensure_camoufox_defaults(merged)
+    ensure_xhs_result_defaults(merged)
     ensure_camoufox_caller(merged)
     selected_services = {service.strip() for service in args.monitor_services.split(",")}
     if not args.monitor_services or selected_services.intersection({"ai-worker", "auth-center"}):

@@ -33,6 +33,7 @@ from app.schemas.article import (
     ArticleSourceScreenshot,
 )
 from app.schemas.common import MessageResponse, Page
+from app.services.ai_publish import confirmed_xhs_failure
 from app.services.ai_publish_read import dispatches_by_draft
 from app.services.article_media import (
     ALLOWED_IMAGE_SUFFIXES,
@@ -64,9 +65,9 @@ from app.services.xhs_verification import clear_verification_image
 router = APIRouter(prefix="/articles", tags=["Article Management"])
 logger = logging.getLogger(__name__)
 AUTO_PUBLISH_BLOCKING_STATUSES = frozenset(
-    {"pending", "retry_wait", "dispatching", "accepted", "published", "uncertain"}
+    {"pending", "retry_wait", "dispatching", "reconciling", "accepted", "published", "uncertain"}
 )
-AUTO_PUBLISH_ACTIVE_STATUSES = ("pending", "retry_wait", "dispatching", "accepted")
+AUTO_PUBLISH_ACTIVE_STATUSES = ("pending", "retry_wait", "dispatching", "reconciling", "accepted")
 AUTO_PUBLISH_FAILURE_STATUSES = ("failed", "uncertain")
 
 
@@ -443,6 +444,7 @@ async def _ensure_no_auto_publish_conflict(db: DbSession, article: AIDraft, chan
     if dispatch is not None:
         if dispatch.status in AUTO_PUBLISH_BLOCKING_STATUSES or (
             dispatch.status == "failed" and dispatch.article_publish_attempt_id is not None
+            and not await confirmed_xhs_failure(db, dispatch)
         ):
             raise APIError(
                 409,
@@ -475,7 +477,7 @@ async def _ensure_no_active_auto_publish(db: DbSession, article: AIDraft) -> Non
         select(AIPublishDispatch.id)
         .where(
             AIPublishDispatch.draft_id == article.id,
-            AIPublishDispatch.status.in_(("pending", "retry_wait", "dispatching", "accepted")),
+            AIPublishDispatch.status.in_(AUTO_PUBLISH_ACTIVE_STATUSES),
         )
         .limit(1)
     )

@@ -1423,3 +1423,59 @@ def test_verification_screenshot_prefers_cropped_panel(
 
     assert _save_verification_screenshot(page, 42) is True
     assert verification_image_path(42).read_bytes() == b"cropped-verification-panel"
+
+
+@pytest.mark.parametrize("stage,expected", [
+    ("upload", "failed"), ("click", "uncertain"),
+    ("result", "uncertain"), ("validation", "failed"), ("success", "succeeded"),
+])
+def test_publish_outcome_tracks_submission_boundary(
+    stage, expected, tmp_path, monkeypatch, input_wait_clock,
+):
+    import app.xhs_cli_compat as module
+    from app.services.xhs_jobs import XHSJobFailedError, XHSJobReconciliationError
+
+    image = tmp_path / "post.png"
+    image.write_bytes(b"image")
+    page = FakePage()
+    page.url = PUBLISH_URL
+    client = SimpleNamespace(
+        _page=page,
+        _extract_note_id_from_url=lambda _url: "",
+        _extract_note_id_from_page=lambda: "",
+        _is_publish_success=lambda *_args: stage == "success",
+    )
+    clicks = []
+    widget = SimpleNamespace(set_input_files=lambda _paths: None, fill=lambda _text: None)
+    monkeypatch.setattr(module, "_open_creator_publish_page", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "_wait_for_image_input", lambda *_a, **_k: widget)
+    monkeypatch.setattr(module, "_arm_image_upload_tracker", lambda *_a, **_k: {})
+    monkeypatch.setattr(module, "_disarm_image_upload_tracker", lambda *_a: None)
+
+    def uploaded(*_a, **_k):
+        if stage == "upload":
+            raise RuntimeError("image upload failed")
+
+    monkeypatch.setattr(module, "_wait_for_image_uploads", uploaded)
+    monkeypatch.setattr(module, "_wait_for_element", lambda *_a, **_k: widget)
+    monkeypatch.setattr(module, "_click_element", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "_wait_for_publish_button", lambda *_a, **_k: widget)
+    monkeypatch.setattr(module, "_arm_publish_diagnostics", lambda *_a: {"state": {}})
+    monkeypatch.setattr(module, "_publish_diagnostics_snapshot", lambda *_a: {})
+    monkeypatch.setattr(module, "_publish_page_feedback", lambda *_a:
+                        "正文不能超过1000字" if stage == "validation" else "")
+    monkeypatch.setattr(module, "PUBLISH_RESULT_TIMEOUT_SECONDS", 1)
+
+    def clicked(*_args):
+        clicks.append(True)
+        if stage == "click":
+            raise RuntimeError("page closed after dispatching click")
+
+    monkeypatch.setattr(module, "_click_publish", clicked)
+    if expected == "succeeded":
+        assert publish_note_compat(client, "title", [str(image)], return_detail=True)["success"]
+    else:
+        error = XHSJobFailedError if expected == "failed" else XHSJobReconciliationError
+        with pytest.raises(error):
+            publish_note_compat(client, "title", [str(image)])
+    assert len(clicks) == (0 if stage == "upload" else 1)

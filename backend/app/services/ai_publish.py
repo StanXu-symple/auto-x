@@ -12,9 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
+from app.core.time import as_utc
 from app.models.admin import Admin
 from app.models.ai import AIDraft, AIGenerationJob, ArticlePublishAttempt
 from app.models.ai_publish import AIPublishDispatch
+from app.models.browser_job import BrowserJobResult
 from app.models.qq import QQBotAccount, QQDelivery, QQJoinedGroup
 from app.models.tweet import Tweet
 from app.models.tweet_screenshot import TweetScreenshot
@@ -30,12 +32,14 @@ from app.services.xhs_client import XHSServiceClient, validated_source
 from app.services.xhs_credentials import has_xhs_credentials
 from app.services.xhs_jobs import XHSJobNotAcceptedError, submit_xhs_job
 from app.services.xhs_limits import XHS_NOTE_CONTENT_MAX_LENGTH, XHS_NOTE_TITLE_MAX_LENGTH
+from app.services.xhs_publish_results import apply_xhs_job_result
 
 logger = logging.getLogger(__name__)
 CHANNELS = ("xhs", "qq")
 PREFLIGHT_RETRY_LIMIT = 12
 XHS_NOT_ACCEPTED_RETRY_LIMIT = 5
 XHS_SAME_ADMIN_WAIT_SECONDS = 10
+XHS_RESULT_CHECK_SECONDS = 10
 
 
 class AwaitingSourceScreenshot(RuntimeError):
@@ -109,7 +113,9 @@ async def retry_failed_dispatch(
     row = await session.get(
         AIPublishDispatch, dispatch_id, with_for_update=True, populate_existing=True
     )
-    if row is None or row.status != "failed" or row.article_publish_attempt_id is not None:
+    if row is None or row.status != "failed":
+        return None
+    if row.article_publish_attempt_id is not None and not await confirmed_xhs_failure(session, row):
         return None
     row.status = "pending"
     row.next_attempt_at = datetime.now(UTC)
@@ -121,7 +127,20 @@ async def retry_failed_dispatch(
     row.published_url = None
     row.reconciled_at = None
     row.reconciled_by_admin_id = None
+    # Keep the previous attempt and browser result in their history tables.
+    # A new explicit retry gets a new correlation id; late callbacks cannot
+    # accidentally finish that newer attempt.
+    row.article_publish_attempt_id = None
+    row.xhs_job_id = None
     return row
+
+
+async def confirmed_xhs_failure(session: AsyncSession, row: AIPublishDispatch) -> bool:
+    if row.channel != "xhs" or row.status != "failed" or not row.xhs_job_id:
+        return False
+    result = await session.get(BrowserJobResult, ("xhs", row.xhs_job_id))
+    return bool(result is not None and result.state == "failed"
+                and result.admin_id == row.owner_admin_id)
 
 
 class AIPublishDispatcher:
@@ -176,6 +195,7 @@ class AIPublishDispatcher:
 
     async def run_once(self) -> None:
         await self._seed_uninitialized()
+        await self._reconcile_xhs()
         await self._mark_abandoned_xhs()
         await self._reconcile_qq()
         self.active = {task for task in self.active if not task.done()}
@@ -245,6 +265,8 @@ class AIPublishDispatcher:
                     .where(
                         AIPublishDispatch.channel == "xhs",
                         AIPublishDispatch.status == "dispatching",
+                        # Durable HTTP jobs use callback + result-journal recovery.
+                        AIPublishDispatch.xhs_job_id.is_(None),
                         AIPublishDispatch.started_at <= cutoff,
                     )
                     .limit(50)
@@ -258,6 +280,38 @@ class AIPublishDispatcher:
                     "uncertain",
                     "小红书请求中断，发布结果未知；请先核对账号笔记，勿自动重发",
                 )
+
+    async def _reconcile_xhs(self) -> None:
+        """Recover missed callbacks without ever submitting a second publish."""
+        now = datetime.now(UTC)
+        async with self.session_factory() as session, session.begin():
+            rows = list(await session.scalars(
+                select(AIPublishDispatch).where(
+                    AIPublishDispatch.channel == "xhs",
+                    AIPublishDispatch.xhs_job_id.is_not(None),
+                    AIPublishDispatch.status.in_(("dispatching", "reconciling", "uncertain")),
+                    AIPublishDispatch.next_attempt_at <= now,
+                    AIPublishDispatch.reconciled_at.is_(None),
+                ).order_by(AIPublishDispatch.next_attempt_at, AIPublishDispatch.id)
+                .limit(50).with_for_update(skip_locked=True)
+            ))
+            for row in rows:
+                if await apply_xhs_job_result(session, row.xhs_job_id):
+                    row.next_attempt_at = now + timedelta(seconds=XHS_RESULT_CHECK_SECONDS)
+                    continue
+                result = await session.get(BrowserJobResult, ("xhs", row.xhs_job_id))
+                if result is not None and result.state == "reconciling":
+                    row.status = "reconciling"
+                    row.completed_at = None
+                    row.last_error = "正在自动获取浏览器原任务的发布结果，请勿重复发布"
+                elif result is None and row.started_at and (
+                    now - as_utc(row.started_at)
+                ).total_seconds() > self.settings.xhs_job_timeout_seconds + 60:
+                    await self._finish(
+                        session, row, "uncertain",
+                        "未取得 Worker 的持久化结果；系统继续查收原任务，勿重复发布",
+                    )
+                row.next_attempt_at = now + timedelta(seconds=XHS_RESULT_CHECK_SECONDS)
 
     async def _reconcile_qq(self) -> None:
         async with self.session_factory() as session, session.begin():
@@ -352,6 +406,7 @@ class AIPublishDispatcher:
             )
             return
         attempt_id = str(uuid.uuid4())
+        xhs_job_id = uuid.uuid4().hex if xhs_client is not None else None
         async with self.session_factory() as session, session.begin():
             # All AI workers use the same database row as the per-account
             # reservation mutex. It is held only until dispatching is committed.
@@ -367,7 +422,7 @@ class AIPublishDispatcher:
                 .where(
                     AIPublishDispatch.channel == "xhs",
                     AIPublishDispatch.owner_admin_id == admin_id,
-                    AIPublishDispatch.status == "dispatching",
+                    AIPublishDispatch.status.in_(("dispatching", "reconciling")),
                     AIPublishDispatch.id != dispatch_id,
                 )
                 .limit(1)
@@ -383,6 +438,8 @@ class AIPublishDispatcher:
             row.attempts += 1
             row.started_at = datetime.now(UTC)
             row.article_publish_attempt_id = attempt_id
+            row.xhs_job_id = xhs_job_id
+            row.next_attempt_at = datetime.now(UTC) + timedelta(seconds=XHS_RESULT_CHECK_SECONDS)
             row.last_error = None
             session.add(
                 ArticlePublishAttempt(
@@ -403,7 +460,14 @@ class AIPublishDispatcher:
                     admin_id=admin_id,
                     payload=post,
                     timeout_seconds=self.settings.xhs_job_timeout_seconds + 5,
+                    job_id=xhs_job_id,
+                    wait_for_completion=False,
                 )
+                # HTTP 202 means accepted, not published. Completion is applied
+                # from the worker's journal by callback or the recovery scan.
+                async with self.session_factory() as session, session.begin():
+                    await apply_xhs_job_result(session, xhs_job_id)
+                return
             else:
                 await submit_xhs_job(
                     self.redis,
@@ -416,20 +480,27 @@ class AIPublishDispatcher:
             await self._not_accepted(dispatch_id, exc)
             return
         except asyncio.CancelledError:
-            # The request may have reached XHS; the abandoned scan records uncertainty.
+            # The durable result scan recovers the same job after a restart.
             raise
         except Exception as exc:
             logger.warning(
-                "AI draft XHS result uncertain",
+                "AI draft XHS result pending recovery",
                 extra={"dispatch_id": dispatch_id, "error_type": type(exc).__name__},
             )
             async with self.session_factory() as session, session.begin():
                 row = await session.get(AIPublishDispatch, dispatch_id, with_for_update=True)
                 if row is not None and row.status == "dispatching":
-                    await self._finish(
-                        session, row, "uncertain",
-                        "小红书请求未确认成功；请核对账号笔记后再决定是否重新发布",
-                    )
+                    if xhs_job_id:
+                        row.status = "reconciling"
+                        row.last_error = "请求连接中断，系统正在自动查收原任务的发布结果"
+                        row.completed_at = None
+                        await session.flush()
+                        await apply_xhs_job_result(session, xhs_job_id)
+                    else:
+                        await self._finish(
+                            session, row, "uncertain",
+                            "小红书请求未确认成功；请核对账号笔记后再决定是否重新发布",
+                        )
             return
         async with self.session_factory() as session, session.begin():
             row = await session.get(AIPublishDispatch, dispatch_id, with_for_update=True)
@@ -452,6 +523,7 @@ class AIPublishDispatcher:
                 attempt.completed_at = now
             row.rejection_attempts += 1
             row.article_publish_attempt_id = None
+            row.xhs_job_id = None
             row.started_at = None
             row.last_error = str(error)[:2000]
             if row.rejection_attempts >= XHS_NOT_ACCEPTED_RETRY_LIMIT:

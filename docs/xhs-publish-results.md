@@ -1,0 +1,64 @@
+# 小红书自动发布结果回传
+
+## 本次解决的问题
+
+以前自动发布把“HTTP 等待失败”和“平台发布失败”混在一起：`AIPublishDispatcher` 的请求一旦超时就记为“结果待核对”，之后没有小红书结果补查。浏览器同步线程即使在超时之后发布成功，浏览器池也会丢弃这个迟到结果。
+
+现在自动任务以固定 `xhs_job_id` 贯穿 ai-worker、xhs-worker 和 camoufox-worker。浏览器同步线程执行完后保留真实结果，Worker 先保存到 PostgreSQL，再发送完成回调。HTTP 202 只代表受理，不会直接标记“已推送”。手动发布继续使用原来的同步等待接口。
+
+```mermaid
+sequenceDiagram
+    participant AI as ai-worker
+    participant DB as PostgreSQL
+    participant XHS as xhs-worker
+    participant Browser as camoufox-worker
+    participant API as backend
+    AI->>DB: 保存投递记录、尝试记录、xhs_job_id
+    AI->>XHS: 提交原任务
+    XHS->>DB: 持久化受理记录
+    XHS-->>AI: 202 已受理
+    XHS->>Browser: 相同 job_id 执行发布
+    Browser->>DB: 持久化浏览器最终结果
+    Browser-->>XHS: 成功、明确失败或无法确认
+    XHS->>DB: 保存结果及待回调记录
+    XHS->>API: JWT 鉴权的完成回调
+    API->>DB: 按 job_id 读取真实结果并幂等更新投递
+    Note over AI,DB: 回调暂时不可达时，调度器也会补查已保存结果
+```
+
+## 用户看到的状态
+
+| 状态 | 含义与处理 |
+| --- | --- |
+| 推送中 | Worker 已受理，浏览器执行中。 |
+| 自动确认结果中 | 连接中断或等待超时，系统正在查询同一个任务；不会重复发布。 |
+| 已推送 | 浏览器确认平台发布成功，自动更新投递及发布历史。取得有效公开笔记链接时显示“查看笔记”。 |
+| 推送失败 | 未点击发布前失败，或平台明确拒绝，例如上传失败、输入校验失败、未完成安全验证。保留具体原因；可显式重试。 |
+| 结果待核对 | 发布动作可能已经发生，但浏览器/进程崩溃等原因使平台结果无法确定。保留防重复发布保护；系统仍查询原记录，后来取得明确结果会自动修正。 |
+
+“执行报错”不等于“平台肯定未发布”。点击发布之后的网络中断不能安全地强行归类为失败，否则重新发送可能重复发笔记。此状态只保留给确实无法证明的异常；普通完成结果和迟到的成功不再依赖人工确认。小红书要求真人扫码时，仍需要完成平台验证，回调机制不能代替扫码。
+
+## 持久化、补查和鉴权
+
+- 新表 `browser_job_results`：按 `namespace + job_id` 分别保存两层 Worker 的受理和最终结果、租约、补查时间、回调次数/下次时间/送达时间。不保存 Cookie、文章正文或上传图片路径，只保存请求指纹和脱敏后的结果。
+- `ai_publish_dispatches.xhs_job_id` 在发送请求前写入；重复提交同一 ID 不再次运行，重复或迟到回调不会覆盖新尝试或人工核对结论。
+- XHS 每 5 秒运行补查与回调循环；每条补查记录间隔至少 30 秒，支持多实例公平领取。回调失败按指数间隔重试，最大间隔 300 秒。
+- ai-worker 扫描时每条待完成投递约 10 秒补查一次数据库结果，作为回调丢失的补偿。补查只查询原任务，绝不重新提交发布。
+- Redis 用于活动任务锁和短期缓存。结果超出 Redis TTL 后仍能从 PostgreSQL 查到。
+- 回调地址固定为 backend 的 `/api/v1/internal/xhs/jobs/{job_id}/completion`（API 前缀可配置）。通过 Nacos 的 `XHS_RESULT_SERVICE_NAME` 查找 backend，默认 `xsentinel-backend`；没有节点 IP 或任意回调 URL。
+- 使用 `xhs-worker` 身份、`backend` audience、`xhs:result` scope。接收端另外校验发送者，并从数据库读取真实结果；请求正文不能把失败伪造为成功。
+- 旧版 Worker 的笼统 `failed` 响应不含 `failure_confirmed`，按无法确认处理，避免滚动更新期间错误开放重试。
+
+## 后续升级要求（本次开发未部署）
+
+需升级 **auth-center、backend、ai-worker、xhs-worker、camoufox-worker、frontend**，并执行数据库迁移 **`0036_browser_job_results`**。Camoufox 的 2 GB 内存限制、已有浏览器资料和 Nacos 服务发现方式保持现有配置。
+
+正式发布仍按项目的《Auto-X一键更新傻瓜式文档》执行：dev 合并 main，等待 Actions 镜像就绪，通过 `bash kejilion.sh app auto-x` 菜单 2 更新。
+
+1. 升级窗口暂停监听自动推送并等待正在运行的发布结束，备份数据库及浏览器资料。
+2. 先用安装器完成迁移，升级 auth-center、backend，使回调接收端及服务授权可用。
+3. 更新所有 camoufox-worker 实例，再更新 xhs-worker，最后更新 ai-worker、frontend；全部就绪后恢复监听，避免新调度器提交给仍只保存短期 Redis 结果的旧 XHS Worker。
+4. 安装器会向 Nacos 补齐缺失的 `XHS_RESULT_SERVICE_NAME`，已有自定义值保留。xhs-worker 节点需要能访问 Nacos 注册的 backend 地址/端口；两个 Worker 需要访问共享 PostgreSQL。
+5. 认证中心的授权补齐只执行一次；既有自定义授权、禁用状态和后续撤销不会被覆盖。详见《Camoufox Worker》中的回调授权说明。
+
+升级前的历史“结果待核对”记录没有稳定 `xhs_job_id`，无法自动关联已经过期的浏览器任务，不会被猜测为成功或自动重发。验收应使用用户新发起的一条自动投递，检查相同任务 ID 的两层结果、回调送达时间与文章状态；不要为验证回调直接重新发布历史不确定记录。

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from redis.asyncio import Redis
 
@@ -25,6 +27,17 @@ class XHSJobTimeoutError(RuntimeError):
     pass
 
 
+class XHSJobReconciliationError(XHSJobTimeoutError):
+    """The request timed out after acceptance and must be queried by job ID.
+
+    This is intentionally distinct from :class:`XHSWorkerUnavailableError`:
+    callers must not automatically submit a new post when the browser could
+    still have completed the original one.
+    """
+
+    pass
+
+
 class XHSJobFailedError(RuntimeError):
     pass
 
@@ -35,6 +48,31 @@ class XHSJobNotAcceptedError(XHSJobFailedError):
     def __init__(self, message: str, *, retry_after_seconds: int | None = None) -> None:
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
+
+
+def safe_job_error(message: str) -> str:
+    """Keep useful worker diagnostics without storing cookie/token values."""
+    message = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer [redacted]", message)
+    message = re.sub(
+        r"(?i)\b(a1|web_session|encrypted_a1|encrypted_web_session|cookie|authorization|"
+        r"access_token|api_key|client_secret)\b[\"']?\s*[:=]\s*"
+        r"(?:\"[^\"]*\"|'[^']*'|[^\s,;}]+)",
+        lambda match: f"{match.group(1)}=[redacted]",
+        message,
+    )
+
+    def safe_url(match):
+        try:
+            url = urlsplit(match.group(0))
+            hostname = url.hostname or ""
+            if ":" in hostname:
+                hostname = f"[{hostname}]"
+            host = f"{hostname}:{url.port}" if url.port else hostname
+            return urlunsplit((url.scheme, host, url.path, "", ""))
+        except ValueError:
+            return "[url]"
+
+    return re.sub(r"https?://[^\s<>\"']+", safe_url, message)[:1000]
 
 
 def xhs_response_key(job_id: str) -> str:

@@ -572,3 +572,93 @@ async def test_publish_outbox_error_does_not_fail_generated_draft(monkeypatch) -
     finally:
         event.remove(factory.class_.sync_session_class, "before_flush", give_sqlite_draft_id)
         await engine.dispose()
+
+
+@pytest.mark.parametrize("response_lost", [False, True])
+async def test_http_publish_records_stable_job_and_recovers_completion(
+    db_factory, monkeypatch, response_lost,
+):
+    from app.models.browser_job import BrowserJobResult
+    from app.services.browser_job_store import BrowserJobStore
+    from app.services.xhs_jobs import XHSJobTimeoutError
+
+    await seed_base(db_factory, ["xhs"])
+    dispatcher = AIPublishDispatcher(Settings(_env_file=None), FakeRedis(), db_factory)
+    await dispatcher._seed_uninitialized()
+    store = BrowserJobStore(db_factory)
+    calls = []
+
+    async def prepared(*_args, **_kwargs):
+        return {"title": "title", "content": "body"}, ["/image.png"], 5
+
+    class Client:
+        async def submit(self, **kwargs):
+            calls.append(kwargs)
+            assert kwargs["wait_for_completion"] is False
+            job_id = kwargs["job_id"]
+            async with db_factory() as session:
+                row = await session.scalar(select(AIPublishDispatch))
+                assert row.xhs_job_id == job_id and row.article_publish_attempt_id
+            await store.accept("xhs", job_id, 5, "request-fingerprint", lease_seconds=300)
+            if response_lost:
+                raise XHSJobTimeoutError("response lost")
+            return {"job_id": job_id, "state": "running"}
+
+    async def client():
+        return Client()
+
+    monkeypatch.setattr(dispatcher, "_prepare_media", prepared)
+    monkeypatch.setattr(dispatcher, "_ensure_xhs_client", client)
+    async with db_factory() as session:
+        dispatch_id = await session.scalar(select(AIPublishDispatch.id))
+    await dispatcher.process_dispatch(dispatch_id)
+    async with db_factory() as session, session.begin():
+        row = await session.get(AIPublishDispatch, dispatch_id)
+        assert row.status == ("reconciling" if response_lost else "dispatching")
+        assert row.completed_at is None
+        row.next_attempt_at = datetime.now(UTC)
+        job_id = row.xhs_job_id
+    # Even after the dispatcher call ended, the browser finishes this exact job.
+    await store.finish("xhs", job_id, "succeeded", {"result": {"success": True}})
+    await dispatcher._reconcile_xhs()
+    await dispatcher.process_dispatch(dispatch_id)
+    async with db_factory() as session:
+        row = await session.get(AIPublishDispatch, dispatch_id)
+        assert row.status == "published"
+        attempt = await session.get(ArticlePublishAttempt, row.article_publish_attempt_id)
+        assert attempt.status == "published"
+        assert (await session.get(BrowserJobResult, ("xhs", job_id))).state == "succeeded"
+    assert len(calls) == 1
+
+
+async def test_confirmed_http_failure_allows_explicit_retry_and_preserves_history(db_factory):
+    from app.services.browser_job_store import BrowserJobStore
+    from app.services.xhs_publish_results import apply_xhs_job_result
+
+    await seed_base(db_factory, ["xhs"])
+    dispatcher = AIPublishDispatcher(Settings(_env_file=None), FakeRedis(), db_factory)
+    await dispatcher._seed_uninitialized()
+    job_id = "b" * 32
+    async with db_factory() as session, session.begin():
+        row = await session.scalar(select(AIPublishDispatch))
+        row.status = "dispatching"
+        row.xhs_job_id = job_id
+        row.article_publish_attempt_id = "confirmed-failure"
+        dispatch_id = row.id
+        session.add(ArticlePublishAttempt(
+            attempt_id="confirmed-failure", article_id=1, channel="xhs",
+            status="queued", target_summary="owner",
+        ))
+    store = BrowserJobStore(db_factory)
+    await store.accept("xhs", job_id, 5, "fingerprint")
+    await store.finish("xhs", job_id, "failed", error="图片上传失败，未提交发布")
+    async with db_factory() as session, session.begin():
+        assert await apply_xhs_job_result(session, job_id)
+    async with db_factory() as session, session.begin():
+        row = await retry_failed_dispatch(session, dispatch_id)
+        assert row.status == "pending" and row.xhs_job_id is None
+        assert row.article_publish_attempt_id is None
+    async with db_factory() as session, session.begin():
+        assert not await apply_xhs_job_result(session, job_id)
+        assert (await session.get(AIPublishDispatch, dispatch_id)).status == "pending"
+        assert (await session.get(ArticlePublishAttempt, "confirmed-failure")).status == "failed"

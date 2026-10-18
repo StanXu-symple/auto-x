@@ -43,6 +43,9 @@ _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _KEY_LOCK = 0x5853454E54494E45  # "XSENTINE", stable across processes.
 _CLIENT_BOOTSTRAP_LOCK = 0x5853454E434C4945  # "XSENCLIE", stable across processes.
 LEGACY_CLIENTS_BOOTSTRAP_ID = "legacy-clients-v1"
+# A versioned service-grant migration is independent of legacy JSON imports.
+# Its durable marker prevents a later startup from restoring revoked access.
+XHS_RESULT_GRANT_BOOTSTRAP_ID = "xhs-result-grant-v1"
 LEGACY_PRIVATE_KEY_RETIRED_MARKER = "MIGRATED TO POSTGRESQL; PRIVATE KEY REMOVED\n"
 _PLACEHOLDER_PREFIXES = ("development-only-", "change-me-", "replace-with-")
 
@@ -242,6 +245,7 @@ class AuthStore:
         # credentials into the shared authority. A misconfigured replica must
         # fail without mutating PostgreSQL.
         await self._bootstrap_legacy_clients()
+        await self._bootstrap_xhs_result_grant()
         self._retire_legacy_private_key(signing.kid)
 
     async def _advisory_lock(self, session: AsyncSession, lock_id: int) -> None:
@@ -347,6 +351,41 @@ class AuthStore:
                     completed_at=now,
                 )
             )
+
+    async def _bootstrap_xhs_result_grant(self) -> None:
+        """Add the new callback permission once without overriding operator grants."""
+        source_sha256 = hashlib.sha256(b"xhs-worker:backend:xhs:result:v1").hexdigest()
+        async with self.session_factory() as session, session.begin():
+            await self._advisory_lock(session, _CLIENT_BOOTSTRAP_LOCK)
+            marker = await session.get(
+                ServiceAuthBootstrapState,
+                (XHS_RESULT_GRANT_BOOTSTRAP_ID, source_sha256),
+                with_for_update=True,
+            )
+            if marker is not None:
+                return
+            client = await session.get(ServiceAuthClient, "xhs-worker", with_for_update=True)
+            if client is None:
+                # A later fresh install can still provision the identity. No
+                # credential or service identity is fabricated by this migration.
+                return
+            grant = await session.get(
+                ServiceAuthGrant, ("xhs-worker", "backend"), with_for_update=True
+            )
+            now = datetime.now(UTC)
+            if client.is_active and grant is None:
+                session.add(ServiceAuthGrant(
+                    client_id="xhs-worker", audience="backend", scopes="xhs:result",
+                    created_at=now, updated_at=now,
+                ))
+            # Also mark explicit/custom grants and disabled identities as
+            # considered. Re-enabling a client later must not add permissions.
+            session.add(ServiceAuthBootstrapState(
+                bootstrap_id=XHS_RESULT_GRANT_BOOTSTRAP_ID,
+                source_sha256=source_sha256,
+                completed_by=os.environ.get("HOSTNAME", "grant-upgrade")[:255],
+                completed_at=now,
+            ))
 
     def _retire_legacy_private_key(self, active_kid: str) -> None:
         """Remove imported PEM material without risking the PostgreSQL copy.

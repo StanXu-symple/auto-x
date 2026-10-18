@@ -218,16 +218,35 @@ async def test_pool_allows_configured_parallel_business_operations(
     await pool.close()
 
 
-async def test_cancelled_publish_retires_browser_after_sync_work_finishes(
+async def test_cancelled_publish_preserves_late_success_and_retires_browser(
     tmp_path, monkeypatch
 ) -> None:
     tracker = make_tracker(delay=0.05)
     install_fake_factory(monkeypatch, tracker)
     pool = XiaohongshuBrowserPool(root=tmp_path, max_browsers=1, max_concurrency=1)
 
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(publish(pool, 7, 1, "slow"), timeout=0.01)
+    result = await asyncio.wait_for(publish(pool, 7, 1, "slow"), timeout=0.01)
+    assert result == {"success": True, "note_id": "slow"}
 
+    assert pool.size == 0
+    await pool.close()
+    assert tracker["closes"] == 1
+
+
+async def test_cancelled_publish_preserves_late_confirmed_failure(tmp_path, monkeypatch) -> None:
+    from app.services.xhs_jobs import XHSJobFailedError
+
+    tracker = make_tracker()
+    install_fake_factory(monkeypatch, tracker)
+
+    def failed(_self, **_kwargs):
+        time.sleep(0.05)
+        raise XHSJobFailedError("上传失败，未点击发布")
+
+    monkeypatch.setattr(FakeClient, "publish_note", failed)
+    pool = XiaohongshuBrowserPool(root=tmp_path, max_browsers=1, max_concurrency=1)
+    with pytest.raises(XHSJobFailedError, match="未点击发布"):
+        await asyncio.wait_for(publish(pool, 7, 1, "slow"), timeout=0.01)
     assert pool.size == 0
     await pool.close()
     assert tracker["closes"] == 1

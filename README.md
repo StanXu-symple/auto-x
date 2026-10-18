@@ -122,6 +122,8 @@ docker-compose.monitor-agent.yml
 
 镜像按运行时依赖拆分：`BACKEND_IMAGE` 提供普通服务，`XHS_WORKER_IMAGE` 提供轻量小红书业务服务，`CAMOUFOX_WORKER_IMAGE` 独占 Camoufox 浏览器运行时。xhs-worker 通过 Nacos 发现 camoufox-worker，再使用认证中心签发的服务令牌调用浏览器任务 API。浏览器容器的内存上限为 2GB，默认保留一个持久化会话。迁移与接口说明见 [Camoufox Worker](docs/camoufox-worker.md)。
 
+小红书自动发布通过持久化任务与鉴权回调更新最终状态，连接中断时补查原任务，详见 [小红书发布结果回传](docs/xhs-publish-results.md)；该说明包含迁移 `0036` 和分节点升级顺序。
+
 使用 `apps/auto-x.conf` 安装时，可选择要部署的服务，例如：
 
 ```text

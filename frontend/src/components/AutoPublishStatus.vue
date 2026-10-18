@@ -19,8 +19,9 @@ defineProps<{
 const channelNames = { xhs: '小红书', qq: 'QQ' }
 const statusNames: Record<string, string> = {
   pending: '待推送',
-  retry_wait: '等待图片',
+  retry_wait: '等待重试',
   dispatching: '推送中',
+  reconciling: '自动确认结果中',
   accepted: '投递中',
   published: '已推送',
   failed: '推送失败',

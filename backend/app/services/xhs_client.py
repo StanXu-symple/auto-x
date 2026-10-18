@@ -24,6 +24,7 @@ from app.services.article_media import ALLOWED_IMAGE_SUFFIXES, MAX_ARTICLE_IMAGE
 from app.services.xhs_jobs import (
     XHSJobFailedError,
     XHSJobNotAcceptedError,
+    XHSJobReconciliationError,
     XHSJobTimeoutError,
     XHSWorkerUnavailableError,
 )
@@ -116,7 +117,10 @@ class XHSServiceClient:
         payload: dict,
         timeout_seconds: float,
         job_id: str | None = None,
+        wait_for_completion: bool = True,
     ) -> dict:
+        request_started = False
+        post_returned = False
         try:
             async with asyncio.timeout(timeout_seconds):
                 target = await self.endpoint(admin_id)
@@ -131,23 +135,32 @@ class XHSServiceClient:
                 job = self.request_model(
                     job_id=job_id or uuid.uuid4().hex, admin_id=admin_id, payload=body
                 )
+                # Discovery, token acquisition and local file validation can
+                # fail without the remote worker ever seeing a request.
+                headers = await self.headers()
+                request_data = {"job": job.model_dump_json()}
                 with ExitStack() as files:
+                    request_files = [
+                        (
+                            "images",
+                            (p.name, files.enter_context(p.open("rb")), "application/octet-stream"),
+                        )
+                        for p in paths
+                    ]
+                    request_started = True
                     response = await self.http.post(
                         f"{target.url}/v1/jobs",
-                        headers=await self.headers(),
-                        data={"job": job.model_dump_json()},
-                        files=[
-                            (
-                                "images",
-                                (
-                                    p.name,
-                                    files.enter_context(p.open("rb")),
-                                    "application/octet-stream",
-                                ),
-                            )
-                            for p in paths
-                        ],
+                        headers=headers,
+                        data=request_data,
+                        files=request_files,
                         timeout=min(timeout_seconds, 60),
+                    )
+                    post_returned = True
+                if response.status_code in {401, 403, 413, 422}:
+                    # These responses are emitted by authentication/multipart
+                    # validation before runtime.submit can accept the job.
+                    raise XHSJobNotAcceptedError(
+                        f"小红书 Worker 拒绝了任务（HTTP {response.status_code}），尚未开始发布"
                     )
                 if response.status_code in {409, 429}:
                     try:
@@ -173,7 +186,11 @@ class XHSServiceClient:
                 state = XHSJobState.model_validate(response.json())
                 if state.job_id != job.job_id:
                     raise ValueError("Unexpected job response")
-                while state.state == "running":
+                if not wait_for_completion:
+                    # Automatic publishing is completed by the durable result
+                    # callback. Manual callers retain synchronous waiting.
+                    return state.model_dump()
+                while state.state in {"running", "reconciling"}:
                     await self.poll_verification(target, admin_id)
                     await asyncio.sleep(1)
                     response = await self.http.get(
@@ -185,18 +202,83 @@ class XHSServiceClient:
                     if state.job_id != job.job_id:
                         raise ValueError("Unexpected XHS job response")
                 if state.state == "failed":
+                    if operation == "post" and not state.failure_confirmed:
+                        raise XHSJobReconciliationError(
+                            "旧版 Worker 未提供可确认的发布失败结果，系统将继续核验原任务"
+                        )
                     raise XHSJobFailedError(state.error or "小红书任务执行失败")
+                if state.state == "uncertain":
+                    raise XHSJobReconciliationError(
+                        state.error or "发布结果尚未确认，系统会继续查询原任务，请勿重复发布"
+                    )
                 return state.data
+        except XHSJobReconciliationError:
+            raise
         except XHSJobFailedError:
             raise
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            if not post_returned:
+                raise XHSJobNotAcceptedError("无法连接小红书 Worker，任务尚未提交") from exc
+            # A later GET connection failure must not make an already accepted
+            # POST eligible for automatic resubmission.
+            raise XHSWorkerUnavailableError("原任务已提交，暂时无法读取发布结果") from exc
         except (TimeoutError, httpx.TimeoutException) as exc:
+            if not request_started:
+                raise XHSJobNotAcceptedError("小红书任务提交前准备超时，尚未开始发布") from exc
             raise XHSJobTimeoutError(
                 "小红书服务请求超时，发布结果可能尚未返回，请核对笔记后再操作，勿重复发布"
             ) from exc
-        except (httpx.HTTPError, RuntimeError, ValueError, KeyError) as exc:
+        except (httpx.HTTPError, RuntimeError, ValueError, KeyError, OSError) as exc:
+            if not request_started:
+                raise XHSJobNotAcceptedError(
+                    "小红书任务尚未提交，请检查服务发现、认证配置及图片文件"
+                ) from exc
             raise XHSWorkerUnavailableError(
                 "小红书微服务不可用或响应无效，请检查 Nacos 和服务日志"
             ) from exc
+
+    async def job_status(self, *, job_id: str, admin_id: int) -> XHSJobState | None:
+        """Read an existing job; this method never submits or republishes it.
+
+        Post results are stored in shared PostgreSQL, so any discovered replica
+        can serve them after the instance that accepted the upload goes away.
+        Try another healthy replica if the chosen instance is unavailable.
+        """
+        if len(job_id) != 32 or any(c not in "0123456789abcdef" for c in job_id):
+            raise ValueError("Invalid job ID")
+        try:
+            targets = await self.nacos.discover_all(self.service_name)
+            targets = sorted(
+                targets,
+                key=lambda i: hashlib.sha256(f"{admin_id}:{i.ip}:{i.port}".encode()).digest(),
+                reverse=True,
+            )
+            if not targets:
+                raise RuntimeError("No worker instance is available")
+            missing = 0
+            last_error = None
+            for target in targets:
+                try:
+                    response = await self.http.get(
+                        f"{target.url}/v1/jobs/{job_id}", headers=await self.headers()
+                    )
+                    if response.status_code == 404:
+                        missing += 1
+                        continue
+                    response.raise_for_status()
+                    state = XHSJobState.model_validate(response.json())
+                    if state.job_id != job_id:
+                        raise ValueError("Unexpected job response")
+                    return state
+                except (httpx.HTTPError, RuntimeError, ValueError, KeyError) as exc:
+                    last_error = exc
+            if missing == len(targets):
+                return None
+            raise XHSWorkerUnavailableError("小红书原任务结果暂时无法读取") from last_error
+        except (httpx.HTTPError, RuntimeError, ValueError, KeyError) as exc:
+            if isinstance(exc, XHSWorkerUnavailableError):
+                raise
+            raise XHSWorkerUnavailableError("小红书原任务结果暂时无法读取") from exc
 
     async def poll_verification(self, target, admin_id):
         pass

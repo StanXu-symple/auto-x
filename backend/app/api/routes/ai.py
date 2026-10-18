@@ -628,7 +628,7 @@ async def retry_ai_publish_dispatch(
         raise APIError(
             409,
             "ai_publish_dispatch_not_retryable",
-            "只能重试未向平台提交的自动推送失败；其他结果请先核对平台记录",
+            "只能重试确定未发布的自动推送失败；正在确认结果的任务不能重复发布",
         )
     await db.commit()
     return AIPublishDispatchOut.model_validate(retried)

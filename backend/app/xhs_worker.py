@@ -34,6 +34,7 @@ from app.services.xhs_credentials import get_xhs_credentials
 from app.services.xhs_jobs import (
     XHS_JOB_QUEUE,
     XHS_WORKER_HEARTBEAT,
+    XHSJobFailedError,
     xhs_response_key,
 )
 
@@ -238,27 +239,38 @@ class XiaohongshuWorker:
         raise ValueError(f"Unsupported Xiaohongshu operation: {operation}")
 
     async def _post(self, admin_id: int, payload: dict[str, Any], job_id: str) -> dict[str, Any]:
-        async with AsyncSessionFactory() as session:
-            credentials = await get_xhs_credentials(session, self.settings, admin_id=admin_id)
-        if credentials is None:
-            raise RuntimeError("请先保存小红书登录态")
-        image_paths: list[str] = []
-        for image in payload.get("images") or []:
-            path = await asyncio.to_thread(_validated_image_path, image)
-            if path is None:
-                raise RuntimeError("图片路径无效")
-            image_paths.append(str(path))
-        return await self.browser_client.submit(
-            operation="post",
-            admin_id=admin_id,
-            payload={
+        try:
+            async with AsyncSessionFactory() as session:
+                credentials = await get_xhs_credentials(session, self.settings, admin_id=admin_id)
+            if credentials is None:
+                raise XHSJobFailedError("请先保存小红书登录态")
+            image_paths: list[str] = []
+            for image in payload.get("images") or []:
+                path = await asyncio.to_thread(_validated_image_path, image)
+                if path is None:
+                    raise XHSJobFailedError("图片路径无效")
+                image_paths.append(str(path))
+            browser_payload = {
                 "encrypted_a1": encrypt_token(credentials.a1, self.settings),
                 "encrypted_web_session": encrypt_token(credentials.web_session, self.settings),
                 "cookie_version": credentials.version,
                 "title": str(payload["title"]),
                 "content": str(payload["content"]),
                 "images": image_paths,
-            },
+            }
+        except XHSJobFailedError:
+            raise
+        except Exception as exc:
+            # SQL/encryption exceptions can contain credentials. Record only
+            # their type, and distinguish this definite pre-browser failure
+            # from losing a response after a browser POST has been accepted.
+            raise XHSJobFailedError(
+                f"小红书发布准备失败（{type(exc).__name__}），尚未调用浏览器发布"
+            ) from None
+        return await self.browser_client.submit(
+            operation="post",
+            admin_id=admin_id,
+            payload=browser_payload,
             timeout_seconds=self.settings.xhs_job_timeout_seconds,
             job_id=job_id,
         )
