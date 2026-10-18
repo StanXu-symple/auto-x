@@ -1301,3 +1301,59 @@ hn-1 官方 GHCR 后台预拉退出 0，Camoufox 镜像摘要为 `sha256:bdc0955
 通过原截图 API 重试后，固定 23 条任务最终为 **22 条 succeeded、1 条 failed**。编辑帖 `2110151780478927344` 在本轮第 1 次尝试成功，PNG 为 568×257，SHA256 为 `254acd421979dfb159df7535c52170c135c7cd4ade6e55b3c51b61b2be3aa56b`；认证取图接口 HTTP 200，PNG 类型、ETag、响应摘要和尺寸均核验。唯一失败的 `2110315297374937103` 完成 3 次尝试，错误为 `Requested X post returned HTTP 404 (not found)`；它仍不能获得有效截图，且没有关联文章。
 
 最终只读验收使用生产 PNG 解析器逐项核验 22 个成功文件的完整性、SHA、尺寸、作者、精确原帖 URL 和捕获时间，并通过正式文章响应逻辑确认文章 14–20 共 7 篇全部动态关联正确来源截图，其中文章 16 的编辑帖截图已恢复。第一轮备份中的 54 个、第二轮备份中的 75 个已有 PNG 均保持原 SHA，当前共 76 个 PNG，包含 568×3507 等长图。管理员刷新 `/articles` 列表即可查看恢复的来源截图，无需重新生成文章。本轮未创建文章、调用 AI 或向 QQ/小红书重新发布；无需数据库迁移，tc-2 未升级。本节验收记录作为独立文档提交发布，线上 Camoufox 继续运行上述 `d5a2517` 镜像，无需为文档提交再次更新。
+
+## 三十一、小红书自动发布持久结果与完成回调升级
+
+2026-10-18，两个本地 `dev` 提交 `803b8cc`（“小红书数据源”移到配置下、X 数据源之后）与 `a337766`（持久发布结果、完成回调及补查）已推送 `dev`，快进合入 `main`。固定运行 SHA 为 `a337766d3fd9cf8b27fdb54bd472fd1ffe455ae4`，[Actions 39085663463](https://github.com/StanXu-symple/auto-x/actions/runs/39085663463) 全部成功。开发验证为 351 项针对性回归通过、1 项环境相关跳过，另有 Worker 准备阶段用例、前端类型检查/构建、Ruff 和 PostgreSQL 离线迁移 SQL 检查通过。功能说明见[小红书自动发布结果回传](xhs-publish-results.md)。
+
+本次需要更新 tc-2 的 `auth-center,backend,ai-worker,frontend`，hn-1 的 `camoufox-worker,xhs-worker`，并执行 `0036_browser_job_results`。普通菜单 2 还会更新认证/监控依赖；hn-1 必须保留 `monitor-center` 在普通更新的选择中，避免 `--remove-orphans` 删除该服务。Nacos 仍在 tc-1。
+
+### 备份、镜像和升级窗口
+
+1. 先核对当前服务清单、健康、数据库版本及活动任务。本次原迁移为 `0035_publish_reconciliation`，AI 生成/发布与浏览器均无执行中任务。先完成镜像下载，再短暂停止 ai-worker 调度；监听任务配置保持原状态，采集期间的新内容可继续入队。不要用 pause/resume 监听任务代替维护停机，resume 会重新设置生效时间。
+2. 两节点从官方 GHCR 无超时后台预拉完整目标 SHA 镜像：tc-2 为 backend/frontend，hn-1 为 backend/xhs-worker/camoufox-worker。日志均为 `/root/auto-x-xhs-results-a337766-pull.{log,pid,exit}`，退出码均为 0，OCI revision 均与目标 SHA 相同；只有此时才能设置 `KJ_AUTO_X_SKIP_PULL=1`。
+3. tc-2 完整备份 `/home/docker/auto-x/backups/pre-xhs-results-tc2-20261018T011334Z-yTfZFf`，保存原配置、完整清单、Compose 覆盖、安装器、控制面、11 个容器及镜像记录、三份 Nacos JSON、PG custom dump 和媒体归档；dump 的 `pg_restore --list`、JSON/归档和 SHA256 校验均通过。清单摘要为 `610164b81fd6b418da99a59869ac39aebd59c1487dcaffa18c7236782c981229`。暂停 ai-worker 后另存迁移前即时快照 `/home/docker/auto-x/backups/pre-xhs-results-cutover-20261018T011849Z-u2YDy1`。
+4. hn-1 在镜像就绪、浏览器空闲后仅停止 Camoufox，完整离线备份 `/home/docker/auto-x/backups/pre-xhs-results-hn1-offline-20261018T011906Z-DYVJQZ`。包含原四项清单、6 个容器/镜像、控制面、安装器、Nacos、规则和完整浏览器资料/上传目录；两份 Cookie SQLite 一致性检查及 SHA256 全部通过，清单摘要为 `47395ef8ac8f4c8bcdaf45b7f677b66de26fafaaf37f71bc282e30dc94dd0fb5`。资料较大时应等待正常压缩完成；在线 Cookie 数据库的锁不能用忽略校验处理。
+
+以上目录均为 UTC 时间戳、目录权限 700、文件权限 600，只有 `STATE=complete` 且 SHA256 复验通过的目录可作为恢复基线。原镜像和备份保留。
+
+镜像摘要：backend `sha256:ab7b77e51ed6acc1a22b8568606a1e7d30d87e1bf5b49eb7274bad88fac7a775`；frontend `sha256:91a340d588a909a831b2a67bfb4a6ee45fc03df32165fd03cc29ded1d1a19913`；XHS `sha256:3563907a6436cbf4db21e4012674b2a58e89aa33c7fee6f8a94731bb6b6ef793`；Camoufox `sha256:7ec12ae5204768ab3fee394d5c273d4cd710fccd0f972f12a57eae3463a152fa`。
+
+### 安装入口与菜单 2 分阶段执行
+
+tc-2 原安装定义为 `24016c6`，已先备份，再从已发布 apps/stanxu 快进到 `cfbdc0b`，并同步已发布的 kejilion.sh；hn-1 原本已是这套入口。两节点 `auto-x.conf` SHA256 为 `0071567c646f11320f700cffa798fcabf019346465b714e92326c73c6f4d6694`，`kejilion.sh` 为 `d5e817a3f9101f97c947d346e1b21f58a90e5d47d029fb38a9463a238261e9ca`。本次因此可跳过重复应用列表刷新，无需修改安装器。
+
+正常交互仍为 `bash kejilion.sh app auto-x`，运行环境 `3`（default）、菜单 `2`。下列为本次等价入口：在每个节点的 `/root` 先设置公共参数，再按顺序执行对应阶段。
+
+```bash
+cd /root
+export TERM=xterm COMPOSE_PROGRESS=plain
+export KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1
+export KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git
+export KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io
+export KJ_AUTO_X_IMAGE_TAG=sha-a337766d3fd9cf8b27fdb54bd472fd1ffe455ae4
+export KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1
+```
+
+| 顺序 | 节点 | 在公共参数下执行 | 完成后检查 |
+| --- | --- | --- | --- |
+| 1 | tc-2 | `AUTO_X_SERVICES=backend bash kejilion.sh app auto-x` | 自动加入 auth-center/monitor-agent；migrate 退出 0、0036 和回调授权就绪 |
+| 2 | hn-1 | `KJ_AUTO_X_UPDATE_CAMOUFOX_ONLY=1 AUTO_X_SERVICES=camoufox-worker bash kejilion.sh app auto-x` | 仅更新浏览器、healthy、2 GiB，其他容器保留 |
+| 3 | hn-1 | `AUTO_X_SERVICES=xhs-worker,monitor-center,monitor-agent bash kejilion.sh app auto-x` | 保留已升级浏览器；XHS 与两监控服务 healthy，回调鉴权可用 |
+| 4 | tc-2 | `AUTO_X_SERVICES=ai-worker,frontend bash kejilion.sh app auto-x` | 新 ai-worker 启动并恢复调度，前端 healthy |
+
+普通更新会缩小 `.auto-x-services`，本次每阶段退出时均恢复备份原清单；手动执行同样必须在每次普通更新后立即恢复。tc-2 原清单为 `backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend`，hn-1 为 `xhs-worker,camoufox-worker,monitor-center,monitor-agent`。Camoufox-only 的开关只用于第 2 阶段，不要永久 export 到第 3 阶段。
+
+四阶段日志分别为 `/root/auto-x-xhs-results-a337766-tc2-api.log`、`-hn1-browser.log`、`-hn1-xhs.log`、`-tc2-ai.log`（位于各自节点），同前缀 `.exit` 均为 0。全过程使用原安装器获取 main 源码、同步 Nacos、迁移和启动，没有向运行容器注入源码。
+
+### 验收与校验脚本修正
+
+- 六个目标业务服务全部 healthy、revision 为目标完整 SHA、restart=0、OOM=false。frontend 8080、backend `/api/v1/health/ready`、auth-center `/health/ready` 均 HTTP 200，两主机和 13 项监控实例全部 healthy。
+- 迁移为 `0036_browser_job_results`，结果表 17 列和投递 `xhs_job_id` 存在，两个任务标识组合的唯一性有效。初次验收脚本按两个固定约束名匹配而误报：PostgreSQL 把结果表与复合主键重复的 UNIQUE 合并，仅保留 `PRIMARY KEY(namespace,job_id)`；驱动的系统目录字段也可能返回 bytes。应按表、主键/唯一约束类型及实际列集合核验并归一化字段，不能要求冗余约束名必须存在。本次没有为此改数据库，修正只读校验后通过。
+- 认证中心的 xhs-worker 已启用，`backend:xhs:result` 授权及 `xhs-result-grant-v1` 标记存在。hn-1 通过 Nacos 发现 `xsentinel-backend` 并可访问 `43.172.88.37:8200`；匿名回调返回 401，携有效 XHS 服务 JWT 对预先确认不存在的随机任务请求返回预期 404，两侧再次查询均未新增业务行。此探针证明发现、网络、鉴权和路由可用，没有伪造发布成功结果。
+- XHS→Camoufox 和 tc-2→XHS 的鉴权状态均 online、installed=true，浏览器活动数 0。Camoufox 原持久挂载、2 GiB 内存及 512 MiB 共享内存保持，2 个业务 Cookie/JSON 文件摘要相同。
+- Nacos 共享配置只增加 `XHS_RESULT_SERVICE_NAME=xsentinel-backend`，所有既有值和 `SERVICE_AUTH_CLIENTS_JSON` 保留，两份监控配置完全保留。tc-2 `.env` 仅变更 IMAGE_TAG、FRONTEND_IMAGE_TAG 并补入 XHS_RESULT_SERVICE_NAME；hn-1 仅变更 IMAGE_TAG、CAMOUFOX_WORKER_IMAGE_TAG 并补入同名配置，均由安装器同步。
+- 两节点容器集合、原完整服务清单及两个 Compose 部署覆盖保留。tc-2 未选 worker、qq-worker、PostgreSQL、Redis 的 ID、镜像、创建和启动时间均不变。原文章上传 16 项、帖子截图 85 项逐文件 SHA256 一致。
+- 线上 3 个相关前端静态资源与容器字节相同，包含“小红书数据源”和“自动确认结果中”文案。
+
+本次未提交真实 AI 生成、QQ 投递或小红书发布，最终结果写入/完成回调的业务闭环仍以用户下一条自动投递为准：相同 `xhs_job_id` 应关联两层持久结果、回调送达时间及文章最终状态。升级前无稳定 job_id 的历史“结果待核对”记录不能自动追溯，也不会自动重发；点击发布后真实崩溃等无法确认的情况继续保留防重复保护。验收记录以独立文档提交发布，不为文档更新重建或部署运行镜像。

@@ -49,7 +49,7 @@ sequenceDiagram
 - 使用 `xhs-worker` 身份、`backend` audience、`xhs:result` scope。接收端另外校验发送者，并从数据库读取真实结果；请求正文不能把失败伪造为成功。
 - 旧版 Worker 的笼统 `failed` 响应不含 `failure_confirmed`，按无法确认处理，避免滚动更新期间错误开放重试。
 
-## 后续升级要求（本次开发未部署）
+## 升级要求
 
 需升级 **auth-center、backend、ai-worker、xhs-worker、camoufox-worker、frontend**，并执行数据库迁移 **`0036_browser_job_results`**。Camoufox 的 2 GB 内存限制、已有浏览器资料和 Nacos 服务发现方式保持现有配置。
 
@@ -62,3 +62,7 @@ sequenceDiagram
 5. 认证中心的授权补齐只执行一次；既有自定义授权、禁用状态和后续撤销不会被覆盖。详见《Camoufox Worker》中的回调授权说明。
 
 升级前的历史“结果待核对”记录没有稳定 `xhs_job_id`，无法自动关联已经过期的浏览器任务，不会被猜测为成功或自动重发。验收应使用用户新发起的一条自动投递，检查相同任务 ID 的两层结果、回调送达时间与文章状态；不要为验证回调直接重新发布历史不确定记录。
+
+## 2026-10-18 部署记录
+
+运行提交 `a337766d3fd9cf8b27fdb54bd472fd1ffe455ae4` 已发布 dev/main，Actions 全部成功，通过安装器菜单 2 分阶段更新 tc-2 和 hn-1，数据库迁移到 `0036_browser_job_results`。六个目标服务健康、Nacos 回调发现和 JWT 鉴权检查通过，已有配置及浏览器资料保留。实际步骤、备份位置和验收边界见[更新文档第三十一节](Auto-X一键更新傻瓜式文档.md#三十一小红书自动发布持久结果与完成回调升级)。本次没有发起真实小红书发布；新自动投递的最终业务结果仍须结合实际任务记录观察。
