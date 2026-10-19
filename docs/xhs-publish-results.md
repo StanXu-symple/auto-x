@@ -59,10 +59,18 @@ sequenceDiagram
 2. 先用安装器完成迁移，升级 auth-center、backend，使回调接收端及服务授权可用。
 3. 更新所有 camoufox-worker 实例，再更新 xhs-worker，最后更新 ai-worker、frontend；全部就绪后恢复监听，避免新调度器提交给仍只保存短期 Redis 结果的旧 XHS Worker。
 4. 安装器会向 Nacos 补齐缺失的 `XHS_RESULT_SERVICE_NAME`，已有自定义值保留。xhs-worker 节点需要能访问 Nacos 注册的 backend 地址/端口；两个 Worker 需要访问共享 PostgreSQL。
-5. 认证中心的授权补齐只执行一次；既有自定义授权、禁用状态和后续撤销不会被覆盖。详见《Camoufox Worker》中的回调授权说明。
+5. 安装器选择 `ai-worker` 必须同时加载 `docker-compose.ai-worker.yml`：从微服务覆盖继承 `XHS_TRANSPORT=http`、独立服务凭据只读挂载和 control 网络。仅检查镜像版本、容器 healthy 或 backend 的客户端不能证明 AI 发布通道正确；必须在 ai-worker 进程内检查实际配置和鉴权状态。
+6. 认证中心的授权补齐只执行一次；既有自定义授权、禁用状态和后续撤销不会被覆盖。详见《Camoufox Worker》中的回调授权说明。
 
 升级前的历史“结果待核对”记录没有稳定 `xhs_job_id`，无法自动关联已经过期的浏览器任务，不会被猜测为成功或自动重发。验收应使用用户新发起的一条自动投递，检查相同任务 ID 的两层结果、回调送达时间与文章状态；不要为验证回调直接重新发布历史不确定记录。
 
 ## 2026-10-18 部署记录
 
 运行提交 `a337766d3fd9cf8b27fdb54bd472fd1ffe455ae4` 已发布 dev/main，Actions 全部成功，通过安装器菜单 2 分阶段更新 tc-2 和 hn-1，数据库迁移到 `0036_browser_job_results`。六个目标服务健康、Nacos 回调发现和 JWT 鉴权检查通过，已有配置及浏览器资料保留。实际步骤、备份位置和验收边界见[更新文档第三十一节](Auto-X一键更新傻瓜式文档.md#三十一小红书自动发布持久结果与完成回调升级)。本次没有发起真实小红书发布；新自动投递的最终业务结果仍须结合实际任务记录观察。
+
+
+## 2026-10-19 自动发布仍待核对的原因
+
+2026-10-18 部署的镜像包含新逻辑，但安装器此前将 `ai-worker` 视为基础 Compose 服务，未加载它在 `docker-compose.microservices.yml` 中的覆盖。实际 `xhs_transport=redis`，独立 `ai-worker.secret` 未挂载；手动发布的 backend 则已正确使用 HTTP。因此 AI 自动投递没有稳定 `xhs_job_id`，进入没有消费者的旧队列，约 305 秒后显示笼统待核对，两层持久结果表为空。当前问题不能归因于小红书浏览器发布后未能判断结果，因为这些请求没有进入新 HTTP 发布链路。
+
+安装器现按选择加载新的 AI 专用 Compose 片段，并初始化所需网络。应用参数仍从 Nacos 读取；HTTP 通道及密钥挂载属于部署结构。升级后必须从真实 ai-worker 客户端验证 Nacos 发现及认证。旧 Redis 队列和历史待核对记录先备份保留，不启动旧消费者、不自动重新发布，避免与人工已发笔记重复。修复步骤与实际验收见更新文档第三十二节。

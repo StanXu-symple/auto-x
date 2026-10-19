@@ -1357,3 +1357,37 @@ export KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1
 - 线上 3 个相关前端静态资源与容器字节相同，包含“小红书数据源”和“自动确认结果中”文案。
 
 本次未提交真实 AI 生成、QQ 投递或小红书发布，最终结果写入/完成回调的业务闭环仍以用户下一条自动投递为准：相同 `xhs_job_id` 应关联两层持久结果、回调送达时间及文章最终状态。升级前无稳定 job_id 的历史“结果待核对”记录不能自动追溯，也不会自动重发；点击发布后真实崩溃等无法确认的情况继续保留防重复保护。验收记录以独立文档提交发布，不为文档更新重建或部署运行镜像。
+
+
+## 三十二、修复 ai-worker 未加载 HTTP 微服务配置
+
+### 问题和修复范围
+
+2026-10-19 排查确认：tc-2 实际 ai-worker 镜像为 `a337766`，但 `xhs_transport=redis`，未挂载 `/run/xsentinel/ai-worker.secret`。backend 为 `http`，因此手动发布可以工作，AI 自动发布仍进入旧 Redis 队列。最新自动投递 49、51、53 等均无 `xhs_job_id`，等待约 305 秒后变成“结果待核对”；`browser_job_results` 为空，hn-1 对应时段没有受理 HTTP 发布。旧队列 `xsentinel:xhs:jobs` 检查时积压 17 项。
+
+修复为：安装器选择 ai-worker 时加载 `docker-compose.ai-worker.yml`，继承微服务中的 HTTP 通道、独立凭据只读挂载和 control 网络，同时为仅选 AI 的部署初始化命名网络。只更新部署配置，应用代码无需修改，没有新数据库迁移；hn-1 无需升级。源码按 dev→main 发布，安装器应用定义发布 apps/stanxu；通过原菜单 2 在 tc-2 重建 ai-worker（普通更新自动加入 monitor-agent），继续固定已经安装的 `a337766d3fd9cf8b27fdb54bd472fd1ffe455ae4` 镜像，避免为配置修改重新下载浏览器镜像。
+
+### 备份及安装器入口
+
+先完成第二节所述数据库、配置、控制面、Nacos 与媒体备份，并额外备份旧 Redis 列表，权限 600，不将 Cookie/正文输出到日志。本次完成备份：`/home/docker/auto-x/backups/pre-ai-xhs-http-tc2-20261019T145204Z-6xVVAu`，11 个容器、0036 迁移、三份 Nacos JSON、PG dump、媒体归档与 SHA256 复验通过，旧队列 17 项完整保存。SHA256 清单摘要 `d8283592a729aeec3eaeed231597703d9df75ec41ab8c679de7c93acbd791a80`。
+
+备份并快进 `/root/apps` 到本次已发布 stanxu 提交，确认安装器包含 ai-worker 片段选择。不要只修改服务器 `.env` 或向运行容器注入源码。原完整服务清单保存后，在 `/root` 运行：
+
+```bash
+TERM=xterm COMPOSE_PROGRESS=plain \
+KJ_APP_INTERACTIVE=1 KJ_APP_ACTION=update KJ_APPS_SKIP_REFRESH=1 \
+KJ_AUTO_X_REPO_URL=https://github.com/StanXu-symple/auto-x.git \
+KJ_AUTO_X_IMAGE_REGISTRY=ghcr.io \
+KJ_AUTO_X_IMAGE_TAG=sha-a337766d3fd9cf8b27fdb54bd472fd1ffe455ae4 \
+KJ_AUTO_X_SKIP_PULL=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1 \
+AUTO_X_SERVICES=ai-worker bash kejilion.sh app auto-x
+```
+
+这是 `bash kejilion.sh app auto-x`、default 环境 3、菜单 2 的等价入口。`SKIP_PULL=1` 仅在 backend 镜像已存在并核验 OCI revision 后使用。更新后立即按第四节恢复原完整清单 `backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend`；ai-worker 之外的业务容器应保持原 ID/镜像。旧队列不清除、不启动 Redis 消费者、不自动重放历史不确定任务。
+
+### 验收要求
+
+1. 使用安装器实际选择的 Compose 文件执行 `config --format json`，仅输出脱敏断言：AI 的 HTTP 通道、required Nacos、只读 secret 挂载及 control 网络存在。
+2. 从新 ai-worker 进程执行 `get_settings()`，确认 `xhs_transport=http`，独立凭据文件存在非空；通过 `AIPublishDispatcher._ensure_xhs_client()` 得到的正式客户端执行只读 `status()`，确认 Nacos 发现、认证及 XHS 状态可用。
+3. 检查容器 healthy、无 OOM、原清单和其他业务容器保留、0036 未改变、媒体与 Nacos 配置保留，旧队列长度及内容摘要不变。容器 healthy 不能替代第 1、2 项。
+4. 不以真实发布作为诊断探针。后续用户正常新任务应有稳定 `xhs_job_id`，并在两层持久结果/回调中可追溯。既有待核对记录不会因此自动变成成功；HTTP 修复不能证明这些历史文章已发布或未发布。

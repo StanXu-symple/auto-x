@@ -145,6 +145,7 @@ def test_compose_config_resolves_control_plane_healthchecks() -> None:
     assert docker is not None
     compose_files = [
         "docker-compose.yml",
+        "docker-compose.ai-worker.yml",
         "docker-compose.auth-center.yml",
         "docker-compose.monitor-center.yml",
         "docker-compose.monitor-agent.yml",
@@ -169,6 +170,15 @@ def test_compose_config_resolves_control_plane_healthchecks() -> None:
     services = json.loads(result.stdout)["services"]
     for service, url in HEALTHCHECKS.items():
         assert services[service]["healthcheck"]["test"] == _expected_test(url)
+    ai_worker = services["ai-worker"]
+    assert ai_worker["environment"]["XHS_TRANSPORT"] == "http"
+    assert ai_worker["environment"]["NACOS_CONFIG_REQUIRED"] == "true"
+    assert ai_worker["environment"]["SERVICE_CLIENT_SECRET_FILE"] == "/run/xsentinel/ai-worker.secret"
+    assert any(
+        volume["target"] == "/run/xsentinel/ai-worker.secret" and volume["read_only"]
+        for volume in ai_worker["volumes"]
+    )
+    assert "control" in ai_worker["networks"]
 
 
 def test_camoufox_owns_browser_image_profiles_and_two_gib_limit():
