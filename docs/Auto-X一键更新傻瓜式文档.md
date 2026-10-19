@@ -1391,3 +1391,41 @@ AUTO_X_SERVICES=ai-worker bash kejilion.sh app auto-x
 2. 从新 ai-worker 进程执行 `get_settings()`，确认 `xhs_transport=http`，独立凭据文件存在非空；通过 `AIPublishDispatcher._ensure_xhs_client()` 得到的正式客户端执行只读 `status()`，确认 Nacos 发现、认证及 XHS 状态可用。
 3. 检查容器 healthy、无 OOM、原清单和其他业务容器保留、0036 未改变、媒体与 Nacos 配置保留，旧队列长度及内容摘要不变。容器 healthy 不能替代第 1、2 项。
 4. 不以真实发布作为诊断探针。后续用户正常新任务应有稳定 `xhs_job_id`，并在两层持久结果/回调中可追溯。既有待核对记录不会因此自动变成成功；HTTP 修复不能证明这些历史文章已发布或未发布。
+
+
+以下只读命令在 tc-2 执行，使用真实 AI 客户端检查通道与身份，不会提交发布任务：
+
+```bash
+docker exec -i x-sentinel-ai-worker-1 python - <<'PYVERIFY'
+import asyncio
+from pathlib import Path
+from app.core.config import get_settings
+from app.db.session import AsyncSessionFactory
+from app.services.ai_publish import AIPublishDispatcher
+async def main():
+    settings = get_settings()
+    assert settings.xhs_transport == "http", "AI 发布仍使用旧 Redis 通道"
+    assert settings.nacos_config_enabled and settings.nacos_config_required
+    assert Path(settings.service_client_secret_file).read_text().strip()
+    dispatcher = AIPublishDispatcher(settings, None, AsyncSessionFactory)
+    client = await dispatcher._ensure_xhs_client()
+    assert client is not None and client.client_id == "ai-worker"
+    try:
+        state = await client.status()
+        assert state.get("status") == "online" and state.get("installed") is True
+        print("AI HTTP 通道、独立身份、Nacos 发现及 XHS 鉴权状态正常")
+    finally:
+        await client.aclose()
+asyncio.run(main())
+PYVERIFY
+```
+
+### 2026-10-19 实际部署结果
+
+- 源码修复 `6bfd81be10dbea2041dac476de1561aa0ebb07b0` 已发布 dev/main，[Actions 39273841092](https://github.com/StanXu-symple/auto-x/actions/runs/39273841092) 全部成功；安装器 `b4a0bd76648af96d5ff118441266264773d6e773` 已发布 apps/stanxu。安装器回归 34 项通过；新增回归在旧版有 5 项失败，修复后通过。后端 Compose 测试 8 项通过、本机缺 Docker 的 1 项转由服务器真实解析补验。
+- tc-2 `/root/apps` 在备份后快进到已发布安装器，`auto-x.conf` SHA256 为 `49879b4157bbe66d453965918721ab16cb6c0703642810e013b9df6451467e3e`。2026-10-19 15:02:50 UTC（北京时间 23:02:50）开始菜单 2，日志 `/root/auto-x-ai-http-6bfd81b.log`、退出文件同前缀 `.exit`，退出 0。源码为 `6bfd81b`，运行镜像沿用已经核验的 `a337766`。
+- 新 ai-worker 容器标签实际包含基础、kejilion、ai-worker、monitor-agent 四份 Compose。服务器真实 `config --format json` 解析及进程 `get_settings()` 均为 `XHS_TRANSPORT=http`、Nacos enabled/required；独立 `/run/xsentinel/ai-worker.secret` 非空并只读挂载，control 网络存在。
+- 从实际 ai-worker 的 `AIPublishDispatcher._ensure_xhs_client()` 获取 `AIPublishXHSClient`，身份 `ai-worker`、audience `xhs-worker`；Nacos 发现一个 XHS 实例，鉴权 `status()` 返回 online、installed=true、active_tasks=0。结果表和关联字段可读，升级后尚无新自动投递，不能把只读探针当成真实发布成功证据。
+- ai-worker 与安装器依赖 monitor-agent 均 healthy；其余 backend、frontend、auth-center、worker、qq-worker、PostgreSQL、Redis 的容器 ID、镜像、创建和启动时间与备份完全相同。容器集合 11 项、七项完整服务清单、两份部署覆盖均保留；`.env` 键值无变化，三份 Nacos JSON 及服务客户端配置无增删改。已有上传文件 21 项、帖子截图 93 项逐文件 SHA256 相同，旧 Redis 队列 17 项内容完整保留。hn-1 本轮未执行更新。
+
+历史文章不会仅因通道修复而自动改成“已推送”。后续正常新任务需观察稳定 `xhs_job_id`、两层结果与回调，真实点击发布后的异常仍遵守防重复发布规则。本轮未创建或重试 AI、QQ、小红书业务任务。
