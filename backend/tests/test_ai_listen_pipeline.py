@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.dialects import postgresql
@@ -60,7 +61,7 @@ class ListenSession:
         raise AssertionError(sql)
 
 
-def make_listen_session(now: datetime, *, inserted: list[int]) -> ListenSession:
+def make_listen_session(now: datetime, *, inserted: list[int], monkeypatch) -> ListenSession:
     setting = AISetting(
         id=1,
         enabled=True,
@@ -134,7 +135,7 @@ def make_listen_session(now: datetime, *, inserted: list[int]) -> ListenSession:
             raw_payload={},
         ),
     ]
-    return ListenSession(
+    session = ListenSession(
         setting=setting,
         tasks=[task],
         tweets=tweets,
@@ -157,12 +158,23 @@ def make_listen_session(now: datetime, *, inserted: list[int]) -> ListenSession:
         inserted=inserted,
     )
 
+    async def remote_selection(_task_id):
+        ids = [link.skill_id for link in session.links]
+        return SimpleNamespace(
+            selected_ids=ids,
+            skills=session.skills,
+            valid=bool(ids) and ids == [s.id for s in session.skills],
+        )
+
+    monkeypatch.setattr("app.services.ai_jobs.resolve_task_skills", remote_selection)
+    return session
+
 
 async def test_listening_enqueue_matches_account_type_and_time_and_freezes_skills(
     monkeypatch,
 ) -> None:
     now = datetime.now(UTC)
-    session = make_listen_session(now, inserted=[101])
+    session = make_listen_session(now, inserted=[101], monkeypatch=monkeypatch)
     session.tasks[0].auto_publish_channels = ["xhs", "qq"]
     session.tasks[0].owner_admin_id = 9
     session.tasks[0].qq_bot_id = 2
@@ -211,7 +223,7 @@ async def test_explicit_backfill_uses_requested_window_and_frozen_skill_snapshot
     monkeypatch,
 ) -> None:
     now = datetime.now(UTC)
-    session = make_listen_session(now, inserted=[103])
+    session = make_listen_session(now, inserted=[103], monkeypatch=monkeypatch)
     session.tasks[0].auto_publish_channels = ["qq"]
     session.tasks[0].owner_admin_id = 9
     session.tasks[0].qq_bot_id = 2
@@ -297,7 +309,9 @@ async def test_backfill_uses_stored_posts_even_after_collection_types_are_disabl
     monkeypatch, mode: str, expected_ids: list[int]
 ) -> None:
     now = datetime.now(UTC)
-    session = make_listen_session(now, inserted=list(range(101, 101 + len(expected_ids))))
+    session = make_listen_session(
+        now, inserted=list(range(101, 101 + len(expected_ids))), monkeypatch=monkeypatch
+    )
     session.users[0].include_replies = False
     session.users[0].include_retweets = False
     session.tweets = [
@@ -439,8 +453,7 @@ class EnabledClaimSession(PausedClaimSession):
         return {
             1: self.task.id,
             2: self.job,
-            3: 1,  # One current active Skill.
-            4: 1,  # One previous retry round.
+            3: 1,  # One previous retry round.
         }[self.scalar_calls]
 
     async def scalars(self, _statement):
@@ -471,6 +484,11 @@ async def test_manual_retry_claim_increments_lifetime_and_persists_attempt(monke
         next_attempt_at=now - timedelta(seconds=1),
         manual=False,
     )
+
+    async def valid_selection(_task_id):
+        return SimpleNamespace(valid=True)
+
+    monkeypatch.setattr("app.ai_worker.resolve_task_skills", valid_selection)
     session = EnabledClaimSession(job, task)
     monkeypatch.setattr("app.ai_worker.AsyncSessionFactory", lambda: session)
     worker = object.__new__(AIGenerationWorker)

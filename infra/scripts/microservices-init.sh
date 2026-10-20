@@ -8,12 +8,17 @@ if [[ ! -s "$data_dir/private.pem" ]]; then openssl genrsa -out "$data_dir/priva
 if [[ ! -s "$data_dir/public.pem" ]]; then openssl rsa -in "$data_dir/private.pem" -pubout -out "$data_dir/public.pem"; fi
 if [[ ! -s "$data_dir/services.json" ]]; then cp "$root_dir/infra/microservices/services.example.json" "$data_dir/services.json"; fi
 if [[ ! -s "$data_dir/clients.json" ]]; then
-  monitor_secret="$(openssl rand -hex 32)"; backend_secret="$(openssl rand -hex 32)"; agent_secret="$(openssl rand -hex 32)"
-  sha256() { printf '%s' "$1" | openssl dgst -sha256 -r | awk '{print $1}'; }
-  sed -e "0,/REPLACE_WITH_SHA256/s//$(sha256 "$agent_secret")/" -e "0,/REPLACE_WITH_SHA256/s//$(sha256 "$monitor_secret")/" -e "0,/REPLACE_WITH_SHA256/s//$(sha256 "$backend_secret")/" "$root_dir/infra/microservices/clients.example.json" > "$data_dir/clients.json"
-  printf '%s\n' "$monitor_secret" > "$data_dir/monitor.secret"
-  printf '%s\n' "$backend_secret" > "$data_dir/backend.secret"
-  printf '%s\n' "$agent_secret" > "$data_dir/agent.secret"
+  python3 - "$root_dir/infra/microservices/clients.example.json" "$data_dir" <<'PYINIT'
+import hashlib, json, secrets, sys
+from pathlib import Path
+clients = json.loads(Path(sys.argv[1]).read_text())
+directory = Path(sys.argv[2])
+for client_id, basename in {"auth-center": "agent", "monitor": "monitor", "backend": "backend"}.items():
+    secret = secrets.token_hex(32)
+    clients[client_id]["secret_sha256"] = hashlib.sha256(secret.encode()).hexdigest()
+    (directory / (basename + ".secret")).write_text(secret + "\n")
+(directory / "clients.json").write_text(json.dumps(clients, indent=2) + "\n")
+PYINIT
 fi
 if [[ -s "$data_dir/clients.json" ]] && command -v python3 >/dev/null 2>&1; then
   python3 - "$data_dir/clients.json" <<'PY'
@@ -27,8 +32,11 @@ grants_by_client = {
     "screenshot-worker": {"camoufox-worker": "browser:execute"},
     "runtime-logs": {"xhs-worker": "logs:read", "camoufox-worker": "logs:read"},
     "ai-worker": {"xhs-worker": "xhs:execute"},
+    "skill-backend": {"skill-worker": "skills:read skills:manage"},
+    "skill-poller": {"skill-worker": "skills:read"},
+    "skill-ai-worker": {"skill-worker": "skills:read"},
 }
-for client_id in ("xhs-worker", "screenshot-worker", "runtime-logs", "ai-worker"):
+for client_id in grants_by_client:
     secret_path = Path(path).with_name(client_id + ".secret")
     client = clients.get(client_id)
     # Placeholders exist only in the bundled example used by a new install.

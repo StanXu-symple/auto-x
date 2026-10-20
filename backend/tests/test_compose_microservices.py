@@ -19,7 +19,21 @@ APPLICATION_SERVICES = {
     "worker": ("xsentinel-worker", "WORKER_HOST_PORT", "8201"),
     "ai-worker": ("xsentinel-ai-worker", "AI_WORKER_HOST_PORT", "8202"),
     "qq-worker": ("xsentinel-qq-worker", "QQ_WORKER_HOST_PORT", "8203"),
+    "skill-worker": ("xsentinel-skill-worker", "SKILL_WORKER_HOST_PORT", "8204"),
 }
+
+
+def test_skill_service_caller_isolation_and_healthcheck():
+    source = (REPOSITORY_ROOT / "docker-compose.yml").read_text()
+    skill = _service_block(source, "skill-worker")
+    assert "app.skill_worker:app" in skill
+    assert "http://127.0.0.1:8204/health/ready" in skill
+    assert ".secret:" not in skill and "private.pem" not in skill
+    for service, caller in (("backend", "skill-backend"), ("worker", "skill-poller"),
+                            ("ai-worker", "skill-ai-worker")):
+        block = _service_block(source, service)
+        assert f"SKILL_CLIENT_ID: {caller}" in block
+        assert f"/{caller}.secret:/run/xsentinel/{caller}.secret:ro" in block
 
 
 def _expected_test(url: str) -> list[str]:

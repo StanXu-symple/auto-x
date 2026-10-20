@@ -11,6 +11,7 @@ LOG_SYSTEMS = {
     "backend": "Backend",
     "worker": "轮询 Worker",
     "ai-worker": "AI Worker",
+    "skill-worker": "Skill Worker",
     "qq-worker": "QQ Worker",
     "xhs-worker": "小红书 Worker",
     "camoufox-worker": "浏览器 Worker",

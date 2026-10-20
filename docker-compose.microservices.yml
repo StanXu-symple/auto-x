@@ -1,4 +1,12 @@
 services:
+  skill-worker:
+    environment:
+      NACOS_SERVER_ADDR: ${NACOS_SERVER_ADDR:?NACOS_SERVER_ADDR must be set}
+      NACOS_SERVICE_NAME: xsentinel-skill-worker
+      NACOS_SERVICE_PORT: ${SKILL_WORKER_HOST_PORT:-8204}
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
+    networks: [control, app, data, monitoring]
+
   backend:
     environment:
       XHS_TRANSPORT: http

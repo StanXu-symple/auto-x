@@ -626,6 +626,32 @@ def test_ai_worker_caller_rejects_missing_or_mismatched_existing_secret():
             module.ensure_ai_worker_caller(values)
 
 
+def test_skill_callers_preserve_credentials_and_revocations(tmp_path):
+    import json
+
+    module = load_script()
+    values = {}
+    module.ensure_skill_callers(values)
+    original = dict(values)
+    module.ensure_skill_callers(values)
+    assert values == original
+    clients = json.loads(values["SERVICE_AUTH_CLIENTS_JSON"])
+    assert clients["skill-backend"]["grants"] == {"skill-worker": "skills:read skills:manage"}
+    for caller in ("skill-poller", "skill-ai-worker"):
+        assert clients[caller]["grants"] == {"skill-worker": "skills:read"}
+    module.write_control_plane_values(tmp_path, values)
+    loaded = module.read_control_plane_values(tmp_path)
+    for caller in ("skill-backend", "skill-poller", "skill-ai-worker"):
+        key = "SERVICE_CLIENT_" + caller.upper().replace("-", "_") + "_SECRET"
+        assert loaded[key] == values[key]
+        assert key not in module.BOOTSTRAP_CACHE_KEYS
+        assert (tmp_path / (caller + ".secret")).stat().st_mode & 0o777 == 0o600
+    clients["skill-poller"]["grants"] = {}
+    values["SERVICE_AUTH_CLIENTS_JSON"] = json.dumps(clients)
+    module.ensure_skill_callers(values)
+    assert json.loads(values["SERVICE_AUTH_CLIENTS_JSON"])["skill-poller"]["grants"] == {}
+
+
 def test_nacos_sync_seeds_ai_identity_only_for_ai_or_auth_nodes(monkeypatch, tmp_path):
     module = load_script()
     env_file = tmp_path / ".env"

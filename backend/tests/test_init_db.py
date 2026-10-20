@@ -48,8 +48,8 @@ async def test_seed_statements_are_race_safe_postgres_upserts(monkeypatch) -> No
     monkeypatch.setattr(init_db, "AsyncSessionFactory", lambda: session)
     settings = Settings(_env_file=None)
     await init_db.seed_runtime_defaults(settings)
-    # Administrator, polling/X source settings, three skills, AI feature/settings.
-    assert len(session.statements) == 10
+    # Administrator, polling/X source settings, AI feature/settings.
+    assert len(session.statements) == 7
     for statement in session.statements:
         sql = str(statement.compile(dialect=postgresql.dialect())).upper()
         assert "ON CONFLICT" in sql
@@ -60,5 +60,18 @@ async def test_existing_seed_marker_does_not_restore_deleted_placeholders(monkey
     session = FakeSession(seed_claim=None)
     monkeypatch.setattr(init_db, "AsyncSessionFactory", lambda: session)
     await init_db.seed_runtime_defaults(Settings(_env_file=None))
-    assert len(session.statements) == 9
+    assert len(session.statements) == 6
     assert not any(statement.table.name == "qq_placeholders" for statement in session.statements)
+
+
+async def test_skill_worker_seeds_without_overwriting_edits(monkeypatch):
+    from app.skills import bootstrap
+
+    session = FakeSession()
+    monkeypatch.setattr(bootstrap, "AsyncSessionFactory", lambda: session)
+    await bootstrap.seed_skills()
+    assert len(session.statements) == 3
+    for statement in session.statements:
+        assert statement.table.name == "ai_skills"
+        sql = str(statement.compile(dialect=postgresql.dialect()))
+        assert "ON CONFLICT DO NOTHING" in sql

@@ -12,6 +12,7 @@
     { "id": "ai-worker", "name": "AI Worker", "component": "ai_worker", "node": "local", "project": "x-sentinel", "container_service": "ai-worker", "port": 8202 },
     { "id": "qq-worker", "name": "QQ Worker", "component": "qq_worker", "node": "local", "project": "x-sentinel", "container_service": "qq-worker", "port": 8203 },
     { "id": "xhs-worker", "name": "XHS Worker", "component": "xhs_worker", "node": "local", "project": "x-sentinel", "container_service": "xhs-worker", "port": 8006 },
-    { "id": "camoufox-worker", "name": "Camoufox Worker", "component": "camoufox_worker", "node": "local", "project": "x-sentinel", "container_service": "camoufox-worker", "port": 8007 }
+    { "id": "camoufox-worker", "name": "Camoufox Worker", "component": "camoufox_worker", "node": "local", "project": "x-sentinel", "container_service": "camoufox-worker", "port": 8007 },
+    { "id": "skill-worker", "name": "Skill Worker", "component": "skill_worker", "node": "local", "project": "x-sentinel", "container_service": "skill-worker", "port": 8204 }
   ]
 }

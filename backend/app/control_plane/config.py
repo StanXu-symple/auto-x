@@ -184,6 +184,7 @@ class Service(BaseModel):
         "redis",
         "worker",
         "ai_worker",
+        "skill_worker",
         "qq_worker",
         "xhs_worker",
         "camoufox_worker",
@@ -251,8 +252,12 @@ async def load_monitor_topology(nacos: Any | None) -> Topology:
         if required:
             raise RuntimeError("NACOS_SERVER_ADDR is required for monitor topology")
         return load_topology()
-    data_id = os.environ.get("NACOS_MONITOR_TOPOLOGY_DATA_ID", "x-sentinel-monitor-topology.json").strip()
-    group = (os.environ.get("NACOS_CONFIG_GROUP") or os.environ.get("NACOS_GROUP") or "X_SENTINEL").strip()
+    data_id = os.environ.get(
+        "NACOS_MONITOR_TOPOLOGY_DATA_ID", "x-sentinel-monitor-topology.json"
+    ).strip()
+    group = (
+        os.environ.get("NACOS_CONFIG_GROUP") or os.environ.get("NACOS_GROUP") or "X_SENTINEL"
+    ).strip()
     try:
         payload = await nacos.get_json_config(data_id, group=group)
         if payload is None:
@@ -272,8 +277,12 @@ async def load_monitor_node_id(nacos: Any | None, topology: Topology) -> str:
     required = _as_bool(os.environ.get("NACOS_CONFIG_REQUIRED"), default=False)
     address = os.environ.get("NACOS_ADVERTISE_IP", "").strip()
     if enabled and nacos is not None and address:
-        data_id = os.environ.get("NACOS_MONITOR_NODES_DATA_ID", "x-sentinel-monitor-nodes.json").strip()
-        group = (os.environ.get("NACOS_CONFIG_GROUP") or os.environ.get("NACOS_GROUP") or "X_SENTINEL").strip()
+        data_id = os.environ.get(
+            "NACOS_MONITOR_NODES_DATA_ID", "x-sentinel-monitor-nodes.json"
+        ).strip()
+        group = (
+            os.environ.get("NACOS_CONFIG_GROUP") or os.environ.get("NACOS_GROUP") or "X_SENTINEL"
+        ).strip()
         try:
             payload = await nacos.get_json_config(data_id, group=group)
             if not isinstance(payload, Mapping) or not isinstance(payload.get("nodes"), Mapping):
@@ -287,8 +296,12 @@ async def load_monitor_node_id(nacos: Any | None, topology: Topology) -> str:
             return matches[0]
         except Exception as exc:
             if required:
-                raise RuntimeError(f"Unable to resolve monitor node from {data_id!r}: {exc}") from exc
-            logger.warning("Unable to resolve monitor node from %s: %s; using local identity", data_id, exc)
+                raise RuntimeError(
+                    f"Unable to resolve monitor node from {data_id!r}: {exc}"
+                ) from exc
+            logger.warning(
+                "Unable to resolve monitor node from %s: %s; using local identity", data_id, exc
+            )
     elif enabled and required:
         raise RuntimeError("NACOS_ADVERTISE_IP is required for Nacos monitor node mapping")
     node_id = os.environ.get("MONITOR_NODE_ID", "local").strip()

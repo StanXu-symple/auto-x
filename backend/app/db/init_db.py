@@ -12,12 +12,11 @@ from app.models import (  # imports all model metadata
     Admin,
     AIFeature,
     AISetting,
-    AISkill,
     AppSetting,
     QQPlaceholder,
 )
 from app.schemas.qq_placeholder import DEFAULT_PLACEHOLDERS
-from app.services.ai_defaults import DEFAULT_AI_FEATURES, DEFAULT_AI_MODEL, DEFAULT_AI_SKILLS
+from app.services.ai_defaults import DEFAULT_AI_FEATURES, DEFAULT_AI_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -90,23 +89,7 @@ async def seed_runtime_defaults(settings: Settings, *, seed_admin: bool = True) 
             statement = statement.on_conflict_do_nothing(index_elements=[AppSetting.key])
             await session.execute(statement)
 
-        # Use fixed IDs and no-op updates so startup races are harmless and administrator
-        # edits to the bundled skills are never overwritten on subsequent restarts.
         now = datetime.now(UTC)
-        for skill in DEFAULT_AI_SKILLS:
-            statement = postgres_insert(AISkill).values(
-                **skill,
-                output_schema=None,
-                is_active=True,
-                version=1,
-                remote_skill_id=None,
-                remote_skill_version=None,
-                created_at=now,
-                updated_at=now,
-            )
-            statement = statement.on_conflict_do_nothing(index_elements=[AISkill.id])
-            await session.execute(statement)
-
         for feature in DEFAULT_AI_FEATURES:
             statement = postgres_insert(AIFeature).values(
                 **feature,

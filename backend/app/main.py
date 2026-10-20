@@ -37,6 +37,7 @@ from app.services.metrics import (
     POLL_QUEUE_DUE,
     WORKER_HEARTBEAT,
 )
+from app.services.skill_client import skill_client_lifespan
 from app.services.xhs_client import XHSServiceClient
 
 settings = get_settings()
@@ -87,7 +88,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         extra={"version": __version__, "environment": settings.environment},
     )
     try:
-        yield
+        async with skill_client_lifespan(settings):
+            yield
     finally:
         if nacos_registration is not None:
             await nacos_registration.aclose()

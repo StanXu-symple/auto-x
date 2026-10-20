@@ -32,6 +32,13 @@ scrape_configs:
         labels:
           component: worker
 
+  - job_name: xsentinel-skill-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["skill-worker:8204"]
+        labels:
+          component: skill-worker
+
   - job_name: xsentinel-ai-worker
     metrics_path: /metrics
     scrape_interval: 10s

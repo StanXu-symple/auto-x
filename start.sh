@@ -3,7 +3,7 @@
 # Start the management console for local visual/login checks.
 #
 # This native-process entrypoint intentionally starts only the services needed
-# by the frontend login flow: auth-center, API, and the Vite dev server.
+# by the frontend login flow: auth-center, skill-worker, API, and the Vite dev server.
 # Polling/AI/QQ/XHS workers belong to the Compose/microservice deployment and
 # are not required when checking the management console UI.
 
@@ -105,6 +105,12 @@ command -v curl >/dev/null 2>&1 || fail "未找到 curl。"
 [[ -x "$PYTHON_BIN" ]] || fail "缺少 backend/.venv。请先在 backend 目录创建虚拟环境并安装依赖：python3 -m venv .venv && source .venv/bin/activate && pip install -e '.[dev]'"
 [[ -d "$FRONTEND_DIR/node_modules" ]] || fail "缺少前端依赖。请先执行：cd frontend && npm ci"
 
+# Generates only missing caller credentials; existing credentials and grants survive.
+"$ROOT_DIR/infra/scripts/microservices-init.sh" "$ROOT_DIR/data/control-plane"
+export SERVICE_AUTH_CLIENTS_FILE="$ROOT_DIR/data/control-plane/clients.json"
+export SKILL_CLIENT_ID=skill-backend
+export SKILL_CLIENT_SECRET_FILE="$ROOT_DIR/data/control-plane/skill-backend.secret"
+
 echo "[migration] 检查并升级数据库结构"
 (
   cd "$BACKEND_DIR"
@@ -118,6 +124,15 @@ start_process \
   "$LOG_DIR/auth-center.log" \
   "$PYTHON_BIN" -m uvicorn app.control_plane.auth:app --host 127.0.0.1 --port 9100
 wait_for_url "auth-center" "http://127.0.0.1:9100/health/ready" "$RUN_DIR/auth-center.pid" "$LOG_DIR/auth-center.log"
+
+start_process \
+  "skill-worker" \
+  "uvicorn app.skill_worker:app" \
+  "$BACKEND_DIR" \
+  "$LOG_DIR/skill-worker.log" \
+  env SERVICE_NAME=skill-worker SERVICE_AUTH_URL=http://127.0.0.1:9100 \
+  "$PYTHON_BIN" -m uvicorn app.skill_worker:app --host 127.0.0.1 --port 8204
+wait_for_url "skill-worker" "http://127.0.0.1:8204/health/ready" "$RUN_DIR/skill-worker.pid" "$LOG_DIR/skill-worker.log"
 
 start_process \
   "api" \

@@ -49,6 +49,9 @@ _NACOS_LOCAL_ONLY_FIELDS = {
     "tweet_screenshot_client_secret_file",
     "tweet_screenshot_dir",
     "service_auth_public_key_file",
+    "skill_client_id",
+    "skill_client_secret_file",
+    "skill_service_url",
     "nacos_service_name",
     "nacos_advertise_ip",
     "nacos_service_port",
@@ -368,6 +371,11 @@ class Settings(BaseSettings):
     # Distributed control plane. Empty values retain the single-host collector.
     service_auth_key_encryption_key: str = ""
     service_auth_url: str = ""
+    skill_service_name: str = "xsentinel-skill-worker"
+    skill_service_url: str = "http://127.0.0.1:8204"
+    skill_request_timeout_seconds: float = Field(default=10.0, gt=0, le=30)
+    skill_client_id: str = "skill-backend"
+    skill_client_secret_file: str = "/run/xsentinel/skill-backend.secret"
     service_client_secret_file: str = "/etc/xsentinel/secrets/backend.secret"
     runtime_logs_client_secret_file: str = "/etc/xsentinel/secrets/runtime-logs.secret"
     monitor_center_url: str = ""

@@ -269,7 +269,7 @@ class AIListenTask(Base):
     skills: Mapped[list[AIListenTaskSkill]] = relationship(
         back_populates="task",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="raise",
         order_by="AIListenTaskSkill.priority",
     )
     jobs: Mapped[list[AIGenerationJob]] = relationship(back_populates="listen_task")
@@ -305,7 +305,7 @@ class AIListenTaskSkill(Base):
     )
     priority: Mapped[int] = mapped_column(Integer)
     task: Mapped[AIListenTask] = relationship(back_populates="skills")
-    skill: Mapped[AISkill] = relationship(lazy="selectin")
+    skill: Mapped[AISkill] = relationship(lazy="raise")
 
 
 class AIListenTaskBackfill(Base):

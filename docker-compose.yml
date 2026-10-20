@@ -66,6 +66,9 @@ x-backend: &backend-common
     X_REQUEST_TIMEOUT_SECONDS: ${X_REQUEST_TIMEOUT_SECONDS:-20}
     X_MAX_PAGES_PER_POLL: ${X_MAX_PAGES_PER_POLL:-5}
     X_PAGE_SIZE: ${X_PAGE_SIZE:-100}
+    SKILL_SERVICE_NAME: ${SKILL_SERVICE_NAME:-xsentinel-skill-worker}
+    SKILL_SERVICE_URL: ${SKILL_SERVICE_URL:-http://skill-worker:8204}
+    SKILL_REQUEST_TIMEOUT_SECONDS: ${SKILL_REQUEST_TIMEOUT_SECONDS:-10}
     AI_ALLOWED_PROVIDER_HOSTS: '${AI_ALLOWED_PROVIDER_HOSTS:-["api.openai.com"]}'
     AI_WORKER_SCAN_INTERVAL_SECONDS: ${AI_WORKER_SCAN_INTERVAL_SECONDS:-2}
     AI_WORKER_MAX_CONCURRENCY: ${AI_WORKER_MAX_CONCURRENCY:-3}
@@ -303,13 +306,15 @@ services:
       NACOS_SERVICE_NAME: xsentinel-auth-center
       NACOS_SERVICE_PORT: "${AUTH_CENTER_PORT:-9100}"
       SERVICE_AUTH_PRIVATE_KEY_FILE: ""
-      SERVICE_AUTH_CLIENTS_FILE: ""
+      SERVICE_AUTH_CLIENTS_FILE: /run/xsentinel/clients.json
       SERVICE_AUTH_KEY_ENCRYPTION_KEY: ${SERVICE_AUTH_KEY_ENCRYPTION_KEY:-}
       SERVICE_AUTH_KEY_ROTATION_DAYS: ${SERVICE_AUTH_KEY_ROTATION_DAYS:-30}
       SERVICE_AUTH_KEY_OVERLAP_DAYS: ${SERVICE_AUTH_KEY_OVERLAP_DAYS:-7}
       SERVICE_AUTH_RATE_LIMIT: ${SERVICE_AUTH_RATE_LIMIT:-120}
       SERVICE_AUTH_RATE_WINDOW_SECONDS: ${SERVICE_AUTH_RATE_WINDOW_SECONDS:-60}
       SERVICE_AUTH_TOKEN_LIFETIME_SECONDS: ${SERVICE_AUTH_TOKEN_LIFETIME_SECONDS:-120}
+    volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/clients.json:/run/xsentinel/clients.json:ro
     expose:
       - "9100"
     depends_on:
@@ -333,15 +338,51 @@ services:
         reservations:
           memory: 128m
 
+  skill-worker:
+    <<: *backend-common
+    command: ["uvicorn", "app.skill_worker:app", "--host", "0.0.0.0", "--port", "8204"]
+    environment:
+      <<: *backend-environment
+      SERVICE_NAME: skill-worker
+      AUTO_CREATE_TABLES: "false"
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
+      NACOS_SERVICE_NAME: xsentinel-skill-worker
+      NACOS_SERVICE_PORT: "${SKILL_WORKER_HOST_PORT:-8204}"
+    volumes:
+      - runtime_logs:/var/log/xsentinel
+    expose:
+      - "8204"
+    ports:
+      - "${SKILL_WORKER_BIND_IP:-0.0.0.0}:${SKILL_WORKER_HOST_PORT:-8204}:8204"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      log-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8204/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256m
+
   backend:
     <<: *backend-common
     environment:
       <<: *backend-environment
+      SKILL_CLIENT_ID: skill-backend
+      SKILL_CLIENT_SECRET_FILE: /run/xsentinel/skill-backend.secret
       SERVICE_NAME: backend
-      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
       NACOS_SERVICE_NAME: xsentinel-backend
       NACOS_SERVICE_PORT: "${BACKEND_HOST_PORT:-8200}"
     volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/skill-backend.secret:/run/xsentinel/skill-backend.secret:ro
       - xhs_uploads:/var/lib/xsentinel/xhs-uploads
       - article_uploads:/var/lib/xsentinel/article-uploads
       - ${TWEET_SCREENSHOT_VOLUME:-tweet_screenshots}:${TWEET_SCREENSHOT_DIR:-/var/lib/xsentinel/tweet-screenshots}:ro
@@ -387,12 +428,15 @@ services:
     <<: *backend-common
     environment:
       <<: *backend-environment
+      SKILL_CLIENT_ID: skill-poller
+      SKILL_CLIENT_SECRET_FILE: /run/xsentinel/skill-poller.secret
       SERVICE_NAME: worker
-      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL-}
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
       TWEET_SCREENSHOT_CLIENT_SECRET_FILE: /run/xsentinel/screenshot-worker.secret
       NACOS_SERVICE_NAME: xsentinel-worker
       NACOS_SERVICE_PORT: "${WORKER_HOST_PORT:-8201}"
     volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/skill-poller.secret:/run/xsentinel/skill-poller.secret:ro
       - ${CONTROL_PLANE_DIR:-./data/control-plane}/screenshot-worker.secret:/run/xsentinel/screenshot-worker.secret:ro
       - ${TWEET_SCREENSHOT_VOLUME:-tweet_screenshots}:${TWEET_SCREENSHOT_DIR:-/var/lib/xsentinel/tweet-screenshots}
       - runtime_logs:/var/log/xsentinel
@@ -436,10 +480,14 @@ services:
       - app.ai_worker
     environment:
       <<: *backend-environment
+      SKILL_CLIENT_ID: skill-ai-worker
+      SKILL_CLIENT_SECRET_FILE: /run/xsentinel/skill-ai-worker.secret
+      SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
       SERVICE_NAME: ai-worker
       NACOS_SERVICE_NAME: xsentinel-ai-worker
       NACOS_SERVICE_PORT: "${AI_WORKER_HOST_PORT:-8202}"
     volumes:
+      - ${CONTROL_PLANE_DIR:-./data/control-plane}/skill-ai-worker.secret:/run/xsentinel/skill-ai-worker.secret:ro
       - article_uploads:/var/lib/xsentinel/article-uploads
       - ${TWEET_SCREENSHOT_VOLUME:-tweet_screenshots}:${TWEET_SCREENSHOT_DIR:-/var/lib/xsentinel/tweet-screenshots}:ro
       - runtime_logs:/var/log/xsentinel

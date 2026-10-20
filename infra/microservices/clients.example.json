@@ -5,5 +5,8 @@
   "ai-worker": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "xhs-worker": "xhs:execute" } },
   "xhs-worker": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "camoufox-worker": "browser:execute", "backend": "xhs:result" } },
   "screenshot-worker": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "camoufox-worker": "browser:execute" } },
-  "runtime-logs": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "xhs-worker": "logs:read", "camoufox-worker": "logs:read" } }
+  "runtime-logs": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "xhs-worker": "logs:read", "camoufox-worker": "logs:read" } },
+  "skill-backend": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "skill-worker": "skills:read skills:manage" } },
+  "skill-poller": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "skill-worker": "skills:read" } },
+  "skill-ai-worker": { "secret_sha256": "REPLACE_WITH_SHA256", "grants": { "skill-worker": "skills:read" } }
 }

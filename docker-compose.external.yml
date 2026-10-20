@@ -68,6 +68,26 @@ services:
         reservations:
           memory: 128m
 
+  skill-worker:
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      STARTUP_STRICT: "true"
+      AUTO_CREATE_TABLES: "false"
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT must be set}
+      REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
+      REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
+      REDIS_PASSWORD: ${REDIS_PASSWORD-}
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 256m
+        reservations:
+          memory: 128m
+
   ai-worker:
     environment:
       ENVIRONMENT: production

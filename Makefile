@@ -44,19 +44,19 @@ validate-external-env: ## Validate external PostgreSQL/Redis production settings
 build: ## Build application images
 	$(COMPOSE) build
 
-up: ## Build and start the core stack
+up: microservices-init ## Build and start the core stack
 	$(COMPOSE) up -d --build
 
-prod-up: ## Sync required Nacos config, migrate, build and start production
+prod-up: microservices-init ## Sync required Nacos config, migrate, build and start production
 	$(SYNC_REQUIRED_NACOS)
 	$(MAKE) validate-prod-env ENV_FILE="$(ENV_FILE)"
 	$(COMPOSE_PROD) config --quiet
 	$(COMPOSE_PROD) up -d --build
 
-external-up: ## Sync required Nacos config and start with external PostgreSQL/Redis
+external-up: microservices-init ## Sync required Nacos config and start with external PostgreSQL/Redis
 	$(SYNC_REQUIRED_NACOS)
 	$(MAKE) validate-external-env ENV_FILE="$(ENV_FILE)"
-	$(COMPOSE_EXTERNAL) up -d --build auth-center backend worker ai-worker qq-worker frontend
+	$(COMPOSE_EXTERNAL) up -d --build auth-center skill-worker backend worker ai-worker qq-worker frontend
 
 down: ## Stop the core stack without deleting persistent data
 	$(COMPOSE) down
@@ -65,19 +65,19 @@ prod-down: ## Stop the production stack without deleting persistent data
 	$(COMPOSE_PROD) down
 
 external-down: ## Stop only auth center, API, workers and frontend in external-data mode
-	$(COMPOSE_EXTERNAL) stop auth-center backend worker ai-worker qq-worker frontend
-	$(COMPOSE_EXTERNAL) rm -f migrate auth-center backend worker ai-worker qq-worker frontend
+	$(COMPOSE_EXTERNAL) stop auth-center skill-worker backend worker ai-worker qq-worker frontend
+	$(COMPOSE_EXTERNAL) rm -f migrate auth-center skill-worker backend worker ai-worker qq-worker frontend
 
 restart: ## Restart auth center, API, workers and frontend
-	$(COMPOSE) restart auth-center backend worker ai-worker qq-worker frontend
+	$(COMPOSE) restart auth-center skill-worker backend worker ai-worker qq-worker frontend
 
 logs: ## Follow auth center and application logs
-	$(COMPOSE) logs -f --tail=200 auth-center backend worker ai-worker qq-worker frontend
+	$(COMPOSE) logs -f --tail=200 auth-center skill-worker backend worker ai-worker qq-worker frontend
 
 ps: ## Show container and health status
 	$(COMPOSE) ps
 
-monitor-up: ## Start core services plus Prometheus, Grafana and exporters
+monitor-up: microservices-init ## Start core services plus Prometheus, Grafana and exporters
 	$(COMPOSE) --profile monitoring up -d --build
 
 microservices-init: ## Generate service topology and service-auth keys
@@ -87,13 +87,13 @@ network-groups: ## Create named Docker network groups from NETWORK_GROUPS
 	NETWORK_GROUPS_ENV_FILE="$(ENV_FILE)" ./infra/scripts/network-groups.sh
 
 microservices-up: microservices-init network-groups ## Start the auth center, monitoring center and node agent
-	$(COMPOSE_MICROSERVICES) up -d backend auth-center monitor-center monitor-agent
+	$(COMPOSE_MICROSERVICES) up -d backend skill-worker auth-center monitor-center monitor-agent
 
 microservices-down: ## Stop the optional microservice control plane
 	$(COMPOSE_MICROSERVICES) stop auth-center monitor-center monitor-agent
 	$(COMPOSE_MICROSERVICES) rm -f auth-center monitor-center monitor-agent
 
-prod-monitor-up: ## Sync required Nacos config and start production plus monitoring
+prod-monitor-up: microservices-init ## Sync required Nacos config and start production plus monitoring
 	$(SYNC_REQUIRED_NACOS)
 	$(MAKE) validate-prod-env ENV_FILE="$(ENV_FILE)"
 	$(COMPOSE_PROD) --profile monitoring up -d --build

@@ -39,6 +39,11 @@ EXCLUDED_KEYS = {
     "SERVICE_AUTH_CLIENTS_FILE",
     "SERVICE_TOPOLOGY_FILE",
     "SERVICE_CLIENT_SECRET_FILE",
+    "SKILL_CLIENT_ID",
+    "SKILL_CLIENT_SECRET_FILE",
+    "SKILL_SERVICE_URL",
+    "SKILL_WORKER_BIND_IP",
+    "SKILL_WORKER_HOST_PORT",
     "RUNTIME_LOGS_CLIENT_SECRET_FILE",
     "SERVICE_AUTH_PUBLIC_KEY_FILE",
     "MONITOR_NODE_ID",
@@ -202,6 +207,8 @@ RUNTIME_CONFIG_KEYS = {
     "XHS_WORKER_HEARTBEAT_TTL_SECONDS",
     "CORS_ORIGINS",
     "SERVICE_AUTH_URL",
+    "SKILL_SERVICE_NAME",
+    "SKILL_REQUEST_TIMEOUT_SECONDS",
     "MONITOR_CENTER_URL",
     "AUTO_X_DATA_ADDRESS",
 }
@@ -223,6 +230,9 @@ CONTROL_PLANE_KEYS = {
     "SERVICE_CLIENT_MONITOR_SECRET",
     "SERVICE_CLIENT_AGENT_SECRET",
     "SERVICE_CLIENT_AI_WORKER_SECRET",
+    "SERVICE_CLIENT_SKILL_BACKEND_SECRET",
+    "SERVICE_CLIENT_SKILL_POLLER_SECRET",
+    "SERVICE_CLIENT_SKILL_AI_WORKER_SECRET",
     "SERVICE_CLIENT_XHS_WORKER_SECRET",
     "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET",
     "SERVICE_CLIENT_RUNTIME_LOGS_SECRET",
@@ -418,6 +428,33 @@ def ensure_camoufox_caller(values: dict) -> None:
         raise RuntimeError("Nacos 中 xhs-worker 服务凭据缺失或不匹配，请恢复原服务密钥")
 
 
+def ensure_skill_callers(values: dict) -> None:
+    """Dedicated identities preserve existing grants and subsequent revocations."""
+    import hashlib
+    import secrets
+
+    clients = json.loads(str(values.get("SERVICE_AUTH_CLIENTS_JSON") or "{}"))
+    for caller, scope in {
+        "skill-backend": "skills:read skills:manage",
+        "skill-poller": "skills:read",
+        "skill-ai-worker": "skills:read",
+    }.items():
+        key = "SERVICE_CLIENT_" + caller.upper().replace("-", "_") + "_SECRET"
+        secret = str(values.get(key) or "")
+        if caller not in clients:
+            secret = secret or secrets.token_hex(32)
+            clients[caller] = {
+                "secret_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+                "grants": {"skill-worker": scope},
+            }
+            values[key] = secret
+        elif not secret or clients[caller]["secret_sha256"] != hashlib.sha256(
+            secret.encode()
+        ).hexdigest():
+            raise RuntimeError(f"Nacos 中 {caller} 服务凭据缺失或不匹配，请恢复原服务密钥")
+    values["SERVICE_AUTH_CLIENTS_JSON"] = json.dumps(clients, ensure_ascii=False)
+
+
 def ensure_ai_worker_caller(values: dict) -> None:
     """Seed an AI Worker identity without restoring revoked grants or credentials."""
     import hashlib
@@ -505,6 +542,9 @@ def read_control_plane_values(path: Path) -> dict[str, str]:
         "monitor.secret": "SERVICE_CLIENT_MONITOR_SECRET",
         "agent.secret": "SERVICE_CLIENT_AGENT_SECRET",
         "ai-worker.secret": "SERVICE_CLIENT_AI_WORKER_SECRET",
+        "skill-backend.secret": "SERVICE_CLIENT_SKILL_BACKEND_SECRET",
+        "skill-poller.secret": "SERVICE_CLIENT_SKILL_POLLER_SECRET",
+        "skill-ai-worker.secret": "SERVICE_CLIENT_SKILL_AI_WORKER_SECRET",
         "xhs-worker.secret": "SERVICE_CLIENT_XHS_WORKER_SECRET",
         "screenshot-worker.secret": "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET",
         "runtime-logs.secret": "SERVICE_CLIENT_RUNTIME_LOGS_SECRET",
@@ -529,6 +569,9 @@ def write_control_plane_values(path: Path, values: Mapping[str, object]) -> int:
         "SERVICE_CLIENT_MONITOR_SECRET": "monitor.secret",
         "SERVICE_CLIENT_AGENT_SECRET": "agent.secret",
         "SERVICE_CLIENT_AI_WORKER_SECRET": "ai-worker.secret",
+        "SERVICE_CLIENT_SKILL_BACKEND_SECRET": "skill-backend.secret",
+        "SERVICE_CLIENT_SKILL_POLLER_SECRET": "skill-poller.secret",
+        "SERVICE_CLIENT_SKILL_AI_WORKER_SECRET": "skill-ai-worker.secret",
         "SERVICE_CLIENT_XHS_WORKER_SECRET": "xhs-worker.secret",
         "SERVICE_CLIENT_SCREENSHOT_WORKER_SECRET": "screenshot-worker.secret",
         "SERVICE_CLIENT_RUNTIME_LOGS_SECRET": "runtime-logs.secret",
@@ -899,6 +942,30 @@ def sync_monitor_documents(
         validate_monitor_topology(topology)
         publish(server, namespace=namespace, group=group, data_id=topology_id,
                 content=topology, token=token, timeout=timeout)
+    skill_selected = "skill-worker" in {
+        service.strip() for service in selected_services.split(",")
+    }
+    skill_monitored = any(
+        service["node"] == node_id and service["project"] == "x-sentinel"
+        and service["container_service"] == "skill-worker"
+        for service in topology["services"]
+    )
+    if skill_selected and not skill_monitored:
+        service_id = ("skill-worker" if node_id == "local"
+                      else f"{node_id.replace('-', '')}-skill-worker")
+        if any(service["id"] == service_id for service in topology["services"]):
+            raise RuntimeError(f"Nacos 监控拓扑服务 id {service_id} 已被其他实例占用")
+        port = int(local_env.get("SKILL_WORKER_HOST_PORT") or 8204)
+        if not 1 <= port <= 65535:
+            raise RuntimeError("SKILL_WORKER_HOST_PORT 必须是有效 TCP 端口")
+        topology["services"].append({
+            "id": service_id, "name": "Skill Worker", "component": "skill_worker",
+            "node": node_id, "project": "x-sentinel", "container_service": "skill-worker",
+            "port": port,
+        })
+        validate_monitor_topology(topology)
+        publish(server, namespace=namespace, group=group, data_id=topology_id,
+                content=topology, token=token, timeout=timeout)
     print(f"Nacos 监控配置已同步: {topology_id}, {nodes_id}（本机节点 {matches[0]}）")
 
 
@@ -1085,6 +1152,7 @@ def main() -> int:
     ensure_screenshot_defaults(merged)
     ensure_screenshot_caller(merged)
     ensure_runtime_logs_caller(merged)
+    ensure_skill_callers(merged)
     # Nacos remains authoritative by default.  An explicit command-line
     # override is the only supported way to supersede an existing remote value,
     # and it is applied before production validation and publication.

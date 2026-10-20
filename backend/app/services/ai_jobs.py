@@ -15,16 +15,18 @@ from app.models.ai import (
     AIGenerationJob,
     AIListenTask,
     AIListenTaskEvent,
-    AIListenTaskSkill,
     AIListenTaskSubscription,
     AISetting,
-    AISkill,
     AIUserProfile,
-    AIUserSkillBinding,
 )
 from app.models.monitored_user import MonitoredUser
 from app.models.tweet import Tweet
+from app.schemas.ai import AISkillOut
 from app.services.ai_defaults import DEFAULT_AI_FEATURE_CODE, DEFAULT_AI_MODEL
+from app.services.skill_client import (
+    resolve_context_skills,
+    resolve_task_skills,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,18 +61,6 @@ async def get_ai_setting(session: AsyncSession, *, for_update: bool = False) -> 
     return setting
 
 
-async def resolve_active_skills(session: AsyncSession, skill_ids: list[int]) -> list[AISkill]:
-    if not skill_ids:
-        return []
-    skills = list(
-        await session.scalars(
-            select(AISkill).where(AISkill.id.in_(skill_ids), AISkill.is_active.is_(True))
-        )
-    )
-    by_id = {skill.id: skill for skill in skills}
-    return [by_id[skill_id] for skill_id in skill_ids if skill_id in by_id]
-
-
 async def get_ai_feature(session: AsyncSession, feature_code: str) -> AIFeature:
     feature = await session.scalar(
         select(AIFeature).where(AIFeature.code == feature_code, AIFeature.is_active.is_(True))
@@ -78,34 +68,6 @@ async def get_ai_feature(session: AsyncSession, feature_code: str) -> AIFeature:
     if feature is None:
         raise ValueError("ai_feature_not_found")
     return feature
-
-
-async def resolve_context_skills(
-    session: AsyncSession,
-    *,
-    monitored_user_id: int,
-    feature: AIFeature,
-    fallback_skill_ids: list[int],
-    override_skill_ids: list[int] | None = None,
-) -> tuple[list[AISkill], str]:
-    if override_skill_ids is not None:
-        return await resolve_active_skills(session, override_skill_ids), "manual_override"
-    bound_ids = list(
-        await session.scalars(
-            select(AIUserSkillBinding.skill_id)
-            .join(AISkill, AISkill.id == AIUserSkillBinding.skill_id)
-            .where(
-                AIUserSkillBinding.monitored_user_id == monitored_user_id,
-                AIUserSkillBinding.ai_feature_id == feature.id,
-                AIUserSkillBinding.is_active.is_(True),
-                AISkill.is_active.is_(True),
-            )
-            .order_by(AIUserSkillBinding.priority.asc(), AIUserSkillBinding.id.asc())
-        )
-    )
-    if bound_ids:
-        return await resolve_active_skills(session, bound_ids), "user_feature_binding"
-    return await resolve_active_skills(session, fallback_skill_ids), "global_default"
 
 
 async def build_author_context(
@@ -155,7 +117,7 @@ async def build_author_context(
     }
 
 
-def _skill_snapshot(skill: AISkill) -> dict:
+def _skill_snapshot(skill: AISkillOut) -> dict:
     return {
         "id": skill.id,
         "name": skill.name,
@@ -170,7 +132,7 @@ def _skill_snapshot(skill: AISkill) -> dict:
 
 def _request_snapshot(
     setting: AISetting,
-    skills: list[AISkill],
+    skills: list[AISkillOut],
     tweet: Tweet,
     *,
     feature: AIFeature,
@@ -346,16 +308,10 @@ async def enqueue_listening_jobs(
             )
         )
         subscription_by_user = {item.monitored_user_id: item for item in subscriptions}
-        selected = list(
-            await session.scalars(
-                select(AIListenTaskSkill)
-                .where(AIListenTaskSkill.task_id == task.id)
-                .order_by(AIListenTaskSkill.priority, AIListenTaskSkill.skill_id)
-            )
-        )
-        current_ids = [item.skill_id for item in selected]
-        current_skills = await resolve_active_skills(session, current_ids)
-        if not current_ids or len(current_skills) != len(current_ids):
+        selection = await resolve_task_skills(task.id)
+        current_ids = selection.selected_ids
+        current_skills = selection.skills
+        if not selection.valid:
             task.queue_hold_reason = "skill_invalidated"
             logger.warning(
                 "AI listening task skill selection is invalid", extra={"task_id": task.id}
@@ -607,7 +563,7 @@ async def create_manual_job(
     *,
     tweet: Tweet,
     feature: AIFeature,
-    skills: list[AISkill],
+    skills: list[AISkillOut],
     skill_resolution: str,
     idempotency_key: str | None,
 ) -> tuple[AIGenerationJob, bool]:

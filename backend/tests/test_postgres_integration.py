@@ -5,13 +5,18 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from alembic.config import Config
+from fastapi import FastAPI
 from sqlalchemy import delete, func, inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from alembic import command
+from app.api.deps import get_db
 from app.control_plane.auth_store import AuthStore
 from app.core.config import Settings
 from app.core.time import to_database_utc
@@ -29,8 +34,11 @@ from app.models import (
     ServiceAuthGrant,
     Tweet,
 )
+from app.services import skill_client
 from app.services.ai_jobs import enqueue_auto_jobs
 from app.services.poller import PollingService
+from app.skill_worker import internal, require_reader
+from app.skills import bootstrap as skill_bootstrap
 
 POSTGRES_DSN = os.getenv("TEST_POSTGRES_DSN")
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -63,7 +71,29 @@ async def database(request, monkeypatch):
             assert set(Base.metadata.tables) <= set(tables)
         factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
         monkeypatch.setattr(init_db, "AsyncSessionFactory", factory)
-        yield factory
+        monkeypatch.setattr(skill_bootstrap, "AsyncSessionFactory", factory)
+        service = FastAPI()
+        service.include_router(internal)
+
+        async def service_session():
+            async with factory() as session:
+                yield session
+
+        service.dependency_overrides[get_db] = service_session
+        service.dependency_overrides[require_reader] = lambda: {"scope": "skills:read"}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=service)) as http:
+            client = skill_client.SkillClient(
+                Settings(
+                    _env_file=None,
+                    nacos_config_enabled=False,
+                    nacos_server_addr="",
+                    skill_service_url="http://skill-test",
+                ),
+                http=http,
+            )
+            client.tokens = SimpleNamespace(token=AsyncMock(return_value="test"))
+            monkeypatch.setattr(skill_client, "CLIENT", client)
+            yield factory
     finally:
         await engine.dispose()
         async with control.begin() as connection:
@@ -75,11 +105,13 @@ async def test_fresh_database_seed_and_business_writes(database):
     settings = Settings(_env_file=None)
     # Concurrent startup must leave exactly one administrator and preserve later edits.
     await asyncio.gather(*(init_db.seed_runtime_defaults(settings) for _ in range(2)))
+    await asyncio.gather(*(skill_bootstrap.seed_skills() for _ in range(2)))
     async with database() as session, session.begin():
         assert await session.scalar(select(func.count(Admin.id))) == 1
         skill = await session.get(AISkill, 1)
         skill.instructions = "保留用户修改 🐘"
     await init_db.seed_runtime_defaults(settings)
+    await skill_bootstrap.seed_skills()
 
     async with database() as session, session.begin():
         assert (await session.get(AISkill, 1)).instructions == "保留用户修改 🐘"
@@ -121,6 +153,7 @@ async def test_fresh_database_seed_and_business_writes(database):
         assert tweet.entities == payload["entities"]
         setting = await session.get(AISetting, 1)
         setting.enabled = True
+        setting.auto_trigger_mode = "legacy_all"
         await session.flush()
         assert await enqueue_auto_jobs(session, [tweet.id, tweet.id]) == 1
         assert await enqueue_auto_jobs(session, [tweet.id]) == 0
@@ -183,3 +216,43 @@ async def test_service_auth_legacy_clients_bootstrap_is_exactly_once(
     async with database() as session:
         assert await session.scalar(select(func.count(ServiceAuthClientCredential.id))) == 0
         assert await session.scalar(select(func.count()).select_from(ServiceAuthGrant)) == 0
+
+
+async def test_skill_http_reads_do_not_deadlock_and_mutations_wait_for_snapshot_commit(database):
+    from app.models.ai import AIListenTask, AIListenTaskSkill
+    from app.services.ai_jobs import get_ai_setting
+    from app.skills.routes import delete_ai_skill
+
+    settings = Settings(_env_file=None)
+    await init_db.seed_runtime_defaults(settings)
+    await skill_bootstrap.seed_skills()
+    async with database() as session, session.begin():
+        task = AIListenTask(name="锁测试", desired_state="enabled")
+        task.skills = [AIListenTaskSkill(skill_id=1, priority=1)]
+        session.add(task)
+        await session.flush()
+        task_id = task.id
+
+    started = asyncio.Event()
+
+    async def disable():
+        async with database() as session:
+            started.set()
+            await delete_ai_skill(1, session, None)
+
+    mutation = None
+    try:
+        async with database() as consumer, consumer.begin():
+            await get_ai_setting(consumer, for_update=True)
+            await consumer.get(AIListenTask, task_id, with_for_update=True)
+            mutation = asyncio.create_task(disable())
+            await started.wait()
+            selection = await asyncio.wait_for(skill_client.CLIENT.task(task_id), timeout=2)
+            assert selection.valid
+            assert not mutation.done()
+        await asyncio.wait_for(mutation, timeout=2)
+        assert not (await skill_client.CLIENT.task(task_id)).valid
+    finally:
+        if mutation is not None and not mutation.done():
+            mutation.cancel()
+            await asyncio.gather(mutation, return_exceptions=True)

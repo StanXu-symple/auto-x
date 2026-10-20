@@ -24,6 +24,7 @@ from app.models.monitored_user import MonitoredUser
 from app.services.metrics import POLL_QUEUE_DUE, WORKER_HEARTBEAT
 from app.services.poller import GLOBAL_X_GATE_KEY, PollingService
 from app.services.settings_service import get_polling_settings
+from app.services.skill_client import skill_client_lifespan
 from app.services.tweet_screenshot_client import TweetScreenshotClient
 from app.services.tweet_screenshots import TweetScreenshotProcessor
 from app.services.x_source_client import XSourceClient
@@ -243,7 +244,8 @@ async def async_main() -> None:
             loop.add_signal_handler(signal_name, worker.request_stop)
         except NotImplementedError:
             pass
-    await worker.run()
+    async with skill_client_lifespan(settings):
+        await worker.run()
 
 
 def main() -> None:

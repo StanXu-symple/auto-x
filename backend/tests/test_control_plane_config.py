@@ -1,17 +1,34 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.control_plane.config import (
     Topology,
-    load_runtime_config,
-    load_monitor_topology,
     load_monitor_node_id,
+    load_monitor_topology,
+    load_runtime_config,
 )
 
 
+@pytest.mark.parametrize("filename", ["services.example.json", "services.tc-dual.json"])
+def test_bundled_monitor_topologies_match_runtime_contract(filename: str) -> None:
+    seed = Path(__file__).resolve().parents[2] / "infra" / "microservices" / filename
+    topology = Topology.model_validate_json(seed.read_text(encoding="utf-8"))
+
+    assert topology.nodes
+    assert topology.services
+    if filename == "services.example.json":
+        skill = next(s for s in topology.services if s.container_service == "skill-worker")
+        assert skill.component == "skill_worker"
+        assert skill.port == 8204
+
+
 @pytest.mark.asyncio
-async def test_control_plane_reads_shared_auth_tuning_and_filters_local_identity(monkeypatch) -> None:
+async def test_control_plane_reads_shared_auth_tuning_and_filters_local_identity(
+    monkeypatch,
+) -> None:
     class FakeNacos:
         async def get_json_config(self, data_id: str, *, group: str):
             assert data_id == "runtime.json"

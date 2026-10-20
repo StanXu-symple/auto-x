@@ -32,9 +32,7 @@ from app.models.ai import (
     AIGenerationJob,
     AIListenTask,
     AIListenTaskEvent,
-    AIListenTaskSkill,
     AISetting,
-    AISkill,
     AIUserProfile,
 )
 from app.models.ai_data_source import AIDataSource
@@ -53,6 +51,11 @@ from app.services.metrics import (
     AI_JOBS,
     AI_QUEUE_DUE,
     AI_WORKER_HEARTBEAT,
+)
+from app.services.skill_client import (
+    SkillServiceUnavailable,
+    resolve_task_skills,
+    skill_client_lifespan,
 )
 
 logger = logging.getLogger(__name__)
@@ -486,6 +489,11 @@ class AIGenerationWorker:
                     ),
                 )
             raise
+        except SkillServiceUnavailable:
+            logger.warning(
+                "Skill validation unavailable; leaving AI job queued", extra={"job_id": job_id}
+            )
+            return False
         except Exception as exc:
             logger.exception(
                 "Unexpected AI generation failure",
@@ -555,22 +563,8 @@ class AIGenerationWorker:
             if task_id is not None:
                 if task is None or task.desired_state != "enabled" or task.queue_hold_reason:
                     return None
-                selected_ids = list(
-                    await session.scalars(
-                        select(AIListenTaskSkill.skill_id).where(
-                            AIListenTaskSkill.task_id == task_id
-                        )
-                    )
-                )
-                valid_count = int(
-                    await session.scalar(
-                        select(func.count(AISkill.id)).where(
-                            AISkill.id.in_(selected_ids), AISkill.is_active.is_(True)
-                        )
-                    )
-                    or 0
-                )
-                if not selected_ids or valid_count != len(selected_ids):
+                selection = await resolve_task_skills(task_id)
+                if not selection.valid:
                     task.queue_hold_reason = "skill_invalidated"
                     return None
             due = job.status in {"queued", "retry_wait"} and as_utc(job.next_attempt_at) <= now
@@ -1278,7 +1272,8 @@ async def async_main() -> None:
             loop.add_signal_handler(signal_name, worker.request_stop)
         except NotImplementedError:
             pass
-    await worker.run()
+    async with skill_client_lifespan(settings):
+        await worker.run()
 
 
 def main() -> None:

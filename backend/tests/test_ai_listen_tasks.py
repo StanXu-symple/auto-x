@@ -8,18 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.ext.compiler import compiles
 
 from app.api.errors import APIError
-from app.api.routes.ai import delete_ai_skill, patch_ai_skill
-from app.api.routes.ai_listen import (
-    _activate,
-    _create_task,
-    _out,
-    archive_listen_task,
-    copy_listen_task,
-    create_listen_task,
-    decide_listen_queue,
-    patch_listen_task,
-    pause_listen_task,
-)
 from app.db.base import Base
 from app.models.admin import Admin
 from app.models.ai import (
@@ -42,9 +30,21 @@ from app.schemas.ai import (
 from app.services.ai_listen_backfill import (
     _locked_backfill_users,
     process_pending_backfills,
-    task_snapshot,
 )
-from app.services.ai_listen_tasks import get_task, preview_task
+from app.skills.backfill import task_snapshot
+from app.skills.listening import get_task, preview_task
+from app.skills.listening_routes import (
+    _activate,
+    _create_task,
+    _out,
+    archive_listen_task,
+    copy_listen_task,
+    create_listen_task,
+    decide_listen_queue,
+    patch_listen_task,
+    pause_listen_task,
+)
+from app.skills.routes import delete_ai_skill, patch_ai_skill
 
 
 class FakeRedis:
@@ -1027,7 +1027,7 @@ async def test_skill_deactivation_takes_setting_lock_before_skill(
             sequence.append("skill")
         return await real_get(self, entity, ident, **kwargs)
 
-    monkeypatch.setattr("app.api.routes.ai.get_ai_setting", setting_spy)
+    monkeypatch.setattr("app.skills.routes.get_ai_setting", setting_spy)
     monkeypatch.setattr(AsyncSession, "get", get_spy)
     async with database() as db:
         if operation == "patch":

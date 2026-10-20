@@ -1,19 +1,29 @@
 # X Sentinel backend
 
+服务入口、业务脚本、共享模块与部署脚本的对应关系见 [Backend 微服务与脚本文件对应清单](../docs/backend-services-map.md)。
+
 FastAPI API and independent asyncio workers for monitoring X accounts and creating AI drafts. PostgreSQL is the source of
 truth; Redis provides distributed polling locks, global X API gates, login throttling, and worker
 heartbeat data. Manual-trigger tokens and pagination checkpoints are persisted in PostgreSQL.
 Poll commits are fenced by both a database generation and a renewable Redis lease.
 
+Skill 管理、绑定、解析和校验由 `skill-worker` 提供 HTTP 服务，Nacos 名称为 `xsentinel-skill-worker`。现有页面 API 由 backend 转发，轮询和 AI Worker 使用专用只读身份。启动前初始化控制面凭据；部署、事务边界与验收说明见 [Skill Worker](../docs/skill-worker.md)。
+
 ## Commands
 
 ```bash
 pip install -e '.[dev]'
+../infra/scripts/microservices-init.sh
+# Native local mode. In Nacos deployments keep SERVICE_AUTH_URL empty for discovery.
+export SERVICE_AUTH_CLIENTS_FILE=../data/control-plane/clients.json
+export SERVICE_AUTH_URL=http://127.0.0.1:9100
+export SKILL_CLIENT_SECRET_FILE=../data/control-plane/skill-backend.secret
 alembic upgrade head
 uvicorn app.control_plane.auth:app --host 127.0.0.1 --port 9100
+uvicorn app.skill_worker:app --host 0.0.0.0 --port 8204
 uvicorn app.main:app --host 0.0.0.0 --port 8200
-python -m app.worker
-python -m app.ai_worker
+SKILL_CLIENT_ID=skill-poller SKILL_CLIENT_SECRET_FILE=../data/control-plane/skill-poller.secret python -m app.worker
+SKILL_CLIENT_ID=skill-ai-worker SKILL_CLIENT_SECRET_FILE=../data/control-plane/skill-ai-worker.secret python -m app.ai_worker
 python -m app.xhs_worker
 ```
 
