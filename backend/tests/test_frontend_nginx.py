@@ -14,6 +14,13 @@ def test_skill_import_and_update_share_extended_proxy_timeout() -> None:
     assert "proxy_pass http://$api_backend;" in skill_location
 
 
+def test_skill_collection_keeps_exact_proxy_without_trailing_slash_redirect() -> None:
+    config = (Path(__file__).parents[2] / "frontend" / "nginx.conf").read_text()
+    collection = config.split("location = /api/v1/ai/skills {", 1)[1].split("}", 1)[0]
+    assert "proxy_pass http://$api_backend;" in collection
+    assert "proxy_read_timeout 60s;" in collection
+
+
 def test_article_routes_allow_xhs_worker_result_timeout() -> None:
     config = (Path(__file__).parents[2] / "frontend" / "nginx.conf").read_text()
     article_location = config.split("location ^~ /api/v1/articles {", 1)[1].split(
