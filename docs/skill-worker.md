@@ -61,7 +61,7 @@ data/skills/bundles/<不可变包ID>/
   manifest.json           # 原文件大小与 SHA-256
 ```
 
-新增迁移 `0037_github_skills`：升级前备份 PostgreSQL；执行 `alembic upgrade head`，先升级 skill-worker，再升级 backend / ai-worker，最后更新 frontend。更新与备份必须同时保留数据库和 `data/skills`。部署多实例时必须共享同一持久化目录；独立本机磁盘不能被多个 Nacos 实例交替使用。恢复时按原包 ID 恢复整个目录，不能仅重新导入当前分支替代旧版本。无法确认数据库提交结果时保留目录，可能留下孤立包；暂不自动清理旧包，避免影响历史任务。
+新增迁移 `0037_github_skills`：升级前备份 PostgreSQL；执行 `alembic upgrade head`，先升级 skill-worker，再升级 backend / worker / ai-worker，最后更新 frontend。更新与备份必须同时保留数据库和 `data/skills`。部署多实例时必须共享同一持久化目录；独立本机磁盘不能被多个 Nacos 实例交替使用。恢复时按原包 ID 恢复整个目录，不能仅重新导入当前分支替代旧版本。无法确认数据库提交结果时保留目录，可能留下孤立包；暂不自动清理旧包，避免影响历史任务。
 
 原生 `start.sh` 使用项目根目录 `data/skills`，可用 `SKILL_STORAGE_DIR` 覆盖；该路径属于节点本地配置，不接受 Nacos 共享配置覆盖。容器路径固定，宿主机路径通过 `SKILL_STORAGE_HOST_DIR` 配置。skill-worker 内存上限调整为 512 MiB，以容纳受限的归档处理。
 
@@ -184,3 +184,27 @@ HTTP 测试覆盖实际 FastAPI 转发、JWT/会话校验、权限隔离、优�
 - tc-2：`/home/docker/auto-x/backups/pre-skill-worker-20261020T042654Z`
 
 备份包含原环境、完整服务清单、Compose/控制面文件、容器版本、三个 Nacos 文档及媒体卷；tc-2 另有 PostgreSQL 自定义格式 dump 与 Redis RDB。`sha256.json` 保存完整性清单，`deployment-verification.json` 保存配置/容器比对结果，tc-2 的 `skill-invariants-after.json` 保存数据哈希比对。回滚时以这些原始版本和配置为准，先停止新消费者，再恢复原服务及配置；保留现有数据库和业务卷，不能用 `down --volumes` 替代回滚。
+
+## 2026-10-20 GitHub Skills 升级记录
+
+已将 `d044d25`（独立 Skills 管理菜单）和 `f47c92b21f467ae9e7dbcda8a05e3980ab0ead34`（GitHub Skills 导入与生成接入）发布到 `dev/main`。[Actions 39376846487](https://github.com/StanXu-symple/auto-x/actions/runs/39376846487) 构建成功，生产统一使用固定镜像标签 `sha-f47c92b21f467ae9e7dbcda8a05e3980ab0ead34`；后续文档提交不改变运行镜像。
+
+| 节点 | 本次升级服务 | 持久化与迁移 |
+| --- | --- | --- |
+| hn-1 | skill-worker | `/home/docker/auto-x/data/skills` 绑定到 `/var/lib/xsentinel/skills`，UID/GID 为 `10001:10001`，内存上限 512 MiB |
+| tc-2 | backend、worker、ai-worker、frontend | 先暂停消费者并备份，再将共享 PostgreSQL 升级到 `0037_github_skills` |
+
+验收结果：
+
+- 两节点所有运行服务健康，升级服务固定为上述 SHA 镜像；其他运行容器 ID、保存的服务清单及三份 Nacos 配置文档与升级前一致。
+- 4 个原有 Skill、功能点、设置、监听任务、任务绑定、订阅以及 34 个历史作业的任务、Skill 和请求快照逐项比对一致。
+- 三个调用方身份的跨节点 HTTP 解析通过；新 AI Worker 使用实际挂载凭据从 Skill Worker 读取历史作业快照，内容一致。公开管理接口与服务直连结果一致，Skills 页面和导入转发正常，监控 14 个实例、2 个节点健康，检查时没有 ERROR/CRITICAL 日志。
+- 在新 Skill Worker 内实际下载 `SpaceZephyr/creator-buddy` 的 `xhs-Skills`（Commit `edf46c567ff54b72ee2157d06f3a02dbd67aaa9c`），10 个 Skills、37 个文件及编译指令校验通过，宿主机挂载可写。测试文件随后清理，没有向生产数据库自动导入这些 Skills；本阶段使用指令与参考文本指导写作，保留完整文件。
+- 独立临时 PostgreSQL 的 6 项集成测试通过，覆盖迁移、模型建库、身份初始化和 HTTP/事务并发。
+
+升级前服务器备份：
+
+- hn-1：`/home/docker/auto-x/backups/pre-github-skills-20261020T055018Z`
+- tc-2：`/home/docker/auto-x/backups/pre-github-skills-20261020T055043Z`
+
+两节点的 `backups/github-skills-current.txt` 指向对应备份。`github-skills-deployment-verification.json` 保存容器与配置验收；tc-2 的 `github-skills-invariants-after.json` 保存业务数据比对。备份保留原环境、服务清单、Compose/控制面文件、容器检查、Nacos 文档和媒体卷；tc-2 另含 PostgreSQL dump 和 Redis RDB。恢复或迁移导入后的 Skill 时，仍须同时保留数据库与 hn-1 的 `data/skills`。
