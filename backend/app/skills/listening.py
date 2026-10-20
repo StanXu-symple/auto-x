@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import case, exists, func, select
@@ -29,6 +30,7 @@ from app.schemas.ai import (
     AIListenTaskSkillOut,
     AIListenTaskStats,
 )
+from app.skills.packages import read_package_instructions
 
 TASK_LOAD = (
     selectinload(AIListenTask.subscriptions),
@@ -105,6 +107,11 @@ async def validate_selection(
     if len(selected_skills) != len(skill_ids):
         raise APIError(422, "invalid_skill_ids", "所有选中 Skill 必须存在且已启用")
     by_id = {skill.id: skill for skill in selected_skills}
+    # Validate package availability before accepting a configuration, as well
+    # as at enqueue/claim time. Imported Skills share the same ID namespace.
+    for skill in selected_skills:
+        if skill.source_type == "github":
+            await asyncio.to_thread(read_package_instructions, skill.source_metadata)
     return selected_users, [by_id[item] for item in skill_ids]
 
 

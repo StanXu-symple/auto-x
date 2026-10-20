@@ -5,6 +5,7 @@ import { message, Modal } from 'ant-design-vue'
 import { aiApi, aiDataSourceApi, aiListenTasksApi, monitoredUsersApi, qqApi } from '@/services/api'
 import { usePagedTable } from '@/composables/usePagedTable'
 import { getErrorMessage } from '@/services/http'
+import { skillOptionLabel } from '@/utils/skills'
 import { formatDateTime, formatDuration } from '@/utils/format'
 import StatusPill from '@/components/StatusPill.vue'
 import AutoPublishStatus from '@/components/AutoPublishStatus.vue'
@@ -997,9 +998,10 @@ onMounted(async () => {
             v-model:value="form.skill_ids"
             mode="multiple"
             placeholder="请选择 1–20 个已启用 Skills"
+            option-filter-prop="label"
             :options="
               skills.map((skill) => ({
-                label: `${skill.name}${skill.is_active ? '' : '（已停用）'}`,
+                label: skillOptionLabel(skill),
                 value: skill.id,
                 disabled: !skill.is_active,
               }))

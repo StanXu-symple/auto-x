@@ -69,6 +69,7 @@ x-backend: &backend-common
     SKILL_SERVICE_NAME: ${SKILL_SERVICE_NAME:-xsentinel-skill-worker}
     SKILL_SERVICE_URL: ${SKILL_SERVICE_URL:-http://skill-worker:8204}
     SKILL_REQUEST_TIMEOUT_SECONDS: ${SKILL_REQUEST_TIMEOUT_SECONDS:-10}
+    SKILL_IMPORT_TIMEOUT_SECONDS: ${SKILL_IMPORT_TIMEOUT_SECONDS:-180}
     AI_ALLOWED_PROVIDER_HOSTS: '${AI_ALLOWED_PROVIDER_HOSTS:-["api.openai.com"]}'
     AI_WORKER_SCAN_INTERVAL_SECONDS: ${AI_WORKER_SCAN_INTERVAL_SECONDS:-2}
     AI_WORKER_MAX_CONCURRENCY: ${AI_WORKER_MAX_CONCURRENCY:-3}
@@ -338,23 +339,39 @@ services:
         reservations:
           memory: 128m
 
+  skill-storage-init:
+    image: alpine:3.22
+    user: "0:0"
+    command: ["sh", "-c", "chown 10001:10001 /var/lib/xsentinel/skills && chmod 0750 /var/lib/xsentinel/skills"]
+    volumes:
+      - ${SKILL_STORAGE_HOST_DIR:-./data/skills}:/var/lib/xsentinel/skills
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+
   skill-worker:
     <<: *backend-common
     command: ["uvicorn", "app.skill_worker:app", "--host", "0.0.0.0", "--port", "8204"]
     environment:
       <<: *backend-environment
       SERVICE_NAME: skill-worker
+      SKILL_STORAGE_DIR: /var/lib/xsentinel/skills
       AUTO_CREATE_TABLES: "false"
       SERVICE_AUTH_URL: ${SERVICE_AUTH_URL:-http://auth-center:9100}
       NACOS_SERVICE_NAME: xsentinel-skill-worker
       NACOS_SERVICE_PORT: "${SKILL_WORKER_HOST_PORT:-8204}"
     volumes:
       - runtime_logs:/var/log/xsentinel
+      - ${SKILL_STORAGE_HOST_DIR:-./data/skills}:/var/lib/xsentinel/skills
     expose:
       - "8204"
     ports:
       - "${SKILL_WORKER_BIND_IP:-0.0.0.0}:${SKILL_WORKER_HOST_PORT:-8204}:8204"
     depends_on:
+      skill-storage-init:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
       log-init:
@@ -369,7 +386,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 256m
+          memory: 512m
 
   backend:
     <<: *backend-common

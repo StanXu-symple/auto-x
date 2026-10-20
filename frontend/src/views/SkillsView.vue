@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import {
+  DeleteOutlined,
+  EditOutlined,
+  GithubOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { usePagedTable } from '@/composables/usePagedTable'
 import { aiApi, monitoredUsersApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
+import { skillOptionLabel, skillSourceLabel } from '@/utils/skills'
 import type {
   AiSkill,
   AiSkillPayload,
@@ -14,6 +21,7 @@ import type {
   AiUserSkillBinding,
   EntityId,
   MonitoredUser,
+  GithubSkillImportResult,
 } from '@/types'
 
 const skills = ref<AiSkill[]>([])
@@ -26,6 +34,11 @@ const bindingIds = ref<EntityId[]>([])
 const bindingLoading = ref(false)
 const skillOpen = ref(false)
 const skillSaving = ref(false)
+const importOpen = ref(false)
+const importing = ref(false)
+const importForm = reactive({ url: '', ref: '', path: '' })
+const importResult = ref<GithubSkillImportResult | null>(null)
+const importError = ref('')
 const editingSkill = ref<AiSkill | null>(null)
 const skillForm = reactive<AiSkillPayload>({
   name: '',
@@ -71,7 +84,12 @@ async function saveSkill() {
   skillSaving.value = true
   try {
     editingSkill.value
-      ? await aiApi.updateSkill(editingSkill.value.id, skillForm)
+      ? await aiApi.updateSkill(
+          editingSkill.value.id,
+          editingSkill.value.source_type === 'github'
+            ? { is_active: skillForm.is_active }
+            : skillForm,
+        )
       : await aiApi.createSkill(skillForm)
     skillOpen.value = false
     await loadSkills()
@@ -81,6 +99,38 @@ async function saveSkill() {
     message.error(getErrorMessage(e, '保存 Skill 失败'))
   } finally {
     skillSaving.value = false
+  }
+}
+function openImport(skill?: AiSkill) {
+  const source = skill?.source_metadata
+  Object.assign(importForm, {
+    url: source ? `https://github.com/${source.repository}` : '',
+    ref: source?.ref || '',
+    path: source?.import_path ?? source?.path ?? '',
+  })
+  importResult.value = null
+  importError.value = ''
+  importOpen.value = true
+}
+async function importGithub() {
+  if (importing.value) return
+  if (!importForm.url.trim()) return message.warning('请输入 GitHub 仓库或目录地址')
+  importing.value = true
+  importError.value = ''
+  importResult.value = null
+  try {
+    importResult.value = await aiApi.importGithubSkills({
+      url: importForm.url.trim(),
+      ref: importForm.ref.trim() || undefined,
+      path: importForm.path.trim() || undefined,
+    })
+    await loadSkills()
+    if (selectedUser.value) await loadSkillOptions()
+    message.success('GitHub Skills 已保存')
+  } catch (e) {
+    importError.value = getErrorMessage(e, '导入失败，请重试')
+  } finally {
+    importing.value = false
   }
 }
 function removeSkill(skill: AiSkill) {
@@ -155,7 +205,7 @@ onMounted(async () => {
     <PageHeader
       eyebrow="CONTENT / 02"
       title="Skills管理"
-      description="管理可复用的创作指令、账号绑定与作者画像"
+      description="管理自定义写作指令与从 GitHub 导入的 Skills"
     >
       <template #actions>
         <a-button :loading="skillsLoading" @click="loadSkills"><ReloadOutlined /> 刷新</a-button>
@@ -165,6 +215,7 @@ onMounted(async () => {
       <div class="toolbar">
         <div class="toolbar__controls">
           <a-button type="primary" @click="editSkill()"><PlusOutlined /> 新建 Skill</a-button>
+          <a-button @click="openImport()"><GithubOutlined /> 从 GitHub 导入</a-button>
           <a-button :loading="skillsLoading" @click="loadSkills"><ReloadOutlined /> 刷新</a-button>
           <span class="toolbar__hint">用可复用的提示指令控制输出结构</span>
         </div>
@@ -175,7 +226,7 @@ onMounted(async () => {
         :loading="skillsLoading"
         row-key="id"
         :pagination="skillsPagination"
-        :scroll="{ x: 720 }"
+        :scroll="{ x: 900 }"
         @change="changeSkillPage"
       >
         <a-table-column title="名称" data-index="name" :width="220" :ellipsis="true">
@@ -188,14 +239,28 @@ onMounted(async () => {
             ><span class="muted">{{ record.description || '暂无说明' }}</span></template
           >
         </a-table-column>
-        <a-table-column title="状态" :width="120">
+        <a-table-column title="来源" :width="160">
+          <template #default="{ record }">
+            <a-tag>{{ skillSourceLabel(record) }}</a-tag>
+            <div v-if="record.source_metadata" class="muted">
+              {{ record.source_metadata.repository }}
+              <br />{{ record.source_metadata.commit.slice(0, 7) }}
+            </div>
+          </template>
+        </a-table-column>
+        <a-table-column title="状态" :width="100">
           <template #default="{ record }"
             ><StatusPill :value="record.is_active" :label="record.is_active ? '启用' : '停用'"
           /></template>
         </a-table-column>
-        <a-table-column title="操作" :width="120">
+        <a-table-column title="操作" :width="160">
           <template #default="{ record }">
             <a-space>
+              <a-tooltip v-if="record.source_type === 'github'" title="从 GitHub 更新">
+                <a-button type="link" aria-label="更新 GitHub Skill" @click="openImport(record)"
+                  ><GithubOutlined
+                /></a-button>
+              </a-tooltip>
               <a-tooltip title="编辑"
                 ><a-button type="link" aria-label="编辑 Skill" @click="editSkill(record)"
                   ><EditOutlined /></a-button
@@ -248,7 +313,13 @@ onMounted(async () => {
             ><span class="muted">绑定 Skills</span
             ><a-checkbox-group
               v-model:value="bindingIds"
-              :options="skills.map((skill) => ({ label: skill.name, value: skill.id }))"
+              :options="
+                skills.map((skill) => ({
+                  label: skillOptionLabel(skill),
+                  value: skill.id,
+                  disabled: !skill.is_active,
+                }))
+              "
             /><a-button type="primary" :loading="bindingLoading" @click="saveBinding"
               >保存绑定</a-button
             ></a-space
@@ -268,13 +339,110 @@ onMounted(async () => {
       :mask-closable="!skillSaving"
       :keyboard="!skillSaving"
       @ok="saveSkill"
-      ><a-form layout="vertical"
-        ><a-form-item label="名称"><a-input v-model:value="skillForm.name" /></a-form-item
-        ><a-form-item label="说明"><a-input v-model:value="skillForm.description" /></a-form-item
+    >
+      <a-alert
+        v-if="editingSkill?.source_type === 'github'"
+        type="info"
+        show-icon
+        message="GitHub Skill 内容通过重新导入更新，可在这里切换启用状态。"
+        style="margin-bottom: 16px" />
+      <a-descriptions v-if="editingSkill?.source_metadata" :column="1" size="small">
+        <a-descriptions-item label="仓库">{{
+          editingSkill.source_metadata.repository
+        }}</a-descriptions-item>
+        <a-descriptions-item label="目录">{{
+          editingSkill.source_metadata.path || '/'
+        }}</a-descriptions-item>
+        <a-descriptions-item label="版本">{{
+          editingSkill.source_metadata.commit.slice(0, 12)
+        }}</a-descriptions-item>
+        <a-descriptions-item label="资源"
+          >{{ editingSkill.source_metadata.file_count }} 个文件已保存；{{
+            editingSkill.source_metadata.reference_files.length
+          }}
+          份参考文本参与写作</a-descriptions-item
+        >
+      </a-descriptions>
+      <a-alert
+        v-for="warning in editingSkill?.source_metadata?.warnings || []"
+        :key="warning"
+        type="warning"
+        :message="warning"
+        style="margin-bottom: 8px" />
+      <a-form layout="vertical"
+        ><a-form-item label="名称"
+          ><a-input
+            v-model:value="skillForm.name"
+            :readonly="editingSkill?.source_type === 'github'" /></a-form-item
+        ><a-form-item label="说明"
+          ><a-input
+            v-model:value="skillForm.description"
+            :readonly="editingSkill?.source_type === 'github'" /></a-form-item
         ><a-form-item label="指令"
-          ><a-textarea v-model:value="skillForm.instructions" :rows="10" /></a-form-item
+          ><a-textarea
+            v-model:value="skillForm.instructions"
+            :rows="10"
+            :readonly="editingSkill?.source_type === 'github'" /></a-form-item
         ><a-form-item label="启用"
           ><a-switch v-model:checked="skillForm.is_active" /></a-form-item></a-form
     ></a-modal>
+    <a-modal
+      v-model:open="importOpen"
+      title="从 GitHub 导入 Skills"
+      :width="680"
+      ok-text="导入"
+      cancel-text="关闭"
+      :confirm-loading="importing"
+      :closable="!importing"
+      :mask-closable="!importing"
+      :keyboard="!importing"
+      :cancel-button-props="{ disabled: importing }"
+      @ok="importGithub"
+    >
+      <p class="muted">
+        粘贴公开仓库或目录地址，自动识别其中的
+        SKILL.md。完整保存目录文件，将写作指令和可读取的参考文本用于文章生成。配套脚本和生图工具暂不执行。
+      </p>
+      <a-form layout="vertical">
+        <a-form-item label="GitHub 地址" required>
+          <a-input
+            v-model:value="importForm.url"
+            :disabled="importing"
+            placeholder="https://github.com/SpaceZephyr/creator-buddy/tree/main/xhs-Skills"
+          />
+        </a-form-item>
+        <a-form-item label="分支 / 标签 / Commit（可选）"
+          ><a-input
+            v-model:value="importForm.ref"
+            :disabled="importing"
+            placeholder="留空使用地址中的分支或仓库默认分支"
+        /></a-form-item>
+        <a-form-item label="子目录（可选）"
+          ><a-input
+            v-model:value="importForm.path"
+            :disabled="importing"
+            placeholder="留空使用地址中的目录，如 xhs-Skills"
+        /></a-form-item>
+      </a-form>
+      <a-alert v-if="importError" type="error" show-icon :message="importError" />
+      <a-alert
+        v-if="importResult"
+        type="success"
+        show-icon
+        :message="`新增 ${importResult.created} 个，更新 ${importResult.updated} 个，版本相同 ${importResult.unchanged} 个`"
+      >
+        <template #description>
+          <div>{{ importResult.repository }} · {{ importResult.commit.slice(0, 12) }}</div>
+          <div>{{ importResult.skills.map((skill) => skill.name).join('、') }}</div>
+        </template>
+      </a-alert>
+      <a-alert
+        v-for="warning in importResult?.warnings || []"
+        :key="warning"
+        type="warning"
+        :message="warning"
+        style="margin-top: 8px"
+      />
+    </a-modal>
   </div>
 </template>

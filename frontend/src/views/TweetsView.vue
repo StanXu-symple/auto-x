@@ -11,6 +11,7 @@ import {
 import { message } from 'ant-design-vue'
 import { aiApi, monitoredUsersApi, qqApi, tweetsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
+import { skillOptionLabel, skillSourceLabel } from '@/utils/skills'
 import type {
   AiSkill,
   EntityId,
@@ -38,7 +39,7 @@ const generationSkillsError = ref('')
 const maxGenerationSkills = 20
 const generationSkillOptions = computed(() =>
   generationSkills.value.map((skill) => ({
-    label: skill.name,
+    label: skillOptionLabel(skill),
     value: skill.id,
     disabled:
       selectedSkillIds.value.length >= maxGenerationSkills &&
@@ -502,12 +503,12 @@ watch(
       />
       <ul v-if="selectedGenerationSkills.length" class="generation-skills">
         <li v-for="skill in selectedGenerationSkills" :key="skill.id">
-          <strong>{{ skill.name }}</strong>
+          <strong>{{ skill.name }}</strong> <a-tag>{{ skillSourceLabel(skill) }}</a-tag>
           <p v-if="skill.description" class="muted">{{ skill.description }}</p>
         </li>
       </ul>
       <p class="generation-skills-link muted">
-        仅显示已启用的 Skills，可在 Skills管理页面维护。
+        可选择已启用的自定义或 GitHub Skills，在 Skills管理页面维护。
         <router-link v-if="!generating" to="/skills"> 管理 Skills </router-link>
       </p>
     </a-modal>

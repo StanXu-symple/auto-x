@@ -1,10 +1,14 @@
+import asyncio
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai import AIFeature, AISkill, AIUserSkillBinding
+from app.schemas.ai import AISkillOut
+from app.skills.packages import read_package_instructions
 
 
-async def resolve_active_skills(session: AsyncSession, skill_ids: list[int]) -> list[AISkill]:
+async def resolve_active_skills(session: AsyncSession, skill_ids: list[int]) -> list[AISkillOut]:
     if not skill_ids:
         return []
     skills = list(
@@ -12,7 +16,15 @@ async def resolve_active_skills(session: AsyncSession, skill_ids: list[int]) -> 
             select(AISkill).where(AISkill.id.in_(skill_ids), AISkill.is_active.is_(True))
         )
     )
-    by_id = {skill.id: skill for skill in skills}
+    by_id = {}
+    for skill in skills:
+        resolved = AISkillOut.model_validate(skill)
+        if skill.source_type == "github":
+            resolved.instructions = await asyncio.to_thread(
+                read_package_instructions,
+                skill.source_metadata,
+            )
+        by_id[skill.id] = resolved
     return [by_id[skill_id] for skill_id in skill_ids if skill_id in by_id]
 
 
@@ -23,7 +35,7 @@ async def resolve_context_skills(
     feature: AIFeature,
     fallback_skill_ids: list[int],
     override_skill_ids: list[int] | None = None,
-) -> tuple[list[AISkill], str]:
+) -> tuple[list[AISkillOut], str]:
     if override_skill_ids is not None:
         return await resolve_active_skills(session, override_skill_ids), "manual_override"
     bound_ids = list(

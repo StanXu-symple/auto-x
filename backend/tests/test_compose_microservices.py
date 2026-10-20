@@ -36,6 +36,19 @@ def test_skill_service_caller_isolation_and_healthcheck():
         assert f"/{caller}.secret:/run/xsentinel/{caller}.secret:ro" in block
 
 
+def test_skill_packages_persist_on_host_and_are_mounted_only_by_owner():
+    source = (REPOSITORY_ROOT / "docker-compose.yml").read_text()
+    mount = "${SKILL_STORAGE_HOST_DIR:-./data/skills}:/var/lib/xsentinel/skills"
+    owner = _service_block(source, "skill-worker")
+    initializer = _service_block(source, "skill-storage-init")
+    assert mount in owner and mount in initializer
+    assert "skill-storage-init:" in owner
+    assert "chown 10001:10001" in initializer
+    assert "SKILL_STORAGE_DIR: /var/lib/xsentinel/skills" in owner
+    for service in ("backend", "worker", "ai-worker"):
+        assert mount not in _service_block(source, service)
+
+
 def _expected_test(url: str) -> list[str]:
     return [
         "CMD",

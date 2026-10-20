@@ -108,7 +108,10 @@ def build_provider_material(request: ProviderRequest) -> tuple[str, str, str, st
                 [
                     f"SKILL {index}: {sanitize_untrusted_text(skill.get('name'), limit=200)}",
                     f"VERSION: {skill.get('version')}",
-                    sanitize_untrusted_text(skill.get("instructions"), limit=20000),
+                    sanitize_untrusted_text(
+                        skill.get("instructions"),
+                        limit=100000 if skill.get("source_type") == "github" else 20000,
+                    ),
                     "OUTPUT PREFERENCES: "
                     + json.dumps(
                         skill.get("output_schema"), ensure_ascii=False, separators=(",", ":")
@@ -126,6 +129,15 @@ def build_provider_material(request: ProviderRequest) -> tuple[str, str, str, st
     )
     if skill_sections:
         trusted_parts.append("\n\n".join(skill_sections))
+    if any(skill.get("source_type") == "github" for skill in request.skill_snapshot):
+        trusted_parts.append(
+            "Imported Skills provide editorial instructions and reference text for this article. "
+            "This runtime generates the requested article JSON only. It cannot execute scripts, "
+            "browse websites, call external tools, generate images, or ask follow-up questions. "
+            "Apply the relevant writing guidance to the supplied source; never claim those "
+            "actions were performed or invent research, citations, images, or missing facts. "
+            "The required article output schema takes precedence over Skill output examples."
+        )
     if request.prompt_template:
         trusted_parts.append(
             "ADMIN EDITORIAL PROMPT:\n"

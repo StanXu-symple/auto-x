@@ -39,6 +39,9 @@ class AISkill(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     remote_skill_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     remote_skill_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(16), default="custom", server_default="custom")
+    source_key: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    source_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow

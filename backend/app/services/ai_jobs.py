@@ -118,7 +118,7 @@ async def build_author_context(
 
 
 def _skill_snapshot(skill: AISkillOut) -> dict:
-    return {
+    result = {
         "id": skill.id,
         "name": skill.name,
         "description": skill.description,
@@ -128,6 +128,9 @@ def _skill_snapshot(skill: AISkillOut) -> dict:
         "remote_skill_id": skill.remote_skill_id,
         "remote_skill_version": skill.remote_skill_version,
     }
+    if getattr(skill, "source_type", "custom") == "github":
+        result.update(source_type="github", source_metadata=skill.source_metadata)
+    return result
 
 
 def _request_snapshot(

@@ -627,8 +627,36 @@ export interface AiSkill {
   version?: number
   remote_skill_id?: string | null
   remote_skill_version?: string | null
+  source_type?: 'custom' | 'github'
+  source_metadata?: {
+    repository: string
+    ref: string
+    commit: string
+    path: string
+    import_path?: string
+    url: string
+    file_count: number
+    reference_files: string[]
+    warnings: string[]
+  } | null
   created_at: string
   updated_at?: string | null
+}
+
+export interface GithubSkillImportPayload {
+  url: string
+  ref?: string
+  path?: string
+}
+
+export interface GithubSkillImportResult {
+  repository: string
+  commit: string
+  created: number
+  updated: number
+  unchanged: number
+  skills: AiSkill[]
+  warnings: string[]
 }
 
 export interface AiSkillPayload {

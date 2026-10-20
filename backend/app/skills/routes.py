@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import shutil
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query, status
@@ -30,14 +32,17 @@ from app.schemas.ai import (
     AIUserSkillBindingReplace,
 )
 from app.schemas.common import MessageResponse, Page
+from app.schemas.skill_import import GitHubSkillImport, GitHubSkillImportResult
 from app.services.ai_jobs import (
     get_ai_feature,
     get_ai_setting,
 )
+from app.skills import packages
 from app.skills.store import resolve_active_skills, resolve_context_skills
 
 router = APIRouter(prefix="/ai", tags=["AI Creation"])
 AI_HEARTBEAT_KEY = "xsentinel:ai-worker:heartbeat"
+_IMPORT_LOCK = asyncio.Lock()
 
 
 def _skill_out(skill: AISkill) -> AISkillOut:
@@ -199,6 +204,87 @@ async def create_ai_skill(payload: AISkillCreate, db: DbSession, _: CurrentAdmin
     return _skill_out(skill)
 
 
+@router.post("/skills/import-github", response_model=GitHubSkillImportResult)
+async def import_github_skills(
+    payload: GitHubSkillImport,
+    db: DbSession,
+    _: CurrentAdmin,
+) -> GitHubSkillImportResult:
+    if _IMPORT_LOCK.locked():
+        raise APIError(409, "skill_import_busy", "已有 Skill 导入正在进行，请完成后重试")
+    async with _IMPORT_LOCK:
+        return await _import_github_skills(payload, db)
+
+
+async def _import_github_skills(payload: GitHubSkillImport, db) -> GitHubSkillImportResult:
+    # Download and stage before taking the shared settings lock. A slow GitHub
+    # request must not block configuration writes or queue consumers.
+    downloaded = await packages.download_source(payload)
+    prepared = await asyncio.to_thread(packages.prepare_import, *downloaded)
+    committed = False
+    commit_started = False
+    keep_bundle = False
+    try:
+        await get_ai_setting(db, for_update=True)
+        created = updated = unchanged = 0
+        result = []
+        for item in prepared.skills:
+            skill = await db.scalar(select(AISkill).where(AISkill.source_key == item.key))
+            if (
+                skill is not None
+                and (skill.source_metadata or {}).get("commit") == prepared.commit
+                and (skill.source_metadata or {}).get("sha256") == item.metadata["sha256"]
+                and (skill.source_metadata or {}).get("import_path") == item.metadata["import_path"]
+                and (skill.source_metadata or {}).get("ref") == item.metadata["ref"]
+            ):
+                await asyncio.to_thread(packages.read_package_instructions, skill.source_metadata)
+                unchanged += 1
+                result.append(skill)
+                continue
+            keep_bundle = True
+            if skill is None:
+                name = item.name
+                if await db.scalar(select(AISkill.id).where(AISkill.name == name)):
+                    name = f"{name[:89]} · {item.key[:8]}"
+                skill = AISkill(name=name, source_key=item.key, version=1, is_active=True)
+                db.add(skill)
+                created += 1
+            else:
+                skill.version += 1
+                updated += 1
+            skill.description = item.description or None
+            skill.instructions = item.instructions
+            skill.source_type = "github"
+            skill.source_metadata = item.metadata
+            await db.flush()
+            result.append(skill)
+        commit_started = True
+        await db.commit()
+        committed = True
+        return GitHubSkillImportResult(
+            repository=prepared.repository,
+            commit=prepared.commit,
+            created=created,
+            updated=updated,
+            unchanged=unchanged,
+            skills=[_skill_out(skill) for skill in result],
+            warnings=list(
+                dict.fromkeys(
+                    warning for item in prepared.skills for warning in item.metadata["warnings"]
+                )
+            ),
+        )
+    except IntegrityError as exc:
+        await db.rollback()
+        commit_started = False
+        raise APIError(409, "skill_import_conflict", "Skill 名称或来源冲突，请刷新后重试") from exc
+    finally:
+        # On an uncertain commit (disconnect/cancellation), retain the directory:
+        # a harmless orphan is preferable to removing files referenced by SQL.
+        if (not committed and not commit_started) or not keep_bundle:
+            await asyncio.to_thread(shutil.rmtree, prepared.directory, True)
+
+
 @router.get("/skills/{skill_id}", response_model=AISkillOut)
 async def get_ai_skill(skill_id: int, db: DbSession, _: CurrentAdmin) -> AISkillOut:
     skill = await db.get(AISkill, skill_id)
@@ -215,6 +301,12 @@ async def patch_ai_skill(
     skill = await db.get(AISkill, skill_id, with_for_update=True)
     if skill is None:
         raise APIError(404, "skill_not_found", "AI skill was not found")
+    if skill.source_type == "github" and payload.model_fields_set - {"is_active"}:
+        raise APIError(
+            409,
+            "github_skill_read_only",
+            "GitHub Skill 的内容通过重新导入更新；可修改启用状态",
+        )
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(skill, key, value)
     skill.version += 1

@@ -47,8 +47,13 @@ class SkillClient:
 
     async def request(self, method: str, path: str, **kwargs) -> httpx.Response:
         try:
+            timeout = (
+                self.settings.skill_import_timeout_seconds
+                if method == "POST" and path == "/ai/skills/import-github"
+                else self.settings.skill_request_timeout_seconds
+            )
             # Includes discovery and token acquisition, bounding caller DB lock time.
-            async with asyncio.timeout(self.settings.skill_request_timeout_seconds):
+            async with asyncio.timeout(timeout):
                 if self.nacos is not None:
                     base = (await self.nacos.discover(self.settings.skill_service_name)).url
                 else:
@@ -70,6 +75,7 @@ class SkillClient:
                     method,
                     f"{base}{path}",
                     headers=headers,
+                    timeout=timeout,
                     **kwargs,
                 )
                 if response.status_code >= 500:
@@ -138,6 +144,17 @@ class SkillClient:
                 raise ValueError("Unexpected task")
             return selection
         except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise SkillServiceUnavailable() from exc
+
+    async def job(self, job_id: int, expected: list[dict]) -> list[dict]:
+        response = await self.request("GET", f"/v1/jobs/{job_id}/skills")
+        try:
+            response.raise_for_status()
+            result = response.json()
+            if result.get("job_id") != job_id or result.get("skills") != expected:
+                raise ValueError("Skill material differs from frozen job snapshot")
+            return result["skills"]
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
             raise SkillServiceUnavailable() from exc
 
 

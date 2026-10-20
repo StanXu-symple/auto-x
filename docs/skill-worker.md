@@ -30,7 +30,50 @@ flowchart LR
 - 暂停、配置版本冲突、保留旧队列的决策和重试次数沿用现有规则。
 - HTTP、Nacos 或认证故障返回 `503 skill_service_unavailable`。轮询入队事务回滚，补生成游标不前移，领取失败不消耗模型尝试次数；不会把服务故障当成空绑定或 Skill 已失效。
 
-本次没有引入 Skill 下载、脚本执行沙箱、Skill 市场或新的页面入口。
+管理页面现已独立为 `/skills`。GitHub 导入与磁盘持久化见下节；执行范围为写作指令与参考文本。
+
+## 自定义与 GitHub Skills
+
+两种来源共用 `ai_skills.id`，因此账号绑定、全局默认、监听任务和内容流的手动生成可以混合选择。自定义 Skill 的指令保存在数据库；GitHub Skill 在数据库中保存索引、来源、固定 Commit、版本、编译指令缓存与文件校验信息，完整原始目录保存在 skill-worker 的磁盘中。
+
+在 **Skills管理 → 从 GitHub 导入** 粘贴公开仓库或 `tree` 目录地址。例如：
+
+```text
+https://github.com/SpaceZephyr/creator-buddy/tree/main/xhs-Skills
+```
+
+根仓库地址默认使用其默认分支；也可填写分支、标签或 Commit 和子目录。分支名含 `/` 时，推荐使用仓库根地址并单独填写分支和目录。暂不支持私有仓库认证。目录内每个 `SKILL.md` 注册为一个 Skill，名称与说明取 YAML frontmatter；没有 frontmatter 时使用目录名。
+
+- 完整保存所选目录内的文件，包括脚本、图片与其他资源。脚本不执行、依赖不安装、外部工具不调用。
+- 文章生成使用 `SKILL.md` 正文、Skill 内 `references/` 下的 UTF-8 文本，以及 Markdown 链接或反引号路径引用的本地文本（可递归读取，且必须处于此次导入范围内）。支持 `.md/.txt/.json/.yaml/.yml/.csv`；不自动执行其他 Skill 的路由或工具调用。
+- 每个 Skill 的写作上下文最多 100000 字符；超出上限或缺少的引用会在导入结果与详情中提示，已下载的原文件仍完整保留。生图、实时搜索等 Skill 仅能提供写作指导，无法在本阶段完成对应工具动作。
+- 同一仓库路径重复导入保持原 ID；相同分支、导入范围、Commit 与指令内容为无变化，变化时递增 Skill 版本。扩大导入目录时会保留新增范围的全部文件，切换分支时会更新后续导入来源。停用状态保持，导入不会重新启用已停用项。名称冲突会加来源摘要后缀，避免覆盖自定义 Skill。
+- GitHub Skill 只允许在页面切换启停，正文通过重新导入更新。更新使用原导入范围，可能同时更新该目录中的其他 Skills。删除沿用停用语义，文件和历史快照保留。
+
+### 持久化目录与升级
+
+Compose 默认绑定 `${SKILL_STORAGE_HOST_DIR:-./data/skills}` 到容器 `/var/lib/xsentinel/skills`。现有服务器安装路径为 `/home/docker/auto-x`，因此实际宿主机目录是 **`/home/docker/auto-x/data/skills`**，在当前拓扑中位于 **hn-1**。`skill-storage-init` 首先赋予 UID/GID `10001:10001` 写权限；只有 skill-worker 挂载此目录，ai-worker 通过 HTTP 取内容。安装器直接继承基础 Compose 的挂载与初始化依赖。
+
+```text
+data/skills/bundles/<不可变包ID>/
+  repo/<仓库内路径>/...    # 原始完整目录
+  prompts/<来源摘要>.md  # 解析后的写作指令及参考文本
+  manifest.json           # 原文件大小与 SHA-256
+```
+
+新增迁移 `0037_github_skills`：升级前备份 PostgreSQL；执行 `alembic upgrade head`，先升级 skill-worker，再升级 backend / ai-worker，最后更新 frontend。更新与备份必须同时保留数据库和 `data/skills`。部署多实例时必须共享同一持久化目录；独立本机磁盘不能被多个 Nacos 实例交替使用。恢复时按原包 ID 恢复整个目录，不能仅重新导入当前分支替代旧版本。无法确认数据库提交结果时保留目录，可能留下孤立包；暂不自动清理旧包，避免影响历史任务。
+
+原生 `start.sh` 使用项目根目录 `data/skills`，可用 `SKILL_STORAGE_DIR` 覆盖；该路径属于节点本地配置，不接受 Nacos 共享配置覆盖。容器路径固定，宿主机路径通过 `SKILL_STORAGE_HOST_DIR` 配置。skill-worker 内存上限调整为 512 MiB，以容纳受限的归档处理。
+
+### HTTP 与任务快照
+
+`POST /api/v1/ai/skills/import-github` 由 backend 转发到 skill-worker，沿用管理员身份和 `skills:manage` 权限。下载固定 Commit 归档，验证目录、文件大小及普通文件类型，先原子落盘，再在设置锁保护下提交索引。每实例串行导入；下载不占有设置锁。失败不提交部分 Skill。
+
+导入的整体 HTTP 超时默认 180 秒（`SKILL_IMPORT_TIMEOUT_SECONDS`），前端及 nginx 默认为 190 秒。若自行加长服务超时，应同步修改前端及反向代理；已有外层网关也需允许该时长。GitHub 下载总计最多 120 秒；限制为压缩包 32 MiB、所选目录 2000 文件 / 96 MiB、单文件 16 MiB、每次最多 50 个 Skills。超时后先刷新列表确认结果；重复导入同一版本不会重复创建记录。
+
+入队仍通过原内部解析接口获取有序 Skill 并冻结内容与来源版本。AI Worker 在领取有 Skill 的作业、消耗尝试次数之前，通过 Nacos 调用 **`GET /v1/jobs/{job_id}/skills`**（`skills:read`）：自定义 Skill 返回该作业冻结的指令；GitHub Skill 读取该作业固定包的磁盘文件并校验 SHA-256，再与冻结快照核对。更新当前 Skill 不改写排队任务。磁盘文件缺失、被改动或 HTTP 故障时保持队列，不消耗模型尝试次数。
+
+`/ai-writing` 的监听任务与默认 Skills、`/tweets` 的 AI 生成选择框都同时展示两种来源。默认优先级、显式空选择、绑定顺序、任务切换、补生成和旧队列规则继续沿用。
 
 ## 文件对应
 
@@ -42,6 +85,8 @@ flowchart LR
 | `backend/app/skills/listening.py` | 本地校验、预览、统计与输出 |
 | `backend/app/skills/backfill.py` | 创建补生成请求和冻结配置快照 |
 | `backend/app/skills/store.py` | 服务内部的 Skill 查询及选择优先级 |
+| `backend/app/skills/packages.py` | GitHub 下载、归档校验、完整落盘、写作指令编译和版本校验 |
+| `backend/app/schemas/skill_import.py` | GitHub 导入请求与响应协议 |
 | `backend/app/skills/bootstrap.py` | 内置 Skill 的幂等初始化 |
 | `backend/app/api/skill_proxy.py` | 保留原页面 API 的 HTTP 转发层 |
 | `backend/app/services/skill_client.py` | Nacos 发现、服务 Token、HTTP、超时和响应校验 |
@@ -56,6 +101,7 @@ flowchart LR
 | `POST /v1/skills/resolve` | 按给定 ID 顺序返回仍有效的 Skill | `skills:read` |
 | `POST /v1/skills/context` | 解析显式覆盖、账号绑定和默认选择 | `skills:read` |
 | `GET /v1/tasks/{task_id}/skills` | 返回监听任务绑定顺序及有效 Skill | `skills:read` |
+| `GET /v1/jobs/{job_id}/skills` | 读取任务冻结的自定义指令或磁盘 Skill 版本 | `skills:read` |
 | `/ai/...` 的管理路由 | 原有管理能力 | `skills:manage`，同时验证原管理员 Token |
 | `GET /health/live`、`GET /health/ready` | 进程及数据库健康 | 健康检查 |
 | `GET /metrics` | Prometheus | 指标采集 |
@@ -76,7 +122,7 @@ Skill 的 ORM 关系改为显式加载：消费者加载监听任务时不再隐
 
 ## 部署与升级
 
-无新增数据库迁移，现有数据继续使用。已有分布式集群按以下顺序升级：
+最初的服务拆分无新增数据库迁移，现有数据继续使用；后续 GitHub 能力须先运行上述 `0037` 迁移。原服务拆分的部署顺序记录如下：
 
 1. 备份当前 Nacos 共享配置、监控拓扑和节点映射，以及 PostgreSQL 的认证身份与授权。先让所有节点的 `monitor-center`、`monitor-agent` 使用支持 `skill_worker` 组件的新镜像；此阶段保留原监控拓扑，不运行会同步新拓扑的安装器流程。旧版监控服务无法解析该组件，提前发布会使旧实例在重启时失败。确认每个监控实例升级完成后再继续。
 2. 暂停自动采集和 AI 消费。同步 Nacos 的 Skill 服务配置、三个调用方身份及专用 `.secret` 文件；此时再将新服务加入实际部署节点的监控拓扑，并配置 Nacos 注册地址和端口。

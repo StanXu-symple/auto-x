@@ -17,7 +17,7 @@ RUN pip install --upgrade pip \
 
 RUN mkdir -p /var/lib/xsentinel/xhs-home /var/lib/xsentinel/xhs-uploads \
         /var/lib/xsentinel/article-uploads /var/lib/xsentinel/camoufox-uploads \
-        /var/lib/xsentinel/tweet-screenshots /var/log/xsentinel \
+        /var/lib/xsentinel/tweet-screenshots /var/lib/xsentinel/skills /var/log/xsentinel \
     && chown -R app:app /var/lib/xsentinel /var/log/xsentinel
 
 FROM base AS camoufox-worker

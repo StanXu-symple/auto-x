@@ -75,6 +75,17 @@ def test_xhs_auto_publish_instructs_generation_to_fit_note_limits() -> None:
     assert "within 1000 characters" in xhs
 
 
+def test_github_reference_text_reaches_provider_without_old_twenty_thousand_limit():
+    material = "a" * 21000 + "\nREFERENCE CONTENT AT END"
+    prompt, _, _, _ = build_provider_material(provider_request(skill_snapshot=[{
+        "name": "Imported writer", "version": 1, "source_type": "github",
+        "instructions": material, "output_schema": None,
+    }]))
+    assert "REFERENCE CONTENT AT END" in prompt
+    assert "cannot execute scripts" in prompt
+    assert "never claim those actions were performed" in prompt
+
+
 def author_profile() -> dict:
     return {
         "identity_summary": "关注 AI 产品与智能体的作者",

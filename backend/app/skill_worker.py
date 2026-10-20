@@ -1,5 +1,6 @@
 """Skill management, bindings and resolution behind an authenticated HTTP boundary."""
 
+import asyncio
 import logging
 import time
 import uuid
@@ -21,7 +22,7 @@ from app.control_plane.security import ServiceVerifier
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import AsyncSessionFactory, engine
-from app.models.ai import AIFeature, AIListenTaskSkill
+from app.models.ai import AIFeature, AIGenerationJob, AIListenTaskSkill
 from app.schemas.ai import AISkillOut
 from app.schemas.skill_service import (
     SkillContextRequest,
@@ -33,6 +34,7 @@ from app.services.auth_center import AuthCenterClient
 from app.services.metrics import HTTP_DURATION, HTTP_REQUESTS
 from app.skills import listening_routes, routes, store
 from app.skills.bootstrap import seed_skills
+from app.skills.packages import read_package_instructions
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +141,22 @@ async def resolve_task(task_id: int, db: DbSession):
         selected_ids=ids,
         skills=[AISkillOut.model_validate(s) for s in skills],
     )
+
+
+@internal.get("/jobs/{job_id}/skills")
+async def job_skills(job_id: int, db: DbSession):
+    job = await db.get(AIGenerationJob, job_id)
+    if job is None:
+        raise APIError(404, "ai_job_not_found", "AI 任务不存在")
+    materials = []
+    for frozen in job.skill_snapshot or []:
+        material = dict(frozen)
+        if frozen.get("source_type") == "github":
+            material["instructions"] = await asyncio.to_thread(
+                read_package_instructions, frozen.get("source_metadata") or {},
+            )
+        materials.append(material)
+    return {"job_id": job_id, "skills": materials}
 
 
 app.include_router(internal)

@@ -54,6 +54,7 @@ from app.services.metrics import (
 )
 from app.services.skill_client import (
     SkillServiceUnavailable,
+    get_skill_client,
     resolve_task_skills,
     skill_client_lifespan,
 )
@@ -578,6 +579,12 @@ class AIGenerationWorker:
                 job.claimed_by = None
                 job.lease_expires_at = None
                 return None
+            # Resolve frozen material before consuming an attempt. GitHub files
+            # live only on skill-worker; a mount/HTTP failure leaves this job queued.
+            material = (
+                await get_skill_client().job(job.id, job.skill_snapshot)
+                if job.skill_snapshot else []
+            )
             job.status = "running"
             job.attempts += 1
             job.lifetime_attempts = (job.lifetime_attempts or 0) + 1
@@ -623,6 +630,7 @@ class AIGenerationWorker:
             await session.flush()
             # Materialize everything needed before leaving the session; generation never
             # lazy-loads mutable configuration after the audited enqueue snapshot.
+            job.skill_snapshot = material
             session.expunge(job)
             return job
 

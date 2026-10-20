@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,7 +19,15 @@ def test_frontend_nginx_replaces_untrusted_forwarded_for_chain() -> None:
     )
 
     assert "$proxy_add_x_forwarded_for" not in config
-    assert config.count("proxy_set_header X-Forwarded-For $remote_addr;") == 5
+    proxy_locations = [
+        block
+        for block in re.findall(r"location\s+[^{}]+\{([^{}]*)\}", config)
+        if "proxy_pass " in block
+    ]
+    assert proxy_locations
+    assert all(
+        "proxy_set_header X-Forwarded-For $remote_addr;" in block for block in proxy_locations
+    )
 
 
 class _Transaction:

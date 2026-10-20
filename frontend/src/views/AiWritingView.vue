@@ -11,11 +11,13 @@ import {
 import { message, Modal } from 'ant-design-vue'
 import { aiApi, aiDataSourceApi, aiListenTasksApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
+import { skillOptionLabel } from '@/utils/skills'
 import type {
   AiDataSourceStatus,
   AiJob,
   AiListenTask,
   AiSettings,
+  AiSkill,
   EntityId,
   UpdateAiSettingsPayload,
 } from '@/types'
@@ -45,6 +47,8 @@ const draftSaving = ref(false)
 const draftForm = reactive({ id: 0 as EntityId, title: '', content: '', excerpt: '', revision: 0 })
 const loading = reactive({ settings: false, source: false })
 const settings = ref<AiSettings | null>(null)
+const defaultSkills = ref<AiSkill[]>([])
+const defaultSkillsLoading = ref(false)
 const source = ref<AiDataSourceStatus | null>(null)
 const filters = reactive({
   status: 'all',
@@ -148,6 +152,31 @@ async function loadSettings() {
     loading.settings = false
   }
 }
+async function loadDefaultSkills() {
+  defaultSkillsLoading.value = true
+  try {
+    const all: AiSkill[] = []
+    let page = 1
+    while (true) {
+      const result = await aiApi.skillPage({ page, page_size: 100 })
+      all.push(...result.items)
+      if (all.length >= result.total || !result.items.length) break
+      page++
+    }
+    defaultSkills.value = all
+  } catch (e) {
+    message.error(getErrorMessage(e, '无法加载默认 Skills'))
+  } finally {
+    defaultSkillsLoading.value = false
+  }
+}
+watch(
+  tab,
+  (value) => {
+    if (value === 'settings') void loadDefaultSkills()
+  },
+  { immediate: true },
+)
 
 async function loadSource() {
   loading.source = true
@@ -423,6 +452,25 @@ onMounted(async () => {
                 ><a-input v-model:value="settingsForm.language" placeholder="语言" /><a-input
                   v-model:value="settingsForm.tone"
                   placeholder="语气" /></a-space></a-form-item
+            ><a-form-item label="默认 Skills">
+              <a-select
+                v-model:value="settingsForm.default_skill_ids"
+                mode="multiple"
+                allow-clear
+                option-filter-prop="label"
+                :loading="defaultSkillsLoading"
+                placeholder="选择自定义或 GitHub Skills"
+                :options="
+                  defaultSkills.map((skill) => ({
+                    label: skillOptionLabel(skill),
+                    value: skill.id,
+                    disabled: !skill.is_active,
+                  }))
+                "
+              />
+              <div class="muted">
+                未明确选择 Skills 且账号没有单独绑定时使用；监听任务使用任务中选择的 Skills。
+              </div> </a-form-item
             ><a-form-item label="默认提示词"
               ><a-textarea v-model:value="settingsForm.prompt_template" :rows="5" /></a-form-item
             ><a-form-item label="推理强度"

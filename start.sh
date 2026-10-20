@@ -110,6 +110,8 @@ command -v curl >/dev/null 2>&1 || fail "未找到 curl。"
 export SERVICE_AUTH_CLIENTS_FILE="$ROOT_DIR/data/control-plane/clients.json"
 export SKILL_CLIENT_ID=skill-backend
 export SKILL_CLIENT_SECRET_FILE="$ROOT_DIR/data/control-plane/skill-backend.secret"
+export SKILL_STORAGE_DIR="${SKILL_STORAGE_DIR:-$ROOT_DIR/data/skills}"
+mkdir -p "$SKILL_STORAGE_DIR"
 
 echo "[migration] 检查并升级数据库结构"
 (

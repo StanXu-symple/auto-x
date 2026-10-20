@@ -52,6 +52,7 @@ _NACOS_LOCAL_ONLY_FIELDS = {
     "skill_client_id",
     "skill_client_secret_file",
     "skill_service_url",
+    "skill_storage_dir",
     "nacos_service_name",
     "nacos_advertise_ip",
     "nacos_service_port",
@@ -374,6 +375,8 @@ class Settings(BaseSettings):
     skill_service_name: str = "xsentinel-skill-worker"
     skill_service_url: str = "http://127.0.0.1:8204"
     skill_request_timeout_seconds: float = Field(default=10.0, gt=0, le=30)
+    skill_import_timeout_seconds: float = Field(default=180.0, ge=30, le=600)
+    skill_storage_dir: str = "/var/lib/xsentinel/skills"
     skill_client_id: str = "skill-backend"
     skill_client_secret_file: str = "/run/xsentinel/skill-backend.secret"
     service_client_secret_file: str = "/etc/xsentinel/secrets/backend.secret"

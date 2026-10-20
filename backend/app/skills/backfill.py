@@ -13,6 +13,7 @@ from app.models.ai import (
     AIListenTaskBackfill,
     AIListenTaskEvent,
 )
+from app.skills.packages import read_package_instructions, snapshot
 
 
 def task_snapshot(
@@ -47,14 +48,11 @@ def task_snapshot(
         ],
         "skills": [
             {
-                "id": link.skill.id,
-                "name": link.skill.name,
-                "description": link.skill.description,
-                "instructions": link.skill.instructions,
-                "output_schema": link.skill.output_schema,
-                "version": link.skill.version,
-                "remote_skill_id": link.skill.remote_skill_id,
-                "remote_skill_version": link.skill.remote_skill_version,
+                **snapshot(link.skill),
+                "instructions": (
+                    read_package_instructions(link.skill.source_metadata)
+                    if link.skill.source_type == "github" else link.skill.instructions
+                ),
             }
             for link in sorted(task.skills, key=lambda item: item.priority)
         ],

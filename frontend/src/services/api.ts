@@ -24,6 +24,8 @@ import type {
   AiSkill,
   AiSkillQuery,
   AiSkillPayload,
+  GithubSkillImportPayload,
+  GithubSkillImportResult,
   AiUserProfile,
   AiUserSkillBinding,
   Article,
@@ -380,6 +382,11 @@ export const xSourcesApi = {
 }
 
 export const aiApi = {
+  async importGithubSkills(payload: GithubSkillImportPayload) {
+    return dataOf(await http.post<Wrapped<GithubSkillImportResult>>(
+      '/ai/skills/import-github', payload, { timeout: 190_000 },
+    ))
+  },
   async skillPage(params: AiSkillQuery) { return pageOf(await http.get<Wrapped<PaginatedResponse<AiSkill>>>('/ai/skills', { params })) },
   async settings() {
     return dataOf(await http.get<Wrapped<AiSettings>>('/ai/settings'))
@@ -393,7 +400,7 @@ export const aiApi = {
   async createSkill(payload: AiSkillPayload) {
     return dataOf(await http.post<Wrapped<AiSkill>>('/ai/skills', payload))
   },
-  async updateSkill(id: EntityId, payload: AiSkillPayload) {
+  async updateSkill(id: EntityId, payload: Partial<AiSkillPayload>) {
     return dataOf(await http.patch<Wrapped<AiSkill>>(`/ai/skills/${id}`, payload))
   },
   async removeSkill(id: EntityId) {

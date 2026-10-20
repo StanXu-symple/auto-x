@@ -217,6 +217,8 @@ class AISkillOut(APIModel):
     version: int
     remote_skill_id: str | None
     remote_skill_version: str | None
+    source_type: str = "custom"
+    source_metadata: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -32,6 +32,8 @@
 
 - 左侧栏独立入口 `/skills`，AI 创作页不再包含 Skills Tab；旧 `/ai-writing?tab=skills` 和 `tab=context` 地址重定向到新页面。
 - Skills：分页、新增、编辑、启用/停用、删除 Skill。
+- GitHub 导入：公开仓库或目录批量识别 SKILL.md，显示来源和固定 Commit；重新导入更新原记录，原文件持久化到 skill-worker 宿主机。
+- AI 创作默认配置、监听任务及内容流 AI 生成统一选择自定义 / GitHub Skills；GitHub 的写作说明与参考文本用于正文生成。
 - 用户上下文：按监听账号和功能点读取/保存 Skill 绑定，查看作者画像和长期主题。
 
 ## QQ 渠道
