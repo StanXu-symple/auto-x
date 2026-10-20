@@ -210,3 +210,20 @@ HTTP 测试覆盖实际 FastAPI 转发、JWT/会话校验、权限隔离、优�
 - tc-2：`/home/docker/auto-x/backups/pre-github-skills-20261020T055043Z`
 
 两节点的 `backups/github-skills-current.txt` 指向对应备份。`github-skills-deployment-verification.json` 保存容器与配置验收；tc-2 的 `github-skills-invariants-after.json` 保存业务数据比对。备份保留原环境、服务清单、Compose/控制面文件、容器检查、Nacos 文档和媒体卷；tc-2 另含 PostgreSQL dump 和 Redis RDB。恢复或迁移导入后的 Skill 时，仍须同时保留数据库与 hn-1 的 `data/skills`。
+
+## 2026-10-20 GitPython 拉取与更新按钮上线
+
+功能提交 `fb9151ffb0ffe076047559112d53a12cf93dc678`，已推送至 `dev/main`，[Actions 39386424782](https://github.com/StanXu-symple/auto-x/actions/runs/39386424782) 构建成功。升级 hn-1 的 `skill-worker` 和 tc-2 的 `backend`，固定镜像标签为 `sha-fb9151ffb0ffe076047559112d53a12cf93dc678`。镜像包含 GitPython 3.2.1、Git 2.47.3 与 CA 证书，资源目录继续使用 hn-1 的 `/home/docker/auto-x/data/skills`。
+
+上线验收发现 Nginx 新增 `/api/v1/ai/skills/` 代理前缀会把集合地址 `/api/v1/ai/skills` 重定向，已在 `7d4d1b47248b5ed6fc40a270fa6cd836f286e83d` 增加精确代理并补充回归测试。[Actions 39388198475](https://github.com/StanXu-symple/auto-x/actions/runs/39388198475) 成功后，tc-2 前端升级到固定标签 `sha-7d4d1b47248b5ed6fc40a270fa6cd836f286e83d`，列表地址与更新接口均已实际验证。
+
+数据库仍为 `0037_github_skills`，本次没有新增迁移。恢复消费者时发现原一次性 `migrate` 容器仍使用早于 `0037` 的镜像，已用当前后端镜像重建并验证成功退出；原 worker、ai-worker 恢复运行且容器 ID 保持。其他运行服务、两节点服务清单和三份 Nacos 文档与备份一致。
+
+验收结果：
+
+- 三个升级服务健康，监控 14 个实例、2 个节点健康，检查时业务进程没有 ERROR/CRITICAL 日志。
+- 新 Skill Worker 实际通过 Git 克隆 `SpaceZephyr/creator-buddy` 的 `xhs-Skills`，10 个 Skills、37 个文件及编译指令校验通过，挂载可写；临时文件清理，未向生产数据库导入测试 Skills。
+- `/skills` 页面与 JS 为 200；管理接口与 Skill Worker 直连一致。通过前端代理调用导入和更新接口，分别正确返回无效来源 422、非 GitHub Skill 更新 409，未创建业务测试数据。
+- 三个调用方的 Nacos HTTP 解析通过，原 AI Worker 使用实际凭据读取历史任务快照一致。4 个 Skill（含来源元数据）、原绑定和设置、34 个历史任务及冻结快照逐项哈希比对一致。
+
+服务器升级前备份分别为 hn-1 的 `/home/docker/auto-x/backups/pre-gitpython-skills-20261020T072646Z` 和 tc-2 的 `/home/docker/auto-x/backups/pre-gitpython-skills-20261020T072649Z`，两节点的 `backups/gitpython-skills-current.txt` 指向对应目录。备份包含环境、Compose/控制面和 Skills 文件、容器版本、Nacos 文档；tc-2 另含 PostgreSQL dump 与 Redis RDB。`gitpython-skills-deployment-verification.json` 保存部署验收，tc-2 的 `gitpython-skills-invariants-after.json` 保存数据比对。
