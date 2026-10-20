@@ -4,26 +4,31 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import io
 import json
+import os
 import posixpath
 import re
 import shutil
+import signal
 import stat
+import subprocess
+import tempfile
+import threading
+import time
 import uuid
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlsplit
 
-import httpx
 import yaml
+from git import Git, GitError, Repo
 
 from app.api.errors import APIError
 from app.core.config import get_settings
 from app.schemas.skill_import import GitHubSkillImport
 
-MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
+MAX_CLONE_BYTES = 128 * 1024 * 1024
+GIT_TIMEOUT_SECONDS = 120
 MAX_FILES = 2000
 MAX_FILE_BYTES = 16 * 1024 * 1024
 MAX_TOTAL_BYTES = 96 * 1024 * 1024
@@ -75,96 +80,185 @@ def parse_source(payload: GitHubSkillImport) -> tuple[str, str | None, str]:
         if parts[3 : 3 + len(ref_parts)] != ref_parts:
             raise import_error("分支与目录地址不一致；可使用仓库根地址并单独填写分支和目录")
         path = payload.path if payload.path is not None else "/".join(parts[3 + len(ref_parts) :])
-    if ref and (len(ref) > 200 or any(ord(c) < 32 for c in ref)):
+    if ref and (
+        len(ref) > 200
+        or ref.startswith(("-", "/", "."))
+        or ref.endswith(("/", ".", ".lock"))
+        or any(c.isspace() or ord(c) < 32 or c in "~^:?*[\\" for c in ref)
+        or any(part in ref for part in ("..", "//", "@{"))
+    ):
         raise import_error("分支或版本无效")
     return repository, ref, safe_relative(path, allow_empty=True)
 
 
-async def download_source(payload: GitHubSkillImport) -> tuple[str, str, str, str, bytes]:
-    repository, ref, path = parse_source(payload)
+def git_environment() -> dict[str, str]:
+    # Disable host configuration, credentials and executable hooks/filters.
+    env = {}
+    config = {
+        "protocol.allow": "never",
+        "protocol.https.allow": "always",
+        "http.followRedirects": "false",
+        "credential.helper": "",
+        "core.hooksPath": os.devnull,
+        "pack.threads": "1",
+    }
+    env.update(
+        GIT_TERMINAL_PROMPT="0",
+        GIT_CONFIG_NOSYSTEM="1",
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_SYSTEM=os.devnull,
+        GIT_CONFIG_PARAMETERS="",
+        GIT_ASKPASS="/bin/false",
+        GIT_LFS_SKIP_SMUDGE="1",
+        GIT_CONFIG_COUNT=str(len(config)),
+    )
+    for index, (key, value) in enumerate(config.items()):
+        env[f"GIT_CONFIG_KEY_{index}"] = key
+        env[f"GIT_CONFIG_VALUE_{index}"] = value
+    return env
+
+
+def _check_clone(directory: Path, deadline: float, cancelled: threading.Event) -> None:
+    if cancelled.is_set():
+        raise import_error("Git 拉取已取消")
+    if time.monotonic() >= deadline:
+        raise import_error("Git 拉取超时，请稍后重试或选择较小的仓库")
+    total = 0
+    for parent, _, files in os.walk(directory):
+        for name in files:
+            try:
+                total += (Path(parent) / name).lstat().st_size
+            except FileNotFoundError:
+                continue  # Git renames temporary packs while receiving objects.
+            if total > MAX_CLONE_BYTES:
+                raise import_error("Git 仓库超过 128 MiB，请使用较小的 Skill 仓库")
+
+
+def _run_git(
+    git: Git, command: str, directory: Path, deadline: float,
+    cancelled: threading.Event, *args, **kwargs,
+) -> None:
+    # GitPython owns argument construction and process creation. A separate
+    # process group lets cancellation/limits stop git-remote-https as well.
+    _check_clone(directory, deadline, cancelled)
+    process = git.execute(
+        [git.GIT_PYTHON_GIT_EXECUTABLE, command, *git.transform_kwargs(**kwargs), *map(str, args)],
+        as_process=True, start_new_session=True,
+    )
+    completed = False
     try:
-        async with (
-            asyncio.timeout(120),
-            httpx.AsyncClient(
-                timeout=30,
-                trust_env=False,
-                follow_redirects=False,
-                headers={
-                    "Accept": "application/vnd.github+json",
-                    "User-Agent": "Auto-X-Skill-Worker",
-                },
-            ) as client,
-        ):
-            if ref is None:
-                response = await client.get(f"https://api.github.com/repos/{repository}")
-                response.raise_for_status()
-                ref = response.json()["default_branch"]
-            response = await client.get(
-                f"https://api.github.com/repos/{repository}/commits/{quote(ref, safe='')}"
-            )
-            response.raise_for_status()
-            commit = response.json()["sha"]
-            if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
-                raise ValueError("invalid commit")
-            chunks = bytearray()
-            async with client.stream(
-                "GET", f"https://codeload.github.com/{repository}/zip/{commit}"
-            ) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_bytes():
-                    chunks.extend(chunk)
-                    if len(chunks) > MAX_ARCHIVE_BYTES:
-                        raise import_error("仓库压缩包超过 32 MiB，请使用较小的 Skill 仓库")
-            return repository, ref, path, commit, bytes(chunks)
-    except httpx.HTTPStatusError as exc:
-        code = exc.response.status_code
-        if code in {403, 429}:
-            raise APIError(429, "github_rate_limited", "GitHub 请求限流，请稍后重试") from exc
-        raise import_error(f"GitHub 下载失败（HTTP {code}），请检查公开仓库、分支和目录") from exc
-    except (httpx.HTTPError, TimeoutError, ValueError, KeyError) as exc:
-        raise import_error("无法下载 GitHub 仓库，请检查网络或稍后重试") from exc
+        while True:
+            _check_clone(directory, deadline, cancelled)
+            try:
+                process.communicate(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                continue
+            completed = True
+            if process.returncode:
+                raise import_error("Git 拉取失败，请检查公开仓库、分支或完整 Commit 及网络")
+            _check_clone(directory, deadline, cancelled)
+            return
+    finally:
+        if not completed:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate()
 
 
-def archive_files(archive: bytes, selected_path: str) -> dict[str, bytes]:
+def repository_files(repo: Repo, commit: str, selected_path: str) -> dict[str, bytes]:
+    """Read tracked blobs without checking out files or invoking repository filters."""
+    tree = repo.commit(commit).tree
+    if selected_path:
+        try:
+            tree = tree / selected_path
+        except KeyError as exc:
+            raise import_error("指定目录不存在") from exc
+    if tree.type != "tree":
+        raise import_error("请选择仓库内的普通目录")
     files: dict[str, bytes] = {}
     seen: set[str] = set()
     total = 0
-    try:
-        with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
-            entries = bundle.infolist()
-            if len(entries) > 50_000:
-                raise import_error("仓库文件过多")
-            roots = {info.filename.split("/")[0] for info in entries}
-            if len(roots) != 1:
-                raise import_error("GitHub 压缩包目录格式无效")
-            for info in entries:
-                safe_relative(info.filename.rstrip("/"))
-                name = info.filename.partition("/")[2].rstrip("/")
-                if info.is_dir() or not name:
-                    continue
-                if selected_path and not name.startswith(selected_path + "/"):
-                    continue
-                mode = info.external_attr >> 16
-                if stat.S_IFMT(mode) not in {0, stat.S_IFREG} or info.flag_bits & 1:
-                    raise import_error("Skill 目录包含符号链接、特殊文件或加密文件，无法导入")
-                if name.casefold() in seen:
-                    raise import_error("Skill 目录包含重复或大小写冲突的文件")
-                seen.add(name.casefold())
-                total += info.file_size
-                if (
-                    len(files) >= MAX_FILES
-                    or info.file_size > MAX_FILE_BYTES
-                    or total > MAX_TOTAL_BYTES
-                ):
-                    raise import_error(
-                        "Skill 目录超过限制：2000 个文件、单文件 16 MiB、总计 96 MiB"
-                    )
-                files[name] = bundle.read(info)
-    except (zipfile.BadZipFile, RuntimeError, NotImplementedError) as exc:
-        raise import_error("GitHub 压缩包无效") from exc
+    for count, item in enumerate(tree.traverse(), start=1):
+        if count > 50_000:
+            raise import_error("仓库目录项过多")
+        name = safe_relative(item.path)
+        if any(part.casefold() == ".git" for part in name.split("/")):
+            raise import_error("Skill 目录包含保留的 Git 路径")
+        if name.casefold() in seen:
+            raise import_error("Skill 目录包含重复或大小写冲突的文件")
+        seen.add(name.casefold())
+        if item.type == "tree":
+            continue
+        if stat.S_IFMT(item.mode) != stat.S_IFREG:
+            raise import_error("Skill 目录包含符号链接、子模块或特殊文件，无法导入")
+        total += item.size
+        if len(files) >= MAX_FILES or item.size > MAX_FILE_BYTES or total > MAX_TOTAL_BYTES:
+            raise import_error("Skill 目录超过限制：2000 个文件、单文件 16 MiB、总计 96 MiB")
+        files[name] = item.data_stream.read()
     if not files:
         raise import_error("指定目录不存在或没有文件")
     return files
+
+
+def _clone_source(
+    payload: GitHubSkillImport, cancelled: threading.Event,
+) -> tuple[str, str, str, str, dict[str, bytes]]:
+    repository, ref, path = parse_source(payload)
+    root = Path(get_settings().skill_storage_dir).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + GIT_TIMEOUT_SECONDS
+    pinned_commit = bool(ref and re.fullmatch(r"[0-9a-fA-F]{40}", ref))
+    try:
+        with tempfile.TemporaryDirectory(prefix=".clone-", dir=root) as temporary:
+            directory = Path(temporary) / "repo"
+            git = Git()
+            with git.custom_environment(**git_environment()):
+                options = {"branch": ref} if ref and not pinned_commit else {}
+                _run_git(
+                    git, "clone", directory, deadline, cancelled,
+                    f"https://github.com/{repository}.git", str(directory),
+                    depth=1, single_branch=True, no_checkout=True, no_tags=True,
+                    quiet=True, template="", **options,
+                )
+            with Repo(directory) as repo, repo.git.custom_environment(**git_environment()):
+                if pinned_commit:
+                    # Clone cannot use --branch with a commit SHA. Fetch the exact
+                    # object explicitly; no branch checkout or history rewrite.
+                    _run_git(
+                        repo.git, "fetch", directory, deadline, cancelled,
+                        "origin", ref, depth=1, no_tags=True, quiet=True,
+                    )
+                    commit = repo.commit("FETCH_HEAD").hexsha
+                    if commit != ref.lower():
+                        raise import_error("Git 返回的 Commit 与指定版本不一致")
+                else:
+                    commit = repo.head.commit.hexsha
+                    ref = ref or repo.active_branch.name
+                files = repository_files(repo, commit, path)
+                _check_clone(directory, deadline, cancelled)
+                return repository, ref, path, commit, files
+    except (GitError, OSError, ValueError) as exc:
+        raise import_error("无法通过 Git 拉取仓库，请检查 Git 安装、网络及仓库版本") from exc
+
+
+async def download_source(
+    payload: GitHubSkillImport,
+) -> tuple[str, str, str, str, dict[str, bytes]]:
+    cancelled = threading.Event()
+    worker = asyncio.create_task(asyncio.to_thread(_clone_source, payload, cancelled))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        cancelled.set()
+        # Keep the import lock until the Git process and temporary directory
+        # have been cleaned up, even when the HTTP request is cancelled.
+        try:
+            await asyncio.shield(worker)
+        except Exception:
+            pass
+        raise
 
 
 def parse_document(raw: bytes, fallback: str) -> tuple[str, str, str]:
@@ -277,9 +371,8 @@ class PreparedImport:
 
 
 def prepare_import(
-    repository: str, ref: str, selected_path: str, commit: str, archive: bytes
+    repository: str, ref: str, selected_path: str, commit: str, files: dict[str, bytes]
 ) -> PreparedImport:
-    files = archive_files(archive, selected_path)
     entries = sorted(p for p in files if PurePosixPath(p).name == "SKILL.md")
     if not entries or len(entries) > 50:
         raise import_error("导入目录必须包含 1–50 个 SKILL.md")
@@ -304,6 +397,7 @@ def prepare_import(
                     instructions,
                     {
                         "repository": repository,
+                        "download_method": "git",
                         "import_path": selected_path,
                         "ref": ref,
                         "commit": commit,

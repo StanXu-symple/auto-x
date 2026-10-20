@@ -36,6 +36,7 @@ const skillOpen = ref(false)
 const skillSaving = ref(false)
 const importOpen = ref(false)
 const importing = ref(false)
+const updatingSkill = ref<AiSkill | null>(null)
 const importForm = reactive({ url: '', ref: '', path: '' })
 const importResult = ref<GithubSkillImportResult | null>(null)
 const importError = ref('')
@@ -101,37 +102,54 @@ async function saveSkill() {
     skillSaving.value = false
   }
 }
-function openImport(skill?: AiSkill) {
-  const source = skill?.source_metadata
-  Object.assign(importForm, {
-    url: source ? `https://github.com/${source.repository}` : '',
-    ref: source?.ref || '',
-    path: source?.import_path ?? source?.path ?? '',
-  })
+function openImport() {
+  if (importing.value) return
+  updatingSkill.value = null
+  Object.assign(importForm, { url: '', ref: '', path: '' })
   importResult.value = null
   importError.value = ''
   importOpen.value = true
 }
 async function importGithub() {
   if (importing.value) return
-  if (!importForm.url.trim()) return message.warning('请输入 GitHub 仓库或目录地址')
+  if (!updatingSkill.value && !importForm.url.trim())
+    return message.warning('请输入 GitHub 仓库或目录地址')
   importing.value = true
   importError.value = ''
   importResult.value = null
   try {
-    importResult.value = await aiApi.importGithubSkills({
-      url: importForm.url.trim(),
-      ref: importForm.ref.trim() || undefined,
-      path: importForm.path.trim() || undefined,
-    })
+    importResult.value = updatingSkill.value
+      ? await aiApi.updateGithubSkill(updatingSkill.value.id)
+      : await aiApi.importGithubSkills({
+          url: importForm.url.trim(),
+          ref: importForm.ref.trim() || undefined,
+          path: importForm.path.trim() || undefined,
+        })
     await loadSkills()
     if (selectedUser.value) await loadSkillOptions()
-    message.success('GitHub Skills 已保存')
+    message.success(
+      updatingSkill.value
+        ? importResult.value.updated || importResult.value.created
+          ? 'GitHub Skills 已更新'
+          : '已是最新版本'
+        : 'GitHub Skills 已保存',
+    )
   } catch (e) {
-    importError.value = getErrorMessage(e, '导入失败，请重试')
+    importError.value = getErrorMessage(
+      e,
+      updatingSkill.value ? '更新失败，请重试' : '导入失败，请重试',
+    )
   } finally {
     importing.value = false
   }
+}
+async function updateGithub(skill: AiSkill) {
+  if (importing.value || skill.source_type !== 'github') return
+  updatingSkill.value = skill
+  importResult.value = null
+  importError.value = ''
+  importOpen.value = true
+  await importGithub()
 }
 function removeSkill(skill: AiSkill) {
   Modal.confirm({
@@ -215,7 +233,9 @@ onMounted(async () => {
       <div class="toolbar">
         <div class="toolbar__controls">
           <a-button type="primary" @click="editSkill()"><PlusOutlined /> 新建 Skill</a-button>
-          <a-button @click="openImport()"><GithubOutlined /> 从 GitHub 导入</a-button>
+          <a-button :disabled="importing" @click="openImport()"
+            ><GithubOutlined /> 从 GitHub 导入</a-button
+          >
           <a-button :loading="skillsLoading" @click="loadSkills"><ReloadOutlined /> 刷新</a-button>
           <span class="toolbar__hint">用可复用的提示指令控制输出结构</span>
         </div>
@@ -253,13 +273,18 @@ onMounted(async () => {
             ><StatusPill :value="record.is_active" :label="record.is_active ? '启用' : '停用'"
           /></template>
         </a-table-column>
-        <a-table-column title="操作" :width="160">
+        <a-table-column title="操作" :width="210">
           <template #default="{ record }">
             <a-space>
               <a-tooltip v-if="record.source_type === 'github'" title="从 GitHub 更新">
-                <a-button type="link" aria-label="更新 GitHub Skill" @click="openImport(record)"
-                  ><GithubOutlined
-                /></a-button>
+                <a-button
+                  type="link"
+                  aria-label="更新 GitHub Skill"
+                  :loading="importing && updatingSkill?.id === record.id"
+                  :disabled="importing"
+                  @click="updateGithub(record)"
+                  ><ReloadOutlined /> 更新</a-button
+                >
               </a-tooltip>
               <a-tooltip title="编辑"
                 ><a-button type="link" aria-label="编辑 Skill" @click="editSkill(record)"
@@ -344,7 +369,7 @@ onMounted(async () => {
         v-if="editingSkill?.source_type === 'github'"
         type="info"
         show-icon
-        message="GitHub Skill 内容通过重新导入更新，可在这里切换启用状态。"
+        message="GitHub Skill 内容可通过列表中的更新按钮同步，可在这里切换启用状态。"
         style="margin-bottom: 16px" />
       <a-descriptions v-if="editingSkill?.source_metadata" :column="1" size="small">
         <a-descriptions-item label="仓库">{{
@@ -388,9 +413,9 @@ onMounted(async () => {
     ></a-modal>
     <a-modal
       v-model:open="importOpen"
-      title="从 GitHub 导入 Skills"
+      :title="updatingSkill ? `更新 Skill「${updatingSkill.name}」` : '从 GitHub 导入 Skills'"
       :width="680"
-      ok-text="导入"
+      :ok-text="updatingSkill ? '再次检查更新' : '导入'"
       cancel-text="关闭"
       :confirm-loading="importing"
       :closable="!importing"
@@ -399,11 +424,24 @@ onMounted(async () => {
       :cancel-button-props="{ disabled: importing }"
       @ok="importGithub"
     >
-      <p class="muted">
+      <p v-if="!updatingSkill" class="muted">
         粘贴公开仓库或目录地址，自动识别其中的
         SKILL.md。完整保存目录文件，将写作指令和可读取的参考文本用于文章生成。配套脚本和生图工具暂不执行。
       </p>
-      <a-form layout="vertical">
+      <a-alert
+        v-else
+        type="info"
+        show-icon
+        message="按原仓库、分支或版本和导入目录检查更新，同目录的 Skills 会一起更新。"
+        style="margin-bottom: 16px"
+      >
+        <template #description>
+          {{ updatingSkill.source_metadata?.repository }} ·
+          {{ updatingSkill.source_metadata?.ref }} ·
+          {{ updatingSkill.source_metadata?.import_path ?? updatingSkill.source_metadata?.path }}
+        </template>
+      </a-alert>
+      <a-form v-if="!updatingSkill" layout="vertical">
         <a-form-item label="GitHub 地址" required>
           <a-input
             v-model:value="importForm.url"

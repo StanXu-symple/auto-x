@@ -1,6 +1,7 @@
 """Nacos + HTTP only: failed discovery/validation must never become an empty selection."""
 
 import asyncio
+import re
 from contextlib import asynccontextmanager
 
 import httpx
@@ -49,7 +50,10 @@ class SkillClient:
         try:
             timeout = (
                 self.settings.skill_import_timeout_seconds
-                if method == "POST" and path == "/ai/skills/import-github"
+                if method == "POST" and (
+                    path == "/ai/skills/import-github"
+                    or re.fullmatch(r"/ai/skills/\d+/update-github", path)
+                )
                 else self.settings.skill_request_timeout_seconds
             )
             # Includes discovery and token acquisition, bounding caller DB lock time.

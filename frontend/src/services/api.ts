@@ -387,6 +387,11 @@ export const aiApi = {
       '/ai/skills/import-github', payload, { timeout: 190_000 },
     ))
   },
+  async updateGithubSkill(id: EntityId) {
+    return dataOf(await http.post<Wrapped<GithubSkillImportResult>>(
+      `/ai/skills/${id}/update-github`, undefined, { timeout: 190_000 },
+    ))
+  },
   async skillPage(params: AiSkillQuery) { return pageOf(await http.get<Wrapped<PaginatedResponse<AiSkill>>>('/ai/skills', { params })) },
   async settings() {
     return dataOf(await http.get<Wrapped<AiSettings>>('/ai/settings'))

@@ -216,7 +216,36 @@ async def import_github_skills(
         return await _import_github_skills(payload, db)
 
 
-async def _import_github_skills(payload: GitHubSkillImport, db) -> GitHubSkillImportResult:
+@router.post("/skills/{skill_id}/update-github", response_model=GitHubSkillImportResult)
+async def update_github_skill(
+    skill_id: int, db: DbSession, _: CurrentAdmin,
+) -> GitHubSkillImportResult:
+    if _IMPORT_LOCK.locked():
+        raise APIError(409, "skill_import_busy", "已有 Skill 导入或更新正在进行，请完成后重试")
+    async with _IMPORT_LOCK:
+        skill = await db.get(AISkill, skill_id)
+        if skill is None:
+            raise APIError(404, "skill_not_found", "AI skill was not found")
+        if skill.source_type != "github":
+            raise APIError(409, "skill_not_github", "只有 GitHub 来源的 Skill 支持仓库更新")
+        metadata = dict(skill.source_metadata or {})
+        source_key = skill.source_key
+        if not all(isinstance(metadata.get(key), str) for key in ("repository", "ref", "path")):
+            raise APIError(422, "skill_source_invalid", "Skill 来源信息不完整，请重新导入")
+        payload = GitHubSkillImport(
+            url=f"https://github.com/{metadata['repository']}",
+            ref=metadata["ref"],
+            path=metadata.get("import_path", metadata["path"]),
+        )
+        # Release the read transaction while Git runs; reload rows only after
+        # acquiring the shared settings lock so a concurrent disable is retained.
+        await db.rollback()
+        return await _import_github_skills(payload, db, required_key=source_key)
+
+
+async def _import_github_skills(
+    payload: GitHubSkillImport, db, *, required_key: str | None = None,
+) -> GitHubSkillImportResult:
     # Download and stage before taking the shared settings lock. A slow GitHub
     # request must not block configuration writes or queue consumers.
     downloaded = await packages.download_source(payload)
@@ -225,6 +254,13 @@ async def _import_github_skills(payload: GitHubSkillImport, db) -> GitHubSkillIm
     commit_started = False
     keep_bundle = False
     try:
+        if required_key is not None and not any(
+            item.key == required_key for item in prepared.skills
+        ):
+            raise APIError(
+                409, "skill_missing_upstream",
+                "仓库中已找不到此 Skill，当前版本保留，请检查来源目录",
+            )
         await get_ai_setting(db, for_update=True)
         created = updated = unchanged = 0
         result = []
@@ -236,6 +272,7 @@ async def _import_github_skills(payload: GitHubSkillImport, db) -> GitHubSkillIm
                 and (skill.source_metadata or {}).get("sha256") == item.metadata["sha256"]
                 and (skill.source_metadata or {}).get("import_path") == item.metadata["import_path"]
                 and (skill.source_metadata or {}).get("ref") == item.metadata["ref"]
+                and (skill.source_metadata or {}).get("download_method") == "git"
             ):
                 await asyncio.to_thread(packages.read_package_instructions, skill.source_metadata)
                 unchanged += 1
@@ -305,7 +342,7 @@ async def patch_ai_skill(
         raise APIError(
             409,
             "github_skill_read_only",
-            "GitHub Skill 的内容通过重新导入更新；可修改启用状态",
+            "GitHub Skill 的内容通过仓库更新或重新导入更新；可修改启用状态",
         )
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(skill, key, value)

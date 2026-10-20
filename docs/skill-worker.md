@@ -42,13 +42,15 @@ flowchart LR
 https://github.com/SpaceZephyr/creator-buddy/tree/main/xhs-Skills
 ```
 
-根仓库地址默认使用其默认分支；也可填写分支、标签或 Commit 和子目录。分支名含 `/` 时，推荐使用仓库根地址并单独填写分支和目录。暂不支持私有仓库认证。目录内每个 `SKILL.md` 注册为一个 Skill，名称与说明取 YAML frontmatter；没有 frontmatter 时使用目录名。
+根仓库地址默认使用其默认分支；也可填写分支、标签或完整的 40 位 Commit SHA 和子目录。分支名含 `/` 时，推荐使用仓库根地址并单独填写分支和目录。暂不支持私有仓库认证。目录内每个 `SKILL.md` 注册为一个 Skill，名称与说明取 YAML frontmatter；没有 frontmatter 时使用目录名。
+
+拉取使用 GitPython 调用系统 Git 执行浅克隆（`git clone --depth=1 --single-branch --no-checkout`），指定 Commit 时再 fetch 该对象。从固定 Commit 的 Git 对象读取所选目录中的全部普通文件，避免 checkout 触发过滤器。临时克隆目录位于持久化根目录，结束后清理；永久保存的是完整资源包和写作指令，不包含 `.git`。容器镜像已声明 GitPython、Git 与 CA 证书依赖；原生运行也需要安装 Git。
 
 - 完整保存所选目录内的文件，包括脚本、图片与其他资源。脚本不执行、依赖不安装、外部工具不调用。
 - 文章生成使用 `SKILL.md` 正文、Skill 内 `references/` 下的 UTF-8 文本，以及 Markdown 链接或反引号路径引用的本地文本（可递归读取，且必须处于此次导入范围内）。支持 `.md/.txt/.json/.yaml/.yml/.csv`；不自动执行其他 Skill 的路由或工具调用。
 - 每个 Skill 的写作上下文最多 100000 字符；超出上限或缺少的引用会在导入结果与详情中提示，已下载的原文件仍完整保留。生图、实时搜索等 Skill 仅能提供写作指导，无法在本阶段完成对应工具动作。
 - 同一仓库路径重复导入保持原 ID；相同分支、导入范围、Commit 与指令内容为无变化，变化时递增 Skill 版本。扩大导入目录时会保留新增范围的全部文件，切换分支时会更新后续导入来源。停用状态保持，导入不会重新启用已停用项。名称冲突会加来源摘要后缀，避免覆盖自定义 Skill。
-- GitHub Skill 只允许在页面切换启停，正文通过重新导入更新。更新使用原导入范围，可能同时更新该目录中的其他 Skills。删除沿用停用语义，文件和历史快照保留。
+- GitHub Skill 行提供 **更新** 按钮，按数据库中保存的仓库、分支或固定版本和原导入目录重新浅克隆，并显示新增、更新、未变化数量；同目录的其他 Skills 一起更新。固定 Commit 的更新仍保持该 Commit。旧 ZIP 导入的 Skill 也可直接更新，首次更新保留 ID 并转换为 Git 来源元数据，无需迁移数据库。若目标 Skill 已从仓库移除，更新报错并保留现有版本。删除沿用停用语义，文件和历史快照保留。
 
 ### 持久化目录与升级
 
@@ -63,13 +65,13 @@ data/skills/bundles/<不可变包ID>/
 
 新增迁移 `0037_github_skills`：升级前备份 PostgreSQL；执行 `alembic upgrade head`，先升级 skill-worker，再升级 backend / worker / ai-worker，最后更新 frontend。更新与备份必须同时保留数据库和 `data/skills`。部署多实例时必须共享同一持久化目录；独立本机磁盘不能被多个 Nacos 实例交替使用。恢复时按原包 ID 恢复整个目录，不能仅重新导入当前分支替代旧版本。无法确认数据库提交结果时保留目录，可能留下孤立包；暂不自动清理旧包，避免影响历史任务。
 
-原生 `start.sh` 使用项目根目录 `data/skills`，可用 `SKILL_STORAGE_DIR` 覆盖；该路径属于节点本地配置，不接受 Nacos 共享配置覆盖。容器路径固定，宿主机路径通过 `SKILL_STORAGE_HOST_DIR` 配置。skill-worker 内存上限调整为 512 MiB，以容纳受限的归档处理。
+原生 `start.sh` 使用项目根目录 `data/skills`，可用 `SKILL_STORAGE_DIR` 覆盖；该路径属于节点本地配置，不接受 Nacos 共享配置覆盖。容器路径固定，宿主机路径通过 `SKILL_STORAGE_HOST_DIR` 配置。skill-worker 内存上限为 512 MiB。
 
 ### HTTP 与任务快照
 
-`POST /api/v1/ai/skills/import-github` 由 backend 转发到 skill-worker，沿用管理员身份和 `skills:manage` 权限。下载固定 Commit 归档，验证目录、文件大小及普通文件类型，先原子落盘，再在设置锁保护下提交索引。每实例串行导入；下载不占有设置锁。失败不提交部分 Skill。
+`POST /api/v1/ai/skills/import-github` 和 `POST /api/v1/ai/skills/{id}/update-github` 由 backend 转发到 skill-worker，沿用管理员身份和 `skills:manage` 权限。更新接口从服务端读取来源信息，无需浏览器重新提交 URL。克隆后固定 Commit，验证目录、文件大小及普通文件类型，先原子落盘，再在设置锁保护下提交索引。每实例串行导入和更新；Git 拉取在线程中执行，不占有设置锁或阻塞异步事件循环。失败不提交部分 Skill。
 
-导入的整体 HTTP 超时默认 180 秒（`SKILL_IMPORT_TIMEOUT_SECONDS`），前端及 nginx 默认为 190 秒。若自行加长服务超时，应同步修改前端及反向代理；已有外层网关也需允许该时长。GitHub 下载总计最多 120 秒；限制为压缩包 32 MiB、所选目录 2000 文件 / 96 MiB、单文件 16 MiB、每次最多 50 个 Skills。超时后先刷新列表确认结果；重复导入同一版本不会重复创建记录。
+导入和更新的整体 HTTP 超时默认 180 秒（`SKILL_IMPORT_TIMEOUT_SECONDS`），前端及 nginx 默认为 190 秒。若自行加长服务超时，应同步修改前端及反向代理；已有外层网关也需允许该时长。Git 拉取总计最多 120 秒；监测临时仓库大小，超过 128 MiB 时终止进程组。请求取消或拉取超时也会终止 Git 及下载子进程并清理临时目录。所选目录限制为 2000 文件 / 96 MiB、单文件 16 MiB、每次最多 50 个 Skills；拒绝符号链接、子模块和大小写冲突路径。超时后先刷新列表确认结果；重复导入同一版本不会重复创建记录。
 
 入队仍通过原内部解析接口获取有序 Skill 并冻结内容与来源版本。AI Worker 在领取有 Skill 的作业、消耗尝试次数之前，通过 Nacos 调用 **`GET /v1/jobs/{job_id}/skills`**（`skills:read`）：自定义 Skill 返回该作业冻结的指令；GitHub Skill 读取该作业固定包的磁盘文件并校验 SHA-256，再与冻结快照核对。更新当前 Skill 不改写排队任务。磁盘文件缺失、被改动或 HTTP 故障时保持队列，不消耗模型尝试次数。
 
@@ -85,7 +87,7 @@ data/skills/bundles/<不可变包ID>/
 | `backend/app/skills/listening.py` | 本地校验、预览、统计与输出 |
 | `backend/app/skills/backfill.py` | 创建补生成请求和冻结配置快照 |
 | `backend/app/skills/store.py` | 服务内部的 Skill 查询及选择优先级 |
-| `backend/app/skills/packages.py` | GitHub 下载、归档校验、完整落盘、写作指令编译和版本校验 |
+| `backend/app/skills/packages.py` | GitPython 克隆、Git 对象校验、完整落盘、写作指令编译和版本校验 |
 | `backend/app/schemas/skill_import.py` | GitHub 导入请求与响应协议 |
 | `backend/app/skills/bootstrap.py` | 内置 Skill 的幂等初始化 |
 | `backend/app/api/skill_proxy.py` | 保留原页面 API 的 HTTP 转发层 |

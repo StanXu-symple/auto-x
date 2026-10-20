@@ -630,6 +630,7 @@ export interface AiSkill {
   source_type?: 'custom' | 'github'
   source_metadata?: {
     repository: string
+    download_method?: 'git'
     ref: string
     commit: string
     path: string
