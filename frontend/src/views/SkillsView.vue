@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import {
   DeleteOutlined,
   EditOutlined,
@@ -10,10 +10,9 @@ import {
 import { message, Modal } from 'ant-design-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
-import { usePagedTable } from '@/composables/usePagedTable'
 import { aiApi, monitoredUsersApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
-import { skillOptionLabel, skillSourceLabel } from '@/utils/skills'
+import { groupSkills, skillOptionLabel, skillSourceSummary } from '@/utils/skills'
 import type {
   AiSkill,
   AiSkillPayload,
@@ -47,14 +46,43 @@ const skillForm = reactive<AiSkillPayload>({
   instructions: '',
   is_active: true,
 })
-const {
-  rows: skillRows,
-  total: skillsTotal,
-  loading: skillsLoading,
-  pagination: skillsPagination,
-  load: loadSkills,
-  change: changeSkillPage,
-} = usePagedTable(aiApi.skillPage, '无法加载 Skills')
+const skillsLoading = ref(false)
+const skillRows = computed(() => groupSkills(skills.value))
+const expandedRowKeys = ref<string[]>([])
+const skillPage = reactive({ current: 1, pageSize: 15 })
+const skillsPagination = computed(() => ({
+  ...skillPage,
+  total: skillRows.value.length,
+  showSizeChanger: true,
+  pageSizeOptions: ['15', '30', '50', '100'],
+  showQuickJumper: true,
+  showTotal: (count: number) => `共 ${count} 项（GitHub 按来源分组）`,
+}))
+let skillsRequest = 0
+
+function changeSkillPage(page: { current?: number; pageSize?: number }) {
+  const size = page.pageSize || skillPage.pageSize
+  skillPage.current = size !== skillPage.pageSize ? 1 : page.current || 1
+  skillPage.pageSize = size
+}
+
+function toggleGroup(key: string) {
+  expandedRowKeys.value = expandedRowKeys.value.includes(key)
+    ? expandedRowKeys.value.filter((item) => item !== key)
+    : [...expandedRowKeys.value, key]
+}
+
+async function loadSkills() {
+  const request = ++skillsRequest
+  skillsLoading.value = true
+  try {
+    await loadAllSkills(request)
+  } catch (e) {
+    if (request === skillsRequest) message.error(getErrorMessage(e, '无法加载 Skills'))
+  } finally {
+    if (request === skillsRequest) skillsLoading.value = false
+  }
+}
 
 async function loadUsers() {
   try {
@@ -94,7 +122,6 @@ async function saveSkill() {
       : await aiApi.createSkill(skillForm)
     skillOpen.value = false
     await loadSkills()
-    if (selectedUser.value) await loadSkillOptions()
     message.success('Skill 已保存')
   } catch (e) {
     message.error(getErrorMessage(e, '保存 Skill 失败'))
@@ -126,7 +153,6 @@ async function importGithub() {
           path: importForm.path.trim() || undefined,
         })
     await loadSkills()
-    if (selectedUser.value) await loadSkillOptions()
     message.success(
       updatingSkill.value
         ? importResult.value.updated || importResult.value.created
@@ -161,7 +187,6 @@ function removeSkill(skill: AiSkill) {
       try {
         await aiApi.removeSkill(skill.id)
         await loadSkills()
-        if (selectedUser.value) await loadSkillOptions()
         message.success('Skill 已删除')
       } catch (e) {
         message.error(getErrorMessage(e, '删除 Skill 失败'))
@@ -170,22 +195,31 @@ function removeSkill(skill: AiSkill) {
     },
   })
 }
-async function loadSkillOptions() {
+async function loadAllSkills(request: number) {
   const all: AiSkill[] = []
   let page = 1
   while (true) {
     const result = await aiApi.skillPage({ page, page_size: 100 })
+    if (request !== skillsRequest) return
     all.push(...result.items)
     if (all.length >= result.total || !result.items.length) break
     page++
   }
   skills.value = all
+  const groupKeys = new Set(
+    skillRows.value.filter((row) => row.kind === 'group').map((row) => row.key),
+  )
+  expandedRowKeys.value = expandedRowKeys.value.filter((key) => groupKeys.has(key))
+  skillPage.current = Math.min(
+    skillPage.current,
+    Math.max(1, Math.ceil(skillRows.value.length / skillPage.pageSize)),
+  )
 }
 async function loadContext() {
   if (!selectedUser.value) return
   bindingLoading.value = true
   try {
-    await loadSkillOptions()
+    await loadSkills()
     ;[profile.value, binding.value] = await Promise.all([
       aiApi.userProfile(selectedUser.value),
       aiApi.userSkillBinding(selectedUser.value, feature.value),
@@ -237,41 +271,89 @@ onMounted(async () => {
             ><GithubOutlined /> 从 GitHub 导入</a-button
           >
           <a-button :loading="skillsLoading" @click="loadSkills"><ReloadOutlined /> 刷新</a-button>
-          <span class="toolbar__hint">用可复用的提示指令控制输出结构</span>
+          <span class="toolbar__hint">GitHub Skills 按导入来源分组，点击名称或箭头展开</span>
         </div>
-        <span class="toolbar__hint">共 {{ skillsTotal }} 条 Skills</span>
+        <span class="toolbar__hint"
+          >共 {{ skills.length }} 条 Skills · {{ skillRows.length }} 项</span
+        >
       </div>
       <a-table
         :data-source="skillRows"
         :loading="skillsLoading"
-        row-key="id"
+        v-model:expanded-row-keys="expandedRowKeys"
+        row-key="key"
+        size="middle"
+        table-layout="fixed"
         :pagination="skillsPagination"
-        :scroll="{ x: 900 }"
+        :scroll="{ x: 1150 }"
         @change="changeSkillPage"
       >
-        <a-table-column title="名称" data-index="name" :width="220" :ellipsis="true">
-          <template #default="{ record }"
-            ><strong>{{ record.name }}</strong></template
-          >
+        <a-table-column title="名称" data-index="name" :width="280" :ellipsis="true">
+          <template #default="{ record }">
+            <button
+              v-if="record.kind === 'group'"
+              type="button"
+              class="skill-group-toggle"
+              :aria-expanded="expandedRowKeys.includes(record.key)"
+              @click="toggleGroup(record.key)"
+            >
+              <GithubOutlined />
+              <strong class="skill-name" :title="record.name">{{ record.name }}</strong>
+              <span class="skill-group-count">{{ record.children.length }}</span>
+            </button>
+            <strong v-else class="skill-name skill-leaf-name" :title="record.name">{{
+              record.name
+            }}</strong>
+          </template>
         </a-table-column>
         <a-table-column title="说明" data-index="description" :ellipsis="true">
           <template #default="{ record }"
             ><span class="muted">{{ record.description || '暂无说明' }}</span></template
           >
         </a-table-column>
-        <a-table-column title="来源" :width="160">
+        <a-table-column title="来源" :width="240" :ellipsis="{ showTitle: false }">
           <template #default="{ record }">
-            <a-tag>{{ skillSourceLabel(record) }}</a-tag>
-            <div v-if="record.source_metadata" class="muted">
-              {{ record.source_metadata.repository }}
-              <br />{{ record.source_metadata.commit.slice(0, 7) }}
-            </div>
+            <a-tooltip
+              placement="topRight"
+              :trigger="['hover', 'focus']"
+              :overlay-style="{ maxWidth: '480px' }"
+            >
+              <template #title>
+                <div v-if="record.source_metadata" class="skill-source-detail">
+                  <div>仓库：{{ record.source_metadata.repository }}</div>
+                  <div>分支 / 版本：{{ record.source_metadata.ref }}</div>
+                  <div>
+                    导入目录：{{
+                      (record.source_metadata.import_path ?? record.source_metadata.path) || '/'
+                    }}
+                  </div>
+                  <div v-if="record.kind === 'skill'">
+                    Skill 目录：{{ record.source_metadata.path || '/' }}
+                  </div>
+                  <div v-if="record.kind === 'skill'">
+                    Commit：{{ record.source_metadata.commit }}
+                  </div>
+                  <div>原始地址：{{ record.source_metadata.url }}</div>
+                </div>
+                <span v-else>自定义 · 保存在数据库中的写作指令</span>
+              </template>
+              <span class="skill-source-text muted" tabindex="0">{{
+                skillSourceSummary(record)
+              }}</span>
+            </a-tooltip>
           </template>
         </a-table-column>
-        <a-table-column title="状态" :width="100">
-          <template #default="{ record }"
-            ><StatusPill :value="record.is_active" :label="record.is_active ? '启用' : '停用'"
-          /></template>
+        <a-table-column title="状态" :width="120">
+          <template #default="{ record }">
+            <span v-if="record.kind === 'group'" class="muted"
+              >{{ record.activeCount }}/{{ record.children.length }} 启用</span
+            >
+            <StatusPill
+              v-else
+              :value="record.is_active"
+              :label="record.is_active ? '启用' : '停用'"
+            />
+          </template>
         </a-table-column>
         <a-table-column title="操作" :width="210">
           <template #default="{ record }">
@@ -286,11 +368,11 @@ onMounted(async () => {
                   ><ReloadOutlined /> 更新</a-button
                 >
               </a-tooltip>
-              <a-tooltip title="编辑"
+              <a-tooltip v-if="record.kind === 'skill'" title="编辑"
                 ><a-button type="link" aria-label="编辑 Skill" @click="editSkill(record)"
                   ><EditOutlined /></a-button
               ></a-tooltip>
-              <a-tooltip title="删除"
+              <a-tooltip v-if="record.kind === 'skill'" title="删除"
                 ><a-button type="link" danger aria-label="删除 Skill" @click="removeSkill(record)"
                   ><DeleteOutlined /></a-button
               ></a-tooltip>
@@ -448,6 +530,27 @@ onMounted(async () => {
             :disabled="importing"
             placeholder="https://github.com/SpaceZephyr/creator-buddy/tree/main/xhs-Skills"
           />
+          <div class="github-url-help">
+            <strong>以下三种地址都支持，.git 后缀可有可无：</strong>
+            <ul>
+              <li>
+                <span>仓库首页</span><code>https://github.com/SpaceZephyr/creator-buddy</code>
+              </li>
+              <li>
+                <span>Git 克隆地址</span
+                ><code>https://github.com/SpaceZephyr/creator-buddy.git</code>
+              </li>
+              <li>
+                <span>指定目录（推荐，只导入需要的 Skills）</span
+                ><code>https://github.com/SpaceZephyr/creator-buddy/tree/main/xhs-Skills</code>
+              </li>
+            </ul>
+            <p>前两种默认扫描仓库全部 Skills；目录地址只扫描该目录，分支和子目录通常可留空。</p>
+            <p>
+              仅支持公开 GitHub 仓库的 HTTPS 地址，不支持 SSH 地址或 /blob/ 单文件链接。分支名包含 /
+              时，请填仓库首页，并在下方分别填写分支和子目录。
+            </p>
+          </div>
         </a-form-item>
         <a-form-item label="分支 / 标签 / Commit（可选）"
           ><a-input
@@ -484,3 +587,68 @@ onMounted(async () => {
     </a-modal>
   </div>
 </template>
+
+<style scoped>
+.skill-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.skill-group-toggle:hover,
+.skill-group-toggle:focus-visible {
+  color: var(--accent);
+}
+.skill-name,
+.skill-source-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.skill-name {
+  min-width: 0;
+}
+.skill-leaf-name {
+  max-width: calc(100% - 48px);
+}
+.skill-group-count {
+  flex-shrink: 0;
+  padding: 0 7px;
+  border-radius: 4px;
+  background: var(--paper-soft);
+  font-size: 12px;
+}
+.skill-source-detail {
+  overflow-wrap: anywhere;
+}
+.github-url-help {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.github-url-help ul {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+.github-url-help li + li {
+  margin-top: 6px;
+}
+.github-url-help code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+.github-url-help p {
+  margin: 6px 0 0;
+}
+</style>
