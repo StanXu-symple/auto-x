@@ -8,13 +8,12 @@ import {
   TeamOutlined,
   MessageOutlined,
   FileSearchOutlined,
-  KeyOutlined,
+  DatabaseOutlined,
   FormOutlined,
   AppstoreOutlined,
   BookOutlined,
   BellOutlined,
   ScheduleOutlined,
-  PictureOutlined,
   SettingOutlined,
 } from '@ant-design/icons-vue'
 defineEmits<{ navigate: [] }>()
@@ -49,8 +48,7 @@ const groups = [
   {
     label: '配置',
     items: [
-      { path: '/x-authorization', label: 'X 数据源', icon: KeyOutlined },
-      { path: '/xhs', label: '小红书数据源', icon: PictureOutlined },
+      { path: '/data-sources', label: '数据源', icon: DatabaseOutlined },
       { path: '/settings', label: '系统设置', icon: SettingOutlined },
     ],
   },

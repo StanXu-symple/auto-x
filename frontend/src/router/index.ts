@@ -50,8 +50,13 @@ const router = createRouter({
         {
           path: 'x-authorization',
           name: 'x-authorization',
-          component: () => import('@/views/XAuthorizationView.vue'),
-          meta: { title: 'X 数据源中心', description: '选择官方 API 或 twscrape，并安全管理访问凭据' },
+          redirect: (to) => ({ path: '/data-sources', query: { ...to.query, tab: 'x' }, hash: to.hash }),
+        },
+        {
+          path: 'data-sources',
+          name: 'data-sources',
+          component: () => import('@/views/DataSourcesView.vue'),
+          meta: { title: '数据源', description: '管理 X 与小红书的数据源、访问凭据和连接状态' },
         },
         {
           path: 'ai-data-source',
@@ -82,7 +87,11 @@ const router = createRouter({
           meta: { title: 'QQ 推送', description: '管理腾讯 QQ 官方机器人、群目标与投递记录' },
         },
         { path: 'qq-tasks', name: 'qq-tasks', component: () => import('@/views/QQTasksView.vue'), meta: { title: 'QQ 任务', description: '管理 QQ 定时消息任务' } },
-        { path: 'xhs', name: 'xhs', component: () => import('@/views/XhsView.vue'), meta: { title: '小红书管理', description: '登录并发布小红书图文笔记' } },
+        {
+          path: 'xhs',
+          name: 'xhs',
+          redirect: (to) => ({ path: '/data-sources', query: { ...to.query, tab: 'xhs' }, hash: to.hash }),
+        },
         {
           path: 'polling-logs',
           name: 'polling-logs',

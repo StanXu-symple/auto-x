@@ -7,6 +7,7 @@ import { getErrorMessage } from '@/services/http'
 import type { XCredentialAcquisitionMethod, XSourceProvider, XSourceStatus } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
+defineProps<{ embedded?: boolean }>()
 const status = ref<XSourceStatus | null>(null)
 const loading = ref(false)
 const saving = ref(false)
@@ -124,13 +125,19 @@ onMounted(load)
 <template>
   <div class="page-stack">
     <PageHeader
+      v-if="!embedded"
       eyebrow="CHANNEL / 01"
       title="X 数据源"
       description="选择官方 API 或 twscrape，并安全管理访问凭据"
       ><template #actions
         ><a-button :loading="loading" @click="load"><ReloadOutlined /> 刷新状态</a-button></template
       ></PageHeader
-    ><a-card :bordered="false"
+    >
+    <div v-else class="toolbar">
+      <span class="toolbar__hint">选择官方 API 或 twscrape，并安全管理访问凭据</span>
+      <a-button :loading="loading" @click="load"><ReloadOutlined /> 刷新状态</a-button>
+    </div>
+    <a-card :bordered="false"
       ><a-radio-group v-model:value="provider" button-style="solid"
         ><a-radio-button value="official_api">官方 X API</a-radio-button
         ><a-radio-button value="twscrape">twscrape 实验模式</a-radio-button></a-radio-group

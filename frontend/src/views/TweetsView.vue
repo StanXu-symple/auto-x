@@ -24,6 +24,7 @@ import type {
 } from '@/types'
 import { formatDateTime, formatNumber, formatRelative, tweetTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import SkillDetailsModal from '@/components/SkillDetailsModal.vue'
 const tweets = ref<Tweet[]>([])
 const accounts = ref<MonitoredUser[]>([])
 const total = ref(0)
@@ -47,11 +48,18 @@ const generationSkillOptions = computed(() =>
   })),
 )
 const selectedGenerationSkills = computed(() =>
-  selectedSkillIds.value.flatMap((id) => {
-    const skill = generationSkills.value.find((item) => item.id === id)
-    return skill ? [skill] : []
-  }),
+  selectedSkillIds.value.map((id) => ({
+    id,
+    skill: generationSkills.value.find((item) => String(item.id) === String(id)),
+  })),
 )
+const detailSkill = ref<AiSkill | null>(null)
+const skillDetailsOpen = ref(false)
+function openSkillDetails(skill?: AiSkill) {
+  if (!skill) return
+  detailSkill.value = skill
+  skillDetailsOpen.value = true
+}
 let generationSkillsRequest = 0
 const pushOpen = ref(false)
 const sending = ref(false)
@@ -264,7 +272,10 @@ function openGenerate(tweet: Tweet) {
   void loadGenerationSkills()
 }
 watch(generateOpen, (open) => {
-  if (!open) generationSkillsRequest++
+  if (!open) {
+    generationSkillsRequest++
+    skillDetailsOpen.value = false
+  }
 })
 async function generate() {
   const tweet = generateTweet.value
@@ -502,9 +513,21 @@ watch(
         message="暂无启用的 Skills，请先新增或启用 Skill。"
       />
       <ul v-if="selectedGenerationSkills.length" class="generation-skills">
-        <li v-for="skill in selectedGenerationSkills" :key="skill.id">
-          <strong>{{ skill.name }}</strong> <a-tag>{{ skillSourceLabel(skill) }}</a-tag>
-          <p v-if="skill.description" class="muted">{{ skill.description }}</p>
+        <li v-for="item in selectedGenerationSkills" :key="item.id">
+          <div class="generation-skills__heading">
+            <strong>{{ item.skill?.name || `#${item.id}` }}</strong>
+            <a-tag v-if="item.skill">{{ skillSourceLabel(item.skill) }}</a-tag>
+            <a-button
+              type="link"
+              size="small"
+              :disabled="!item.skill"
+              :aria-label="`查看 ${item.skill?.name || `#${item.id}`} 的 Skill 详情`"
+              @click="openSkillDetails(item.skill)"
+              >详情</a-button
+            >
+          </div>
+          <p v-if="item.skill?.description" class="muted">{{ item.skill.description }}</p>
+          <p v-if="!item.skill" class="muted">Skill 已删除或尚未加载，无法查看详情。</p>
         </li>
       </ul>
       <p class="generation-skills-link muted">
@@ -512,6 +535,7 @@ watch(
         <router-link v-if="!generating" to="/skills"> 管理 Skills </router-link>
       </p>
     </a-modal>
+    <SkillDetailsModal v-model:open="skillDetailsOpen" :skill="detailSkill" />
     <a-modal v-model:open="detailOpen" title="内容详情" :footer="null" :width="760">
       <a-spin :spinning="detailLoading">
         <div class="tweet-detail">
@@ -644,6 +668,12 @@ watch(
 }
 .generation-skills li + li {
   margin-top: 10px;
+}
+.generation-skills__heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
 }
 .generation-skills p {
   margin: 4px 0 0;

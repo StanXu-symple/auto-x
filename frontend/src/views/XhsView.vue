@@ -7,6 +7,7 @@ import { XHS_NOTE_CONTENT_MAX_LENGTH, XHS_NOTE_TITLE_MAX_LENGTH } from '@/consta
 import { useXhsVerification } from '@/composables/useXhsVerification'
 import PageHeader from '@/components/PageHeader.vue'
 import XhsVerificationModal from '@/components/XhsVerificationModal.vue'
+defineProps<{ embedded?: boolean }>()
 const loading = ref(false)
 const statusLoading = ref(true)
 const status = ref<{
@@ -116,13 +117,24 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page-stack">
-    <PageHeader eyebrow="CHANNEL / 04" title="小红书管理" description="登录并发布小红书图文笔记"
+    <PageHeader
+      v-if="!embedded"
+      eyebrow="CHANNEL / 04"
+      title="小红书管理"
+      description="登录并发布小红书图文笔记"
       ><template #actions
         ><a-tag :color="status?.saved ? 'green' : 'default'">{{
           status?.saved ? '登录态已保存' : '等待连接'
         }}</a-tag></template
       ></PageHeader
-    ><a-spin :spinning="statusLoading"
+    >
+    <div v-else class="toolbar">
+      <span class="toolbar__hint">登录并发布小红书图文笔记</span>
+      <a-tag :color="status?.saved ? 'green' : 'default'">{{
+        status?.saved ? '登录态已保存' : '等待连接'
+      }}</a-tag>
+    </div>
+    <a-spin :spinning="statusLoading"
       ><div class="two-column">
         <a-card title="连接账号" :bordered="false"
           ><a-alert

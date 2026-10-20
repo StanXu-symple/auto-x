@@ -9,6 +9,7 @@ import { skillOptionLabel } from '@/utils/skills'
 import { formatDateTime, formatDuration } from '@/utils/format'
 import StatusPill from '@/components/StatusPill.vue'
 import AutoPublishStatus from '@/components/AutoPublishStatus.vue'
+import SkillDetailsModal from '@/components/SkillDetailsModal.vue'
 import type {
   AiDataSourceStatus,
   AiJob,
@@ -115,6 +116,22 @@ const form = reactive<AiListenTaskPayload>({
   language_override: null,
   tone_override: null,
   max_output_tokens_override: null,
+})
+const selectedFormSkills = computed(() =>
+  form.skill_ids.map((id) => ({
+    id,
+    skill: skills.value.find((skill) => String(skill.id) === String(id)),
+  })),
+)
+const detailSkill = ref<AiSkill | null>(null)
+const skillDetailsOpen = ref(false)
+function openSkillDetails(skill?: AiSkill) {
+  if (!skill) return
+  detailSkill.value = skill
+  skillDetailsOpen.value = true
+}
+watch(editorOpen, (open) => {
+  if (!open) skillDetailsOpen.value = false
 })
 const historyPreset = ref(0)
 const historyOptions = [
@@ -1008,12 +1025,15 @@ onMounted(async () => {
             "
           />
           <div v-if="form.skill_ids.length" class="skill-order">
-            <div v-for="(id, index) in form.skill_ids" :key="id">
-              <span
-                >{{ index + 1 }}.
-                {{
-                  skills.find((skill) => String(skill.id) === String(id))?.name || `#${id}`
-                }}</span
+            <div v-for="(item, index) in selectedFormSkills" :key="item.id">
+              <span>{{ index + 1 }}. {{ item.skill?.name || `#${item.id}` }}</span
+              ><a-button
+                type="link"
+                size="small"
+                :disabled="!item.skill"
+                :aria-label="`查看 ${item.skill?.name || `#${item.id}`} 的 Skill 详情`"
+                @click="openSkillDetails(item.skill)"
+                >详情</a-button
               ><a-button
                 type="link"
                 size="small"
@@ -1036,6 +1056,9 @@ onMounted(async () => {
                   ]
                 "
                 >下移</a-button
+              >
+              <small v-if="!item.skill" class="skill-order__unavailable muted"
+                >Skill 已删除或尚未加载，无法查看详情。</small
               >
             </div>
           </div>
@@ -1167,6 +1190,7 @@ onMounted(async () => {
         ></template
       >
     </a-drawer>
+    <SkillDetailsModal v-model:open="skillDetailsOpen" :skill="detailSkill" />
 
     <a-drawer
       v-model:open="detailOpen"
@@ -1494,6 +1518,9 @@ onMounted(async () => {
 }
 .skill-order span {
   min-width: 140px;
+}
+.skill-order__unavailable {
+  width: 100%;
 }
 .detail-stats {
   display: grid;
