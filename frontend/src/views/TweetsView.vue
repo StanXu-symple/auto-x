@@ -507,10 +507,8 @@ watch(
         </li>
       </ul>
       <p class="generation-skills-link muted">
-        Skills 与 AI 创作页面同步，仅显示已启用项。
-        <router-link v-if="!generating" :to="{ path: '/ai-writing', query: { tab: 'skills' } }">
-          管理 Skills
-        </router-link>
+        仅显示已启用的 Skills，可在 Skills管理页面维护。
+        <router-link v-if="!generating" to="/skills"> 管理 Skills </router-link>
       </p>
     </a-modal>
     <a-modal v-model:open="detailOpen" title="内容详情" :footer="null" :width="760">

@@ -4,26 +4,19 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   DeleteOutlined,
-  EditOutlined,
-  PlusOutlined,
   ReloadOutlined,
   SaveOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
-import { aiApi, aiDataSourceApi, aiListenTasksApi, monitoredUsersApi } from '@/services/api'
+import { aiApi, aiDataSourceApi, aiListenTasksApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import type {
   AiDataSourceStatus,
   AiJob,
   AiListenTask,
   AiSettings,
-  AiSkill,
-  AiSkillPayload,
-  AiUserProfile,
-  AiUserSkillBinding,
   EntityId,
-  MonitoredUser,
   UpdateAiSettingsPayload,
 } from '@/types'
 import MetricCard from '@/components/MetricCard.vue'
@@ -33,14 +26,12 @@ import AutoPublishStatus from '@/components/AutoPublishStatus.vue'
 import AiListenTasks from '@/components/AiListenTasks.vue'
 import { formatDateTime, formatDuration } from '@/utils/format'
 const route = useRoute()
-const normalizeTab = (value: unknown) =>
-  value === 'context'
-    ? 'skills'
-    : value === 'data-source'
-      ? 'source'
-      : typeof value === 'string'
-        ? value
-        : 'tasks'
+const normalizeTab = (value: unknown) => {
+  if (value === 'data-source') return 'source'
+  return typeof value === 'string' && ['tasks', 'jobs', 'settings', 'source'].includes(value)
+    ? value
+    : 'tasks'
+}
 const tab = ref(normalizeTab(route.query.tab))
 const listenTasksPanel = ref<InstanceType<typeof AiListenTasks> | null>(null)
 watch(
@@ -51,16 +42,10 @@ watch(
 )
 const draftOpen = ref(false)
 const draftSaving = ref(false)
-const binding = ref<AiUserSkillBinding | null>(null)
-const bindingIds = ref<EntityId[]>([])
-const bindingLoading = ref(false)
 const draftForm = reactive({ id: 0 as EntityId, title: '', content: '', excerpt: '', revision: 0 })
 const loading = reactive({ settings: false, source: false })
-const skills = ref<AiSkill[]>([])
 const settings = ref<AiSettings | null>(null)
 const source = ref<AiDataSourceStatus | null>(null)
-const users = ref<MonitoredUser[]>([])
-const profile = ref<AiUserProfile | null>(null)
 const filters = reactive({
   status: 'all',
   trigger_type: 'all',
@@ -98,15 +83,7 @@ function jobSource(job: AiJob) {
       ? '手动生成'
       : '旧自动生成'
 }
-const skillOpen = ref(false)
 const sourceModels = ref<string[]>([])
-const editingSkill = ref<AiSkill | null>(null)
-const skillForm = reactive<AiSkillPayload>({
-  name: '',
-  description: '',
-  instructions: '',
-  is_active: true,
-})
 const settingsForm = reactive<UpdateAiSettingsPayload>({
   enabled: false,
   auto_generate: true,
@@ -125,8 +102,6 @@ const sourceForm = reactive({
   model: 'gpt-5.6-terra',
   api_key: '',
 })
-const selectedUser = ref('')
-const feature = ref('article_generation')
 const running = computed(
   () => jobs.value.filter((job) => ['queued', 'running', 'retry_wait'].includes(job.status)).length,
 )
@@ -163,14 +138,6 @@ const {
     }),
   '无法加载 AI 任务',
 )
-const {
-  rows: skillRows,
-  total: skillsTotal,
-  loading: skillsLoading,
-  pagination: skillsPagination,
-  load: loadSkills,
-  change: changeSkillPage,
-} = usePagedTable(aiApi.skillPage, '无法加载 Skills')
 async function loadSettings() {
   loading.settings = true
   try {
@@ -240,50 +207,6 @@ async function saveSettings() {
     loading.settings = false
   }
 }
-function editSkill(skill?: AiSkill) {
-  editingSkill.value = skill || null
-  Object.assign(
-    skillForm,
-    skill
-      ? {
-          name: skill.name,
-          description: skill.description || '',
-          instructions: skill.instructions,
-          is_active: skill.is_active,
-        }
-      : { name: '', description: '', instructions: '', is_active: true },
-  )
-  skillOpen.value = true
-}
-async function saveSkill() {
-  if (!skillForm.name.trim() || !skillForm.instructions.trim())
-    return message.warning('请填写名称和 Skill 指令')
-  try {
-    editingSkill.value
-      ? await aiApi.updateSkill(editingSkill.value.id, skillForm)
-      : await aiApi.createSkill(skillForm)
-    skillOpen.value = false
-    await loadSkills()
-    if (selectedUser.value) await loadSkillOptions()
-    message.success('Skill 已保存')
-  } catch (e) {
-    message.error(getErrorMessage(e, '保存 Skill 失败'))
-  }
-}
-function removeSkill(skill: AiSkill) {
-  Modal.confirm({
-    title: `删除 Skill「${skill.name}」？`,
-    okType: 'danger',
-    okText: '删除',
-    cancelText: '取消',
-    onOk: async () => {
-      await aiApi.removeSkill(skill.id)
-      await loadSkills()
-      if (selectedUser.value) await loadSkillOptions()
-      message.success('Skill 已删除')
-    },
-  })
-}
 async function retry(job: AiJob) {
   try {
     await aiApi.retryJob(job.id)
@@ -309,7 +232,6 @@ async function refreshJobContext() {
 function refreshCurrentTab() {
   if (tab.value === 'tasks') void listenTasksPanel.value?.refresh()
   else if (tab.value === 'jobs') void loadJobs()
-  else if (tab.value === 'skills') void loadSkills()
   else if (tab.value === 'settings') void loadSettings()
   else if (tab.value === 'source') void loadSource()
 }
@@ -355,53 +277,9 @@ async function saveDraft() {
     draftSaving.value = false
   }
 }
-async function loadSkillOptions() {
-  const all: AiSkill[] = []
-  let page = 1
-  while (true) {
-    const result = await aiApi.skillPage({ page, page_size: 100 })
-    all.push(...result.items)
-    if (all.length >= result.total || !result.items.length) break
-    page++
-  }
-  skills.value = all
-}
-async function loadContext() {
-  if (!selectedUser.value) return
-  bindingLoading.value = true
-  try {
-    await loadSkillOptions()
-    ;[profile.value, binding.value] = await Promise.all([
-      aiApi.userProfile(selectedUser.value),
-      aiApi.userSkillBinding(selectedUser.value, feature.value),
-    ])
-    bindingIds.value = [...(binding.value?.skill_ids || [])]
-  } catch (e) {
-    message.error(getErrorMessage(e, '读取用户上下文失败'))
-  } finally {
-    bindingLoading.value = false
-  }
-}
-async function saveBinding() {
-  if (!selectedUser.value) return
-  bindingLoading.value = true
-  try {
-    binding.value = await aiApi.saveUserSkillBinding(
-      selectedUser.value,
-      feature.value,
-      bindingIds.value,
-    )
-    message.success('Skill 绑定已保存')
-  } catch (e) {
-    message.error(getErrorMessage(e, '保存 Skill 绑定失败'))
-  } finally {
-    bindingLoading.value = false
-  }
-}
 onMounted(async () => {
-  await Promise.all([loadJobs(), loadSettings(), loadSkills(), loadSource()])
+  await Promise.all([loadJobs(), loadSettings(), loadSource()])
   try {
-    users.value = (await monitoredUsersApi.list({ page: 1, page_size: 100 })).items
     listenTaskOptions.value = (
       await aiListenTasksApi.list({ page: 1, page_size: 100, include_archived: true })
     ).items
@@ -455,8 +333,7 @@ onMounted(async () => {
                   ...listenTaskOptions.map((task) => ({ label: task.name, value: task.id })),
                 ]"
                 @change="resetJobs"
-              /><a-button :loading="jobsLoading" @click="loadJobs"
-                ><ReloadOutlined /> 刷新</a-button
+              /><a-button :loading="jobsLoading" @click="loadJobs"><ReloadOutlined /> 刷新</a-button
               ><a-button type="primary" @click="tab = 'settings'"
                 ><ThunderboltOutlined /> 配置 AI</a-button
               >
@@ -518,111 +395,6 @@ onMounted(async () => {
                     danger
                     @click="removeJob(record)"
                     ><DeleteOutlined /></a-button></a-space></template></a-table-column></a-table></a-card></a-tab-pane
-      ><a-tab-pane key="skills" tab="Skills">
-        <a-card :bordered="false">
-          <div class="toolbar">
-            <div class="toolbar__controls">
-              <a-button type="primary" @click="editSkill()"><PlusOutlined /> 新建 Skill</a-button>
-              <a-button :loading="skillsLoading" @click="loadSkills"><ReloadOutlined /> 刷新</a-button>
-              <span class="toolbar__hint">用可复用的提示指令控制输出结构</span>
-            </div>
-            <span class="toolbar__hint">共 {{ skillsTotal }} 条 Skills</span>
-          </div>
-          <a-table
-            :data-source="skillRows"
-            :loading="skillsLoading"
-            row-key="id"
-            :pagination="skillsPagination"
-            :scroll="{ x: 720 }"
-            @change="changeSkillPage"
-          >
-            <a-table-column title="名称" data-index="name" :width="220" :ellipsis="true">
-              <template #default="{ record }"
-                ><strong>{{ record.name }}</strong></template
-              >
-            </a-table-column>
-            <a-table-column title="说明" data-index="description" :ellipsis="true">
-              <template #default="{ record }"
-                ><span class="muted">{{ record.description || '暂无说明' }}</span></template
-              >
-            </a-table-column>
-            <a-table-column title="状态" :width="120">
-              <template #default="{ record }"
-                ><StatusPill :value="record.is_active" :label="record.is_active ? '启用' : '停用'"
-              /></template>
-            </a-table-column>
-            <a-table-column title="操作" :width="120">
-              <template #default="{ record }">
-                <a-space>
-                  <a-tooltip title="编辑"
-                    ><a-button type="link" aria-label="编辑 Skill" @click="editSkill(record)"
-                      ><EditOutlined /></a-button
-                  ></a-tooltip>
-                  <a-tooltip title="删除"
-                    ><a-button
-                      type="link"
-                      danger
-                      aria-label="删除 Skill"
-                      @click="removeSkill(record)"
-                      ><DeleteOutlined /></a-button
-                  ></a-tooltip>
-                </a-space>
-              </template>
-            </a-table-column>
-          </a-table>
-          <a-collapse style="margin-top: 20px">
-            <a-collapse-panel key="legacy" header="旧策略 · 账号与功能点 Skill 绑定">
-              <a-alert
-                type="info"
-                show-icon
-                message="此处保留旧策略和手动生成所需的账号 Skill 绑定；监听任务使用任务中明确选择的 Skills。"
-                style="margin-bottom: 16px"
-              />
-              <a-form layout="inline">
-                <a-form-item label="监听账号"
-                  ><a-select
-                    v-model:value="selectedUser"
-                    style="width: 220px"
-                    :options="users.map((user) => ({ label: `@${user.username}`, value: user.id }))"
-                    @change="loadContext"
-                /></a-form-item>
-                <a-form-item label="功能点"
-                  ><a-select
-                    v-model:value="feature"
-                    style="width: 220px"
-                    :options="[
-                      { label: '文章生成', value: 'article_generation' },
-                      { label: '内容摘要', value: 'content_summary' },
-                      { label: '标题优化', value: 'title_optimization' },
-                    ]"
-                    @change="loadContext"
-                /></a-form-item>
-              </a-form>
-              <a-descriptions v-if="profile" bordered :column="1" style="margin-top: 18px"
-                ><a-descriptions-item label="作者">@{{ profile.username }}</a-descriptions-item
-                ><a-descriptions-item label="身份">{{
-                  profile.identity_summary
-                }}</a-descriptions-item
-                ><a-descriptions-item label="近期关注">{{
-                  profile.focus_summary
-                }}</a-descriptions-item
-                ><a-descriptions-item label="长期主题">{{
-                  profile.recurring_topics.join('、') || '暂无'
-                }}</a-descriptions-item></a-descriptions
-              >
-              <a-space v-if="binding" direction="vertical" style="width: 100%; margin-top: 18px"
-                ><span class="muted">绑定 Skills</span
-                ><a-checkbox-group
-                  v-model:value="bindingIds"
-                  :options="skills.map((skill) => ({ label: skill.name, value: skill.id }))"
-                /><a-button type="primary" :loading="bindingLoading" @click="saveBinding"
-                  >保存绑定</a-button
-                ></a-space
-              >
-              <a-empty v-else description="选择账号后查看画像和绑定" />
-            </a-collapse-panel>
-          </a-collapse>
-        </a-card> </a-tab-pane
       ><a-tab-pane key="settings" tab="创作设置"
         ><a-card :bordered="false"
           ><a-alert
@@ -748,19 +520,6 @@ onMounted(async () => {
           }}</template></a-table-column
         ></a-table
       ></a-modal
-    ><a-modal
-      v-model:open="skillOpen"
-      :title="editingSkill ? '编辑 Skill' : '新建 Skill'"
-      ok-text="保存"
-      cancel-text="取消"
-      @ok="saveSkill"
-      ><a-form layout="vertical"
-        ><a-form-item label="名称"><a-input v-model:value="skillForm.name" /></a-form-item
-        ><a-form-item label="说明"><a-input v-model:value="skillForm.description" /></a-form-item
-        ><a-form-item label="指令"
-          ><a-textarea v-model:value="skillForm.instructions" :rows="10" /></a-form-item
-        ><a-form-item label="启用"
-          ><a-switch v-model:checked="skillForm.is_active" /></a-form-item></a-form></a-modal
     ><a-modal
       v-model:open="draftOpen"
       title="编辑生成草稿"

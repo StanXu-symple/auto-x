@@ -64,6 +64,12 @@ const router = createRouter({
           meta: { title: 'AI 创作', description: '把监听内容转化为可编辑、可发布的创作草稿' },
         },
         {
+          path: 'skills',
+          name: 'skills',
+          component: () => import('@/views/SkillsView.vue'),
+          meta: { title: 'Skills管理', description: '管理可复用的创作指令与账号 Skill 绑定' },
+        },
+        {
           path: 'articles',
           name: 'articles',
           component: () => import('@/views/ArticlesView.vue'),
@@ -101,6 +107,11 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  if (to.name === 'ai-writing' && ['skills', 'context'].includes(String(to.query.tab))) {
+    const query = { ...to.query }
+    delete query.tab
+    return { path: '/skills', query, hash: to.hash, replace: true }
+  }
   const isPreview = import.meta.env.DEV && to.query.preview === '1'
   const auth = useAuthStore()
   if (!isPreview && to.meta.requiresAuth && !auth.isAuthenticated) {
