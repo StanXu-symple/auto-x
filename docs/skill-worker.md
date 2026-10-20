@@ -110,3 +110,31 @@ TEST_POSTGRES_DSN=postgresql+asyncpg://postgres@127.0.0.1:5432/postgres \
 ```
 
 HTTP 测试覆盖实际 FastAPI 转发、JWT/会话校验、权限隔离、优先级、任务切换、快照、停用级联及故障回滚。PostgreSQL 测试使用独立 schema，验证持锁期间的 HTTP 读取、写入等待、并发初始化及迁移/模型两种建库路径。
+
+## 2026-10-20 部署记录
+
+运行版本为 `7030dad03b151ceb6bc742fb2f6efad94f63bae8`，已发布到 Auto-X `dev/main`；安装器为 apps/stanxu `0b5c144`。[Actions 39369475546](https://github.com/StanXu-symple/auto-x/actions/runs/39369475546) 成功，使用固定标签 `sha-7030dad03b151ceb6bc742fb2f6efad94f63bae8`，后端镜像 digest 为 `sha256:ffe40dfc17d09409701220d2dd1194e8c56d2481f8a7cc308ed239a313b2cdc9`。
+
+| 节点 | 本次变更 | 最终服务清单 |
+| --- | --- | --- |
+| hn-1 | 新增 skill-worker；升级 monitor-center、monitor-agent | xhs-worker,camoufox-worker,monitor-center,monitor-agent,skill-worker |
+| tc-2 | 升级 auth-center、backend、worker、ai-worker、monitor-agent | backend,worker,ai-worker,qq-worker,auth-center,monitor-agent,frontend |
+
+部署使用已发布安装器的 `auto_x_prepare_control_plane_bootstrap`、`auto_x_sync_nacos_config`、`auto_x_prepare_compose_override` 和 `auto_x_compose` 函数分阶段执行。先让两节点全部监控服务兼容新组件，再同步凭据/拓扑、重建认证中心、运行现有 Alembic 头校验并启动 hn-1 Skill；从 tc-2 验证三个身份的跨节点解析均为 200 后，切换原调用方。数据库仍为 `0036_browser_job_results`。
+
+本次未重建 hn-1 的 xhs-worker/camoufox-worker，也未重建 tc-2 的 frontend、qq-worker、PostgreSQL、Redis；这些容器 ID 与部署前一致。后续更新 tc-2 时须带 `KJ_AUTO_X_SKILL_REMOTE=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1`，让它继续使用 hn-1 的两个远端服务，避免安装器自动加入本机副本。hn-1 的 Camoufox 与 tc-2 的 frontend 继续固定原标签。
+
+验收结果：
+
+- Nacos 只有一个健康的 `xsentinel-skill-worker` 实例，属于 hn-1，端口 8204；三个专用身份的 Token 签名、scope 和真实 HTTP 解析通过。worker/ai-worker 容器各自使用实际挂载的凭据解析成功。
+- 使用现有管理员配置正常登录，公开 `/api/v1/ai/skills`、`/ai/features`、`/ai/settings`、`/ai/listen-tasks` 均为 200，响应与 Skill 服务直连相同；验证会话随后注销。生产环境没有执行 Skill 管理写操作来制造测试数据。
+- 从更新前的 PostgreSQL dump 仅读取 COPY 数据生成哈希，再对现库执行只读比对：4 个 Skill、1 个功能点、1 份设置、1 个监听任务、3 条任务 Skill 绑定、1 条订阅、34 个历史生成任务的 Skill/任务/请求快照均一致；账号绑定和补生成表原本为空，仍为空。
+- 监控包含原 13 项加 hn1-skill-worker，共 14 个健康实例、2 个健康节点；frontend/backend 健康检查均为 200。新版本业务进程检查时没有 ERROR/CRITICAL 日志。
+- 原有共享配置值、认证客户端及授权、监控记录和节点映射保持；只新增三个 Skill 客户端及新服务配置/拓扑记录。
+
+服务器本地备份（权限受限，不导出到开发机）：
+
+- hn-1：`/home/docker/auto-x/backups/pre-skill-worker-20261020T042641Z`
+- tc-2：`/home/docker/auto-x/backups/pre-skill-worker-20261020T042654Z`
+
+备份包含原环境、完整服务清单、Compose/控制面文件、容器版本、三个 Nacos 文档及媒体卷；tc-2 另有 PostgreSQL 自定义格式 dump 与 Redis RDB。`sha256.json` 保存完整性清单，`deployment-verification.json` 保存配置/容器比对结果，tc-2 的 `skill-invariants-after.json` 保存数据哈希比对。回滚时以这些原始版本和配置为准，先停止新消费者，再恢复原服务及配置；保留现有数据库和业务卷，不能用 `down --volumes` 替代回滚。
