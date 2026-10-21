@@ -197,10 +197,10 @@ HTTP 模式的调用为 `xhs_service.py → browser_job_api.create_app() → Xia
 | 文件 | 作用 |
 | --- | --- |
 | `backend/app/skill_worker.py` | 独立 FastAPI 服务、Nacos 注册、健康检查与内部解析 API |
-| `backend/app/skills/routes.py` | 现有设置、Skill CRUD、功能点和账号绑定管理 |
+| `backend/app/skills/routes.py` | 创作设置、Skill CRUD、功能点管理 |
 | `backend/app/skills/listening_routes.py` | 监听任务的配置、切换、暂停恢复、队列决策和补生成管理 |
 | `backend/app/skills/listening.py` | 选择校验、预览、统计及响应组装 |
-| `backend/app/skills/store.py` | 本地 Skill 解析和选择优先级 |
+| `backend/app/skills/store.py` | 按明确选择的 ID 顺序解析有效 Skill 与磁盘指令 |
 | `backend/app/skills/backfill.py` | 补生成请求及配置快照冻结 |
 | `backend/app/skills/bootstrap.py` | 内置 Skill 幂等初始化 |
 | `backend/app/services/skill_client.py` | backend / worker / ai-worker 共用的 Nacos + HTTP 客户端 |

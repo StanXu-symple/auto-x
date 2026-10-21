@@ -65,36 +65,6 @@ class AIFeature(Base):
     )
 
 
-class AIUserSkillBinding(Base):
-    __tablename__ = "ai_user_skill_bindings"
-    __table_args__ = (
-        Index(
-            "uq_ai_user_skill_binding",
-            "monitored_user_id",
-            "ai_feature_id",
-            "skill_id",
-            unique=True,
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    monitored_user_id: Mapped[int] = mapped_column(
-        ForeignKey("monitored_users.id", ondelete="CASCADE"), index=True
-    )
-    ai_feature_id: Mapped[int] = mapped_column(
-        ForeignKey("ai_features.id", ondelete="CASCADE"), index=True
-    )
-    skill_id: Mapped[int] = mapped_column(
-        ForeignKey("ai_skills.id", ondelete="CASCADE"), index=True
-    )
-    priority: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
-    )
-
-
 class AIUserProfile(Base):
     __tablename__ = "ai_user_profiles"
 
@@ -124,9 +94,6 @@ class AISetting(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     auto_generate: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
-    auto_trigger_mode: Mapped[str] = mapped_column(
-        String(24), default="listening_tasks", server_default="listening_tasks"
-    )
     provider: Mapped[str] = mapped_column(
         String(32), default="openai_responses", server_default="openai_responses"
     )
@@ -143,7 +110,6 @@ class AISetting(Base):
     reasoning_effort: Mapped[str] = mapped_column(
         String(16), default="medium", server_default="medium"
     )
-    default_skill_ids: Mapped[list[int]] = mapped_column(JSON)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
     max_output_tokens: Mapped[int] = mapped_column(Integer, default=2500, server_default="2500")
     request_timeout_seconds: Mapped[int] = mapped_column(Integer, default=60, server_default="60")

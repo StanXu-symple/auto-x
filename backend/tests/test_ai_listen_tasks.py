@@ -66,8 +66,11 @@ def _sqlite_bigint(_type, _compiler, **_kw):
 
 
 @pytest.fixture
-async def database():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+async def database(tmp_path_factory):
+    # Separate connections are needed when an HTTP consumer holds a transaction
+    # while skill-worker reads: an in-memory StaticPool shares that transaction.
+    database_path = tmp_path_factory.mktemp("listening-db") / "listening.sqlite"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     tables = [
         Base.metadata.tables[name]
         for name in (
@@ -78,7 +81,6 @@ async def database():
             "ai_skills",
             "ai_features",
             "ai_settings",
-            "ai_user_skill_bindings",
             "ai_listen_tasks",
             "ai_listen_task_subscriptions",
             "ai_listen_task_skills",
@@ -99,14 +101,12 @@ async def database():
                     id=1,
                     enabled=True,
                     auto_generate=True,
-                    auto_trigger_mode="legacy_all",
                     provider="openai_responses",
                     model_name="model",
                     base_url="https://example.com",
                     language="zh-CN",
                     tone="自然",
                     reasoning_effort="medium",
-                    default_skill_ids=[],
                     max_attempts=3,
                     max_output_tokens=1000,
                     request_timeout_seconds=30,
@@ -147,7 +147,7 @@ async def database():
         await engine.dispose()
 
 
-async def test_first_activation_switches_mode_and_freezes_initial_window(database) -> None:
+async def test_first_activation_freezes_initial_window(database) -> None:
     payload = AIListenTaskCreate(
         name="  AI 新闻  ",
         desired_state="enabled",
@@ -158,19 +158,13 @@ async def test_first_activation_switches_mode_and_freezes_initial_window(databas
         initial_sync_days=3,
     )
     async with database() as db:
-        with pytest.raises(APIError) as error:
-            await _create_task(db, payload)
-        assert error.value.code == "legacy_mode_switch_required"
-        await db.rollback()
-
-        task = await _create_task(db, payload.model_copy(update={"switch_from_legacy": True}))
+        task = await _create_task(db, payload)
         await db.commit()
         assert task.desired_state == "enabled"
         assert task.activated_at is not None
         assert task.effective_from == task.activated_at
         assert task.initial_backfill_to == task.activated_at
         assert task.initial_backfill_from == task.activated_at - timedelta(days=3)
-        assert (await db.get(AISetting, 1)).auto_trigger_mode == "listening_tasks"
         backfill = await db.scalar(select(AIListenTaskBackfill))
         assert backfill.request_id == "initial"
         assert backfill.config_snapshot["skills"][0]["instructions"] == "原始指令"
@@ -339,12 +333,12 @@ async def test_paused_task_anchors_on_first_resume_only(database) -> None:
         task = await _create_task(db, payload)
         await db.commit()
         assert task.activated_at is None
-        await _activate(db, task, switch_from_legacy=True)
+        await _activate(db, task)
         await db.commit()
         first = task.activated_at
         task.desired_state = "paused"
         await db.commit()
-        await _activate(db, task, switch_from_legacy=False)
+        await _activate(db, task)
         await db.commit()
         assert task.activated_at == first
         assert len(list(await db.scalars(select(AIListenTaskBackfill)))) == 1
@@ -508,7 +502,6 @@ async def test_backfill_scan_is_bounded_and_pauses_without_losing_cursor(
             AIListenTaskCreate(
                 name="扫描任务",
                 desired_state="enabled",
-                switch_from_legacy=True,
                 monitored_user_ids=[1],
                 skill_ids=[1],
                 initial_sync_days=1,
@@ -584,7 +577,6 @@ async def test_backfill_keeps_cursor_when_enqueue_discovers_skill_hold(
             AIListenTaskCreate(
                 name="失效技能",
                 desired_state="enabled",
-                switch_from_legacy=True,
                 monitored_user_ids=[1],
                 skill_ids=[1],
                 initial_sync_days=1,
@@ -627,7 +619,6 @@ async def test_backfill_refreshes_preloaded_cursor_before_scanning(database, mon
             AIListenTaskCreate(
                 name="游标刷新",
                 desired_state="enabled",
-                switch_from_legacy=True,
                 monitored_user_ids=[1],
                 skill_ids=[1],
                 initial_sync_days=1,
@@ -689,7 +680,6 @@ async def test_backfill_waits_for_account_and_feature_recovery(database, monkeyp
             AIListenTaskCreate(
                 name="等待采集",
                 desired_state="enabled",
-                switch_from_legacy=True,
                 monitored_user_ids=[1],
                 skill_ids=[1],
                 initial_sync_days=1,
@@ -749,7 +739,6 @@ async def test_waiting_backfill_does_not_starve_another_task(database, monkeypat
             AIListenTaskCreate(
                 name="等待的任务",
                 desired_state="enabled",
-                switch_from_legacy=True,
                 monitored_user_ids=[1],
                 skill_ids=[1],
                 initial_sync_days=1,
@@ -821,7 +810,6 @@ async def test_backfill_scans_saved_reply_with_current_collection_off(
             AIListenTaskCreate(
                 name="已存回复",
                 desired_state="enabled",
-                switch_from_legacy=True,
                 monitored_user_ids=[1],
                 skill_ids=[1],
                 listen_mode="reply",
@@ -863,7 +851,6 @@ async def test_queue_decision_and_archive_keep_job_audit(database) -> None:
             AIListenTaskCreate(
                 name="审计任务",
                 desired_state="enabled",
-                switch_from_legacy=True,
                 monitored_user_ids=[1],
                 skill_ids=[1],
             ),

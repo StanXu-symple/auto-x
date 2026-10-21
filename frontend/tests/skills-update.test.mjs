@@ -30,8 +30,7 @@ const compiled = ts.transpileModule(
 function mockImport(line, module) {
   if (module === 'vue') return line
   if (module === '@/services/api')
-    return `const aiApi = new Proxy({}, { get: (_target, method) => (...args) => globalThis.skillsUpdateMocks.api[method](...args) });
-      const monitoredUsersApi = { list: async () => ({ items: [] }) };`
+    return `const aiApi = new Proxy({}, { get: (_target, method) => (...args) => globalThis.skillsUpdateMocks.api[method](...args) });`
   if (module === '@/services/http')
     return 'const getErrorMessage = (error, fallback) => error?.message || fallback;'
   if (module === '@/utils/skills') return line.replace('@/utils/skills', './skills.mjs')

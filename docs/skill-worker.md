@@ -1,6 +1,6 @@
 # Skill Worker
 
-`skill-worker` 承接现有 Skill 管理、绑定、解析和校验，默认 HTTP 端口 `8204`，Nacos 服务名 `xsentinel-skill-worker`。它复用 core 后端镜像，入口为 `uvicorn app.skill_worker:app --host 0.0.0.0 --port 8204`。
+`skill-worker` 承接Skill 管理、任务级选择、解析和校验，默认 HTTP 端口 `8204`，Nacos 服务名 `xsentinel-skill-worker`。它复用 core 后端镜像，入口为 `uvicorn app.skill_worker:app --host 0.0.0.0 --port 8204`。
 
 ## 边界与兼容性
 
@@ -8,7 +8,7 @@
 flowchart LR
     UI[现有管理页面] --> API[backend]
     API -->|管理接口 HTTP| SK[skill-worker]
-    Poll[worker] -->|解析绑定 HTTP| SK
+    Poll[worker] -->|解析任务 Skills HTTP| SK
     AI[ai-worker] -->|领取前校验 HTTP| SK
     N[Nacos] -.发现地址.-> API
     N -.发现地址.-> Poll
@@ -17,16 +17,16 @@ flowchart LR
     AI -->|读取已冻结快照| DB
 ```
 
-页面继续调用原来的 `/api/v1/ai/settings`、`/ai/skills`、`/ai/features`、账号 Skill 绑定和 `/ai/listen-tasks` 接口。backend 使用明确路由清单转发；路径、请求模型、状态码和响应模型保持一致。生成任务、草稿、模型调用和发布调度仍由原服务负责。
+页面调用 `/api/v1/ai/settings`、`/ai/skills`、`/ai/features` 和 `/ai/listen-tasks` 接口，backend 使用明确路由清单转发。账号 Skill 绑定管理接口已删除，创作设置不再接受 `default_skill_ids` 和 `auto_trigger_mode`。生成任务、草稿、模型调用和发布调度仍由原服务负责。
 
 监听任务的配置、暂停/恢复/归档、队列决策与补生成请求一起移到 skill-worker：这些操作会同时修改绑定、配置版本、任务状态及审计事件，需要保留同一个数据库事务。历史扫描与执行仍在 ai-worker。
 
 保留的行为：
 
-- 选择优先级：显式覆盖（包括空列表）→ 账号与功能点绑定 → 全局默认；绑定顺序保持不变。
+- 内容流手动生成必须明确选择非空 Skills；监听任务仅使用自身配置的有序 Skills。同一账号可以被不同任务使用不同 Skills 处理，不读取账号绑定或默认选择。
 - 任务入队时冻结 Skill 内容、版本和选择来源；后续修改或切换不改写已有任务快照。
 - 历史补生成使用提交时的快照，领取和继续扫描时仍校验当前任务绑定。
-- 删除仍是停用：同一事务内移除全局默认、禁用账号绑定，并将关联任务队列标为 `skill_invalidated`。
+- 删除仍是停用：同一事务内将 Skill 停用，并将关联监听任务队列标为 `skill_invalidated`，保留历史快照。
 - 暂停、配置版本冲突、保留旧队列的决策和重试次数沿用现有规则。
 - HTTP、Nacos 或认证故障返回 `503 skill_service_unavailable`。轮询入队事务回滚，补生成游标不前移，领取失败不消耗模型尝试次数；不会把服务故障当成空绑定或 Skill 已失效。
 
@@ -34,7 +34,7 @@ flowchart LR
 
 ## 自定义与 GitHub Skills
 
-两种来源共用 `ai_skills.id`，因此账号绑定、全局默认、监听任务和内容流的手动生成可以混合选择。自定义 Skill 的指令保存在数据库；GitHub Skill 在数据库中保存索引、来源、固定 Commit、版本、编译指令缓存与文件校验信息，完整原始目录保存在 skill-worker 的磁盘中。
+两种来源共用 `ai_skills.id`，因此监听任务和内容流的手动生成可以混合选择。自定义 Skill 的指令保存在数据库；GitHub Skill 在数据库中保存索引、来源、固定 Commit、版本、编译指令缓存与文件校验信息，完整原始目录保存在 skill-worker 的磁盘中。
 
 在 **Skills管理 → 从 GitHub 导入** 粘贴公开仓库或 `tree` 目录地址。例如：
 
@@ -63,7 +63,7 @@ data/skills/bundles/<不可变包ID>/
   manifest.json           # 原文件大小与 SHA-256
 ```
 
-新增迁移 `0037_github_skills`：升级前备份 PostgreSQL；执行 `alembic upgrade head`，先升级 skill-worker，再升级 backend / worker / ai-worker，最后更新 frontend。更新与备份必须同时保留数据库和 `data/skills`。部署多实例时必须共享同一持久化目录；独立本机磁盘不能被多个 Nacos 实例交替使用。恢复时按原包 ID 恢复整个目录，不能仅重新导入当前分支替代旧版本。无法确认数据库提交结果时保留目录，可能留下孤立包；暂不自动清理旧包，避免影响历史任务。
+GitHub 持久化由迁移 `0037_github_skills` 引入。当前迁移 `0038_explicit_task_skills` 删除旧账号绑定表及其数据，并删除全局默认 Skills 与触发模式两列。升级前备份 PostgreSQL，协调停止使用这些表/列的旧后端进程，执行 `alembic upgrade head`，再启动新版 skill-worker、backend / worker / ai-worker 并更新 frontend；不要让旧进程跨越删除列的迁移继续读写。迁移保留队列、任务选择和快照；降级只重建空旧配置，不能恢复删除的数据。更新与备份必须同时保留数据库和 `data/skills`。部署多实例时必须共享同一持久化目录；独立本机磁盘不能被多个 Nacos 实例交替使用。恢复时按原包 ID 恢复整个目录，不能仅重新导入当前分支替代旧版本。无法确认数据库提交结果时保留目录，可能留下孤立包；暂不自动清理旧包，避免影响历史任务。
 
 原生 `start.sh` 使用项目根目录 `data/skills`，可用 `SKILL_STORAGE_DIR` 覆盖；该路径属于节点本地配置，不接受 Nacos 共享配置覆盖。容器路径固定，宿主机路径通过 `SKILL_STORAGE_HOST_DIR` 配置。skill-worker 内存上限为 512 MiB。
 
@@ -82,7 +82,7 @@ data/skills/bundles/<不可变包ID>/
 | 文件 | 职责 |
 | --- | --- |
 | `backend/app/skill_worker.py` | 服务生命周期、Nacos 注册、鉴权、内部解析 API、健康检查与指标 |
-| `backend/app/skills/routes.py` | 设置、Skill CRUD、功能点、账号绑定的原管理逻辑 |
+| `backend/app/skills/routes.py` | 创作设置、Skill CRUD、功能点管理 |
 | `backend/app/skills/listening_routes.py` | 监听任务管理及原子配置操作 |
 | `backend/app/skills/listening.py` | 本地校验、预览、统计与输出 |
 | `backend/app/skills/backfill.py` | 创建补生成请求和冻结配置快照 |
@@ -101,7 +101,6 @@ data/skills/bundles/<不可变包ID>/
 | 接口 | 用途 | 权限 |
 | --- | --- | --- |
 | `POST /v1/skills/resolve` | 按给定 ID 顺序返回仍有效的 Skill | `skills:read` |
-| `POST /v1/skills/context` | 解析显式覆盖、账号绑定和默认选择 | `skills:read` |
 | `GET /v1/tasks/{task_id}/skills` | 返回监听任务绑定顺序及有效 Skill | `skills:read` |
 | `GET /v1/jobs/{job_id}/skills` | 读取任务冻结的自定义指令或磁盘 Skill 版本 | `skills:read` |
 | `/ai/...` 的管理路由 | 原有管理能力 | `skills:manage`，同时验证原管理员 Token |

@@ -72,7 +72,7 @@ const router = createRouter({
           path: 'skills',
           name: 'skills',
           component: () => import('@/views/SkillsView.vue'),
-          meta: { title: 'Skills管理', description: '管理可复用的创作指令与账号 Skill 绑定' },
+          meta: { title: 'Skills管理', description: '管理自定义写作指令与 GitHub Skills' },
         },
         {
           path: 'articles',

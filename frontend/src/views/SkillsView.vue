@@ -10,27 +10,12 @@ import {
 import { message, Modal } from 'ant-design-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
-import { aiApi, monitoredUsersApi } from '@/services/api'
+import { aiApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
-import { groupSkills, skillOptionLabel, skillSourceSummary } from '@/utils/skills'
-import type {
-  AiSkill,
-  AiSkillPayload,
-  AiUserProfile,
-  AiUserSkillBinding,
-  EntityId,
-  MonitoredUser,
-  GithubSkillImportResult,
-} from '@/types'
+import { groupSkills, skillSourceSummary } from '@/utils/skills'
+import type { AiSkill, AiSkillPayload, GithubSkillImportResult } from '@/types'
 
 const skills = ref<AiSkill[]>([])
-const users = ref<MonitoredUser[]>([])
-const selectedUser = ref<EntityId>()
-const feature = ref('article_generation')
-const profile = ref<AiUserProfile | null>(null)
-const binding = ref<AiUserSkillBinding | null>(null)
-const bindingIds = ref<EntityId[]>([])
-const bindingLoading = ref(false)
 const skillOpen = ref(false)
 const skillSaving = ref(false)
 const importOpen = ref(false)
@@ -84,13 +69,6 @@ async function loadSkills() {
   }
 }
 
-async function loadUsers() {
-  try {
-    users.value = (await monitoredUsersApi.list({ page: 1, page_size: 100 })).items
-  } catch (e) {
-    message.error(getErrorMessage(e, '无法加载监听账号'))
-  }
-}
 function editSkill(skill?: AiSkill) {
   editingSkill.value = skill || null
   Object.assign(
@@ -215,41 +193,7 @@ async function loadAllSkills(request: number) {
     Math.max(1, Math.ceil(skillRows.value.length / skillPage.pageSize)),
   )
 }
-async function loadContext() {
-  if (!selectedUser.value) return
-  bindingLoading.value = true
-  try {
-    await loadSkills()
-    ;[profile.value, binding.value] = await Promise.all([
-      aiApi.userProfile(selectedUser.value),
-      aiApi.userSkillBinding(selectedUser.value, feature.value),
-    ])
-    bindingIds.value = [...(binding.value?.skill_ids || [])]
-  } catch (e) {
-    message.error(getErrorMessage(e, '读取用户上下文失败'))
-  } finally {
-    bindingLoading.value = false
-  }
-}
-async function saveBinding() {
-  if (!selectedUser.value || bindingLoading.value) return
-  bindingLoading.value = true
-  try {
-    binding.value = await aiApi.saveUserSkillBinding(
-      selectedUser.value,
-      feature.value,
-      bindingIds.value,
-    )
-    message.success('Skill 绑定已保存')
-  } catch (e) {
-    message.error(getErrorMessage(e, '保存 Skill 绑定失败'))
-  } finally {
-    bindingLoading.value = false
-  }
-}
-onMounted(async () => {
-  await Promise.all([loadSkills(), loadUsers()])
-})
+onMounted(loadSkills)
 </script>
 
 <template>
@@ -380,60 +324,6 @@ onMounted(async () => {
           </template>
         </a-table-column>
       </a-table>
-      <a-collapse style="margin-top: 20px">
-        <a-collapse-panel key="legacy" header="旧策略 · 账号与功能点 Skill 绑定">
-          <a-alert
-            type="info"
-            show-icon
-            message="此处保留旧策略和手动生成所需的账号 Skill 绑定；监听任务使用任务中明确选择的 Skills。"
-            style="margin-bottom: 16px"
-          />
-          <a-form layout="inline">
-            <a-form-item label="监听账号"
-              ><a-select
-                v-model:value="selectedUser"
-                style="width: 220px"
-                :options="users.map((user) => ({ label: `@${user.username}`, value: user.id }))"
-                @change="loadContext"
-            /></a-form-item>
-            <a-form-item label="功能点"
-              ><a-select
-                v-model:value="feature"
-                style="width: 220px"
-                :options="[
-                  { label: '文章生成', value: 'article_generation' },
-                  { label: '内容摘要', value: 'content_summary' },
-                  { label: '标题优化', value: 'title_optimization' },
-                ]"
-                @change="loadContext"
-            /></a-form-item>
-          </a-form>
-          <a-descriptions v-if="profile" bordered :column="1" style="margin-top: 18px"
-            ><a-descriptions-item label="作者">@{{ profile.username }}</a-descriptions-item
-            ><a-descriptions-item label="身份">{{ profile.identity_summary }}</a-descriptions-item
-            ><a-descriptions-item label="近期关注">{{ profile.focus_summary }}</a-descriptions-item
-            ><a-descriptions-item label="长期主题">{{
-              profile.recurring_topics.join('、') || '暂无'
-            }}</a-descriptions-item></a-descriptions
-          >
-          <a-space v-if="binding" direction="vertical" style="width: 100%; margin-top: 18px"
-            ><span class="muted">绑定 Skills</span
-            ><a-checkbox-group
-              v-model:value="bindingIds"
-              :options="
-                skills.map((skill) => ({
-                  label: skillOptionLabel(skill),
-                  value: skill.id,
-                  disabled: !skill.is_active,
-                }))
-              "
-            /><a-button type="primary" :loading="bindingLoading" @click="saveBinding"
-              >保存绑定</a-button
-            ></a-space
-          >
-          <a-empty v-else description="选择账号后查看画像和绑定" />
-        </a-collapse-panel>
-      </a-collapse>
     </a-card>
     <a-modal
       v-model:open="skillOpen"

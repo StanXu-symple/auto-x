@@ -451,14 +451,6 @@ async function save(state?: 'enabled' | 'paused') {
   try {
     const data = payload()
     if (!editing.value && state) data.desired_state = state
-    if (
-      !editing.value &&
-      data.desired_state === 'enabled' &&
-      settings.value?.auto_trigger_mode === 'legacy_all'
-    ) {
-      if (!(await confirmLegacySwitch())) return
-      data.switch_from_legacy = true
-    }
     if (editing.value)
       await aiListenTasksApi.update(editing.value.id, {
         name: data.name,
@@ -522,7 +514,6 @@ async function changeState(task: AiListenTask, action: 'pause' | 'resume' | 'arc
   try {
     if (action === 'pause') await aiListenTasksApi.pause(task.id)
     else if (action === 'resume') {
-      const switchFromLegacy = settings.value?.auto_trigger_mode === 'legacy_all'
       if (!task.activated_at && task.initial_sync_days > 0) {
         const estimate = await aiListenTasksApi.preview({
           ...payloadFromTask(task),
@@ -531,8 +522,7 @@ async function changeState(task: AiListenTask, action: 'pause' | 'resume' | 'arc
         })
         if (!(await confirmFirstActivation(estimate))) return
       }
-      if (switchFromLegacy && !(await confirmLegacySwitch())) return
-      await aiListenTasksApi.resume(task.id, switchFromLegacy)
+      await aiListenTasksApi.resume(task.id)
     } else await aiListenTasksApi.archive(task.id)
     await load()
     emit('changed')
@@ -544,20 +534,6 @@ async function changeState(task: AiListenTask, action: 'pause' | 'resume' | 'arc
   } catch (error) {
     message.error(getErrorMessage(error, '操作失败'))
   }
-}
-
-function confirmLegacySwitch(): Promise<boolean> {
-  return new Promise((resolve) => {
-    Modal.confirm({
-      title: '切换为监听任务自动生成？',
-      content:
-        '切换后，新采集内容只按已启用的监听任务入队；旧自动生成不再为所有内容无条件建队列。已有待处理记录仍按原快照执行，历史回溯默认排除旧流程已生成的内容。',
-      okText: '确认切换并启用',
-      cancelText: '返回修改',
-      onOk: () => resolve(true),
-      onCancel: () => resolve(false),
-    })
-  })
 }
 
 function confirmFirstActivation(estimate: AiListenTaskPreview): Promise<boolean> {
@@ -834,11 +810,6 @@ onMounted(async () => {
         <StatusPill
           :value="settings?.worker_status === 'online' || settings?.worker_status === 'healthy'"
           :label="`AI Worker：${settings?.worker_status || '未知'}`"
-        />
-        <StatusPill
-          v-if="settings?.auto_trigger_mode === 'legacy_all'"
-          value="warning"
-          label="旧自动生成兼容模式"
         />
       </a-space>
       <div v-if="summary" class="summary-strip">

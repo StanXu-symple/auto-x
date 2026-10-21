@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.ai_publish import AIPublishDispatchOut
 from app.schemas.common import APIModel, Page
@@ -37,9 +37,10 @@ def _validate_http_url(value: str) -> str:
 
 
 class AISettingsPatch(APIModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool | None = None
     auto_generate: bool | None = None
-    auto_trigger_mode: Literal["legacy_all", "listening_tasks"] | None = None
     provider: AIProvider | None = None
     model: str | None = Field(default=None, min_length=1, max_length=128)
     base_url: str | None = Field(default=None, max_length=500)
@@ -51,7 +52,6 @@ class AISettingsPatch(APIModel):
     max_output_tokens: int | None = Field(default=None, ge=128, le=100000)
     request_timeout_seconds: int | None = Field(default=None, ge=5, le=600)
     reasoning_effort: ReasoningEffort | None = None
-    default_skill_ids: list[int] | None = Field(default=None, max_length=20)
 
     @field_validator("base_url")
     @classmethod
@@ -80,7 +80,6 @@ class AISettingsPatch(APIModel):
     @field_validator(
         "enabled",
         "auto_generate",
-        "auto_trigger_mode",
         "provider",
         "model",
         "base_url",
@@ -90,7 +89,6 @@ class AISettingsPatch(APIModel):
         "max_output_tokens",
         "request_timeout_seconds",
         "reasoning_effort",
-        "default_skill_ids",
         mode="before",
     )
     @classmethod
@@ -99,22 +97,10 @@ class AISettingsPatch(APIModel):
             raise ValueError("field cannot be null")
         return value
 
-    @field_validator("default_skill_ids")
-    @classmethod
-    def unique_skill_ids(cls, value: list[int] | None) -> list[int] | None:
-        if value is None:
-            return value
-        if any(skill_id <= 0 for skill_id in value):
-            raise ValueError("skill ids must be positive")
-        if len(value) != len(set(value)):
-            raise ValueError("skill ids must be unique")
-        return value
-
 
 class AISettingsOut(APIModel):
     enabled: bool
     auto_generate: bool
-    auto_trigger_mode: Literal["legacy_all", "listening_tasks"]
     provider: AIProvider
     model: str
     base_url: str
@@ -126,7 +112,6 @@ class AISettingsOut(APIModel):
     max_output_tokens: int
     request_timeout_seconds: int
     reasoning_effort: ReasoningEffort
-    default_skill_ids: list[int]
     provider_ready: bool | None
     key_configured: bool | None
     key_status: Literal["configured", "missing", "not_required", "worker_managed", "unknown"]
@@ -232,26 +217,6 @@ class AIFeatureOut(APIModel):
     is_active: bool
 
 
-class AIUserSkillBindingReplace(APIModel):
-    skill_ids: list[int] = Field(max_length=20)
-
-    @field_validator("skill_ids")
-    @classmethod
-    def validate_ids(cls, value: list[int]) -> list[int]:
-        if any(item <= 0 for item in value) or len(value) != len(set(value)):
-            raise ValueError("skill ids must be unique positive integers")
-        return value
-
-
-class AIUserSkillBindingOut(APIModel):
-    monitored_user_id: int
-    username: str
-    feature: AIFeatureOut
-    skill_ids: list[int]
-    skills: list[AISkillOut]
-    resolution_source: str
-
-
 class AIUserProfileOut(APIModel):
     monitored_user_id: int
     username: str
@@ -337,7 +302,6 @@ class AIListenTaskCreate(APIModel):
     language_override: str | None = Field(default=None, min_length=1, max_length=32)
     tone_override: str | None = Field(default=None, min_length=1, max_length=64)
     max_output_tokens_override: int | None = Field(default=None, ge=128, le=100000)
-    switch_from_legacy: bool = False
 
     @model_validator(mode="after")
     def validate_selection(self) -> AIListenTaskCreate:
@@ -596,16 +560,14 @@ class ManualGenerateRequest(APIModel):
     feature_code: str = Field(
         default="article_generation", min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$"
     )
-    skill_ids: list[int] | None = Field(default=None, max_length=20)
+    skill_ids: list[int] = Field(min_length=1, max_length=20)
     idempotency_key: str | None = Field(
         default=None, min_length=8, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$"
     )
 
     @field_validator("skill_ids")
     @classmethod
-    def validate_skill_ids(cls, value: list[int] | None) -> list[int] | None:
-        if value is None:
-            return value
+    def validate_skill_ids(cls, value: list[int]) -> list[int]:
         if any(skill_id <= 0 for skill_id in value):
             raise ValueError("skill ids must be positive")
         if len(value) != len(set(value)):

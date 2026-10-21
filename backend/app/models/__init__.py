@@ -12,7 +12,6 @@ from app.models.ai import (
     AISetting,
     AISkill,
     AIUserProfile,
-    AIUserSkillBinding,
     ArticlePublishAttempt,
 )
 from app.models.ai_data_source import AIDataSource
@@ -63,7 +62,6 @@ __all__ = [
     "AIDataSource",
     "AISkill",
     "AIUserProfile",
-    "AIUserSkillBinding",
     "ArticlePublishAttempt",
     "AIPublishDispatch",
     "BrowserJobResult",

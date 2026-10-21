@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 
-from sqlalchemy.dialects import postgresql
+import pytest
 
-from app.models.ai import AIFeature, AISetting, AISkill
+from app.models.ai import AISetting
 from app.models.tweet import Tweet
 from app.services.ai_jobs import enqueue_auto_jobs
 
@@ -21,112 +21,17 @@ class FakeSession:
         return self.scalar_batches.pop(0)
 
 
-async def test_auto_enqueue_is_idempotent_and_freezes_skill_audit_snapshot(
-    monkeypatch,
-) -> None:
-    now = datetime.now(UTC)
-    setting = AISetting(
-        id=1,
-        enabled=True,
-        auto_generate=True,
-        auto_trigger_mode="legacy_all",
-        provider="openai_responses",
-        model_name="gpt-5.6-terra",
-        base_url="https://api.openai.com/v1",
-        bridge_url=None,
-        language="zh-CN",
-        tone="专业自然",
-        reasoning_effort="medium",
-        default_skill_ids=[2],
-        max_attempts=3,
-        max_output_tokens=1200,
-        request_timeout_seconds=30,
-    )
-    skill = AISkill(
-        id=2,
-        name="中文短帖",
-        description="desc",
-        instructions="frozen instructions",
-        output_schema=None,
-        is_active=True,
-        version=7,
-    )
-    tweet_1 = Tweet(
-        id=11,
-        tweet_id="x11",
-        monitored_user_id=1,
-        author_id="author",
-        text="first",
-        posted_at=now,
-        raw_payload={},
-    )
-    tweet_2 = Tweet(
-        id=12,
-        tweet_id="x12",
-        monitored_user_id=1,
-        author_id="author",
-        text="second",
-        posted_at=now,
-        raw_payload={},
-    )
-    feature = AIFeature(
-        id=1,
-        code="article_generation",
-        name="文章理解与创作",
-        description="desc",
-        base_prompt="理解作者",
-        is_active=True,
-    )
-
-    async def fake_feature(*_args):
-        return feature
-
-    async def fake_skills(*_args, **_kwargs):
-        return [skill], "user_feature_binding"
-
-    async def fake_context(*_args, **_kwargs):
-        return {"author": {"monitored_user_id": 1}, "recent_dynamics": []}
-
-    monkeypatch.setattr("app.services.ai_jobs.get_ai_feature", fake_feature)
-    monkeypatch.setattr("app.services.ai_jobs.resolve_context_skills", fake_skills)
-    monkeypatch.setattr("app.services.ai_jobs.build_author_context", fake_context)
-    session = FakeSession(setting, [[tweet_1, tweet_2], [12]])
-    inserted = await enqueue_auto_jobs(session, [11, 12])  # type: ignore[arg-type]
-
-    assert inserted == 1
+async def test_auto_enqueue_requires_an_enabled_listening_task() -> None:
+    setting = AISetting(id=1, enabled=True, auto_generate=True)
+    tweet = Tweet(id=11, monitored_user_id=1, posted_at=datetime.now(UTC))
+    session = FakeSession(setting, [[tweet], []])
+    assert await enqueue_auto_jobs(session, [11]) == 0
     assert len(session.statements) == 2
-    statement = session.statements[-1]
-    sql = str(statement.compile(dialect=postgresql.dialect())).upper()
-    params = statement.compile(dialect=postgresql.dialect()).params
-    assert "ON CONFLICT (IDEMPOTENCY_KEY) DO NOTHING" in sql
-    assert "RETURNING" in sql
-    snapshots = [value for key, value in params.items() if key.startswith("skill_snapshot")]
-    assert snapshots[0][0]["instructions"] == "frozen instructions"
-    request_snapshots = [
-        value for key, value in params.items() if key.startswith("request_snapshot")
-    ]
-    assert request_snapshots[0]["config"]["model"] == "gpt-5.6-terra"
-    assert request_snapshots[0]["source"]["text"] == "first"
-    assert request_snapshots[0]["feature"]["code"] == "article_generation"
-    assert request_snapshots[0]["skill_resolution"] == "user_feature_binding"
+    assert all(not statement.is_insert for statement in session.statements)
 
 
-async def test_auto_enqueue_stays_off_when_disabled() -> None:
-    setting = AISetting(
-        id=1,
-        enabled=False,
-        auto_generate=True,
-        provider="openai_responses",
-        model_name="gpt-5.6-terra",
-        base_url="https://api.openai.com/v1",
-        language="zh-CN",
-        tone="专业自然",
-        reasoning_effort="medium",
-        default_skill_ids=[1],
-        max_attempts=3,
-        max_output_tokens=1200,
-        request_timeout_seconds=30,
-    )
-    session = FakeSession(setting, [])
-    assert await enqueue_auto_jobs(session, [1]) == 0  # type: ignore[arg-type]
+@pytest.mark.parametrize("enabled,auto_generate", [(False, True), (True, False)])
+async def test_auto_enqueue_stays_off_when_disabled(enabled, auto_generate) -> None:
+    session = FakeSession(AISetting(id=1, enabled=enabled, auto_generate=auto_generate), [])
+    assert await enqueue_auto_jobs(session, [1]) == 0
     assert session.statements == []

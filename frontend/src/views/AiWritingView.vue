@@ -11,15 +11,7 @@ import {
 import { message, Modal } from 'ant-design-vue'
 import { aiApi, aiListenTasksApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
-import { skillOptionLabel } from '@/utils/skills'
-import type {
-  AiJob,
-  AiListenTask,
-  AiSettings,
-  AiSkill,
-  EntityId,
-  UpdateAiSettingsPayload,
-} from '@/types'
+import type { AiJob, AiListenTask, AiSettings, EntityId, UpdateAiSettingsPayload } from '@/types'
 import MetricCard from '@/components/MetricCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -44,9 +36,6 @@ const draftOpen = ref(false)
 const draftSaving = ref(false)
 const draftForm = reactive({ id: 0 as EntityId, title: '', content: '', excerpt: '', revision: 0 })
 const loading = reactive({ settings: false })
-const settings = ref<AiSettings | null>(null)
-const defaultSkills = ref<AiSkill[]>([])
-const defaultSkillsLoading = ref(false)
 const filters = reactive({
   status: 'all',
   trigger_type: 'all',
@@ -91,7 +80,6 @@ const settingsForm = reactive<UpdateAiSettingsPayload>({
   language: 'zh-CN',
   tone: '专业自然',
   reasoning_effort: 'medium',
-  default_skill_ids: [],
   max_attempts: 3,
   max_output_tokens: 2500,
   request_timeout_seconds: 60,
@@ -100,7 +88,6 @@ const running = computed(
   () => jobs.value.filter((job) => ['queued', 'running', 'retry_wait'].includes(job.status)).length,
 )
 function applySettings(value: AiSettings) {
-  settings.value = value
   Object.assign(settingsForm, {
     enabled: value.enabled,
     auto_generate: value.auto_generate,
@@ -108,7 +95,6 @@ function applySettings(value: AiSettings) {
     language: value.language,
     tone: value.tone,
     reasoning_effort: value.reasoning_effort,
-    default_skill_ids: [...(value.default_skill_ids || [])],
     max_attempts: value.max_attempts,
     max_output_tokens: value.max_output_tokens,
     request_timeout_seconds: value.request_timeout_seconds,
@@ -142,41 +128,10 @@ async function loadSettings() {
     loading.settings = false
   }
 }
-async function loadDefaultSkills() {
-  defaultSkillsLoading.value = true
-  try {
-    const all: AiSkill[] = []
-    let page = 1
-    while (true) {
-      const result = await aiApi.skillPage({ page, page_size: 100 })
-      all.push(...result.items)
-      if (all.length >= result.total || !result.items.length) break
-      page++
-    }
-    defaultSkills.value = all
-  } catch (e) {
-    message.error(getErrorMessage(e, '无法加载默认 Skills'))
-  } finally {
-    defaultSkillsLoading.value = false
-  }
-}
-watch(
-  tab,
-  (value) => {
-    if (value === 'settings') void loadDefaultSkills()
-  },
-  { immediate: true },
-)
-
 async function saveSettings() {
   loading.settings = true
   try {
-    applySettings(
-      await aiApi.updateSettings({
-        ...settingsForm,
-        default_skill_ids: [...settingsForm.default_skill_ids],
-      }),
-    )
+    applySettings(await aiApi.updateSettings({ ...settingsForm }))
     message.success('AI 配置已保存')
   } catch (e) {
     message.error(getErrorMessage(e, '保存失败'))
@@ -372,13 +327,7 @@ onMounted(async () => {
                     ><DeleteOutlined /></a-button></a-space></template></a-table-column></a-table></a-card></a-tab-pane
       ><a-tab-pane key="settings" tab="创作设置"
         ><a-card :bordered="false"
-          ><a-alert
-            v-if="settings?.auto_trigger_mode === 'legacy_all'"
-            type="warning"
-            show-icon
-            message="当前仍使用旧自动生成兼容模式。首次启用监听任务时会提示切换；切换后自动触发范围由监听任务决定。"
-            style="margin-bottom: 18px"
-          /><a-form layout="vertical" style="max-width: 760px"
+          ><a-form layout="vertical" style="max-width: 760px"
             ><a-form-item label="创作开关"
               ><a-switch v-model:checked="settingsForm.enabled" /><span
                 class="muted"
@@ -391,32 +340,13 @@ onMounted(async () => {
                 :disabled="!settingsForm.enabled"
               />
               <div class="muted">
-                启用监听任务后，仅由任务配置决定哪些内容自动生成。
+                仅已启用的监听任务会自动生成，使用各任务选择的 Skills。
               </div></a-form-item
             ><a-form-item label="语言与语气"
               ><a-space
                 ><a-input v-model:value="settingsForm.language" placeholder="语言" /><a-input
                   v-model:value="settingsForm.tone"
                   placeholder="语气" /></a-space></a-form-item
-            ><a-form-item label="默认 Skills">
-              <a-select
-                v-model:value="settingsForm.default_skill_ids"
-                mode="multiple"
-                allow-clear
-                option-filter-prop="label"
-                :loading="defaultSkillsLoading"
-                placeholder="选择自定义或 GitHub Skills"
-                :options="
-                  defaultSkills.map((skill) => ({
-                    label: skillOptionLabel(skill),
-                    value: skill.id,
-                    disabled: !skill.is_active,
-                  }))
-                "
-              />
-              <div class="muted">
-                未明确选择 Skills 且账号没有单独绑定时使用；监听任务使用任务中选择的 Skills。
-              </div> </a-form-item
             ><a-form-item label="默认提示词"
               ><a-textarea v-model:value="settingsForm.prompt_template" :rows="5" /></a-form-item
             ><a-form-item label="推理强度"

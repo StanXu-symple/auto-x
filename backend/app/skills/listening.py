@@ -274,8 +274,6 @@ async def task_out(
         dependency_reasons.append("AI 总开关已关闭")
     if not setting.auto_generate:
         dependency_reasons.append("自动监听开关已关闭")
-    if setting.auto_trigger_mode != "listening_tasks":
-        dependency_reasons.append("当前仍在旧自动生成兼容模式")
     if source is None:
         dependency_reasons.append("AI 数据源未配置")
     if not worker_online:

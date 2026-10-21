@@ -26,6 +26,9 @@ from app.models import (
     Admin,
     AIFeature,
     AIGenerationJob,
+    AIListenTask,
+    AIListenTaskSkill,
+    AIListenTaskSubscription,
     AISetting,
     AISkill,
     MonitoredUser,
@@ -153,16 +156,30 @@ async def test_fresh_database_seed_and_business_writes(database):
         assert tweet.entities == payload["entities"]
         setting = await session.get(AISetting, 1)
         setting.enabled = True
-        setting.auto_trigger_mode = "legacy_all"
-        await session.flush()
+        task = AIListenTask(
+            name="PostgreSQL task",
+            desired_state="enabled",
+            listen_mode="original",
+            effective_from=boundary - timedelta(hours=1),
+            subscriptions=[AIListenTaskSubscription(monitored_user_id=user_id)],
+            skills=[AIListenTaskSkill(skill_id=1, priority=1)],
+        )
+        session.add(task)
+        tweet_id = tweet.id
+
+    # skill-worker reads task selection through another database connection.
+    async with database() as session, session.begin():
+        tweet = await session.get(Tweet, tweet_id)
         assert await enqueue_auto_jobs(session, [tweet.id, tweet.id]) == 1
         assert await enqueue_auto_jobs(session, [tweet.id]) == 0
         job = await session.scalar(select(AIGenerationJob))
         assert job.skill_snapshot[0]["instructions"] == "保留用户修改 🐘"
         assert job.manual is False
 
-    # Verify FK actions against the real engine, bypassing ORM relationship cascades.
+    # Remove the task subscription before testing the tweet -> job cascade;
+    # generation history intentionally prevents deleting the task itself.
     async with database() as session, session.begin():
+        await session.execute(delete(AIListenTaskSubscription))
         await session.execute(delete(MonitoredUser).where(MonitoredUser.id == user_id))
         assert await session.scalar(select(func.count(Tweet.id))) == 0
 

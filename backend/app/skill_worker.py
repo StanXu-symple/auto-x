@@ -1,4 +1,4 @@
-"""Skill management, bindings and resolution behind an authenticated HTTP boundary."""
+"""Skill management, task selections and resolution behind an authenticated HTTP boundary."""
 
 import asyncio
 import logging
@@ -22,11 +22,9 @@ from app.control_plane.security import ServiceVerifier
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import AsyncSessionFactory, engine
-from app.models.ai import AIFeature, AIGenerationJob, AIListenTaskSkill
+from app.models.ai import AIGenerationJob, AIListenTaskSkill
 from app.schemas.ai import AISkillOut
 from app.schemas.skill_service import (
-    SkillContextRequest,
-    SkillResolution,
     SkillResolveRequest,
     TaskSkillSelection,
 )
@@ -107,21 +105,6 @@ internal = APIRouter(prefix="/v1", dependencies=[Depends(require_reader)])
 @internal.post("/skills/resolve", response_model=list[AISkillOut])
 async def resolve(payload: SkillResolveRequest, db: DbSession):
     return await store.resolve_active_skills(db, payload.skill_ids)
-
-
-@internal.post("/skills/context", response_model=SkillResolution)
-async def resolve_context(payload: SkillContextRequest, db: DbSession):
-    feature = await db.get(AIFeature, payload.feature_id)
-    if feature is None:
-        raise APIError(404, "ai_feature_not_found", "AI 功能点不存在")
-    skills, source = await store.resolve_context_skills(
-        db,
-        feature=feature,
-        monitored_user_id=payload.monitored_user_id,
-        fallback_skill_ids=payload.fallback_skill_ids,
-        override_skill_ids=payload.override_skill_ids,
-    )
-    return SkillResolution(skills=[AISkillOut.model_validate(s) for s in skills], source=source)
 
 
 @internal.get("/tasks/{task_id}/skills", response_model=TaskSkillSelection)

@@ -99,18 +99,9 @@ def _event(
     )
 
 
-async def _activate(db: AsyncSession, task: AIListenTask, *, switch_from_legacy: bool) -> None:
+async def _activate(db: AsyncSession, task: AIListenTask) -> None:
     # The worker uses the same lock order: setting, task, then jobs.
-    setting = await get_ai_setting(db, for_update=True)
-    if setting.auto_trigger_mode == "legacy_all":
-        if not switch_from_legacy:
-            raise APIError(
-                409,
-                "legacy_mode_switch_required",
-                "启用监听任务将停止旧模式对全部新推文自动生成，请确认切换",
-                {"legacy_enabled": setting.enabled and setting.auto_generate},
-            )
-        setting.auto_trigger_mode = "listening_tasks"
+    await get_ai_setting(db, for_update=True)
     now = datetime.now(UTC)
     first_activation = task.activated_at is None
     if first_activation:
@@ -144,7 +135,7 @@ async def _create_task(
 ) -> AIListenTask:
     # Lock before selection validation and FK writes; Skill mutations take this
     # singleton lock first as well.
-    setting = await get_ai_setting(db, for_update=True)
+    await get_ai_setting(db, for_update=True)
     users, skills = await validate_selection(
         db,
         all_monitored_users=payload.all_monitored_users,
@@ -158,15 +149,6 @@ async def _create_task(
         bot_id=payload.qq_bot_id,
         group_openids=payload.qq_group_openids,
     )
-    if payload.desired_state == "enabled" and setting.auto_trigger_mode == "legacy_all":
-        if not payload.switch_from_legacy:
-            raise APIError(
-                409,
-                "legacy_mode_switch_required",
-                "启用监听任务将停止旧模式对全部新推文自动生成，请确认切换",
-                {"legacy_enabled": setting.enabled and setting.auto_generate},
-            )
-        setting.auto_trigger_mode = "listening_tasks"
     now = datetime.now(UTC)
     task = AIListenTask(
         name=payload.name,
@@ -198,7 +180,7 @@ async def _create_task(
     await db.flush()
     db.add(_event(task, "created", "监听任务已创建", copied_from=copied_from))
     if payload.desired_state == "enabled":
-        await _activate(db, task, switch_from_legacy=True)
+        await _activate(db, task)
     return task
 
 
@@ -405,7 +387,6 @@ async def resume_listen_task(
     db: DbSession,
     redis: RedisClient,
     admin: CurrentAdmin,
-    switch_from_legacy: bool = False,
 ) -> AIListenTaskOut:
     await get_ai_setting(db, for_update=True)
     task = await get_task(db, task_id, for_update=True)
@@ -413,7 +394,7 @@ async def resume_listen_task(
     if task.desired_state == "archived":
         raise APIError(409, "ai_listen_task_archived", "已归档任务不能恢复")
     if task.desired_state != "enabled":
-        await _activate(db, task, switch_from_legacy=switch_from_legacy)
+        await _activate(db, task)
         task.updated_at = datetime.now(UTC)
         await db.commit()
     return await _out(db, redis, task)

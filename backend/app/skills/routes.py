@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Query, status
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentAdmin, DbSession, RedisClient
@@ -17,10 +17,8 @@ from app.models.ai import (
     AIListenTaskSkill,
     AISetting,
     AISkill,
-    AIUserSkillBinding,
 )
 from app.models.ai_data_source import AIDataSource
-from app.models.monitored_user import MonitoredUser
 from app.schemas.ai import (
     AIFeatureOut,
     AISettingsOut,
@@ -28,17 +26,11 @@ from app.schemas.ai import (
     AISkillCreate,
     AISkillOut,
     AISkillPatch,
-    AIUserSkillBindingOut,
-    AIUserSkillBindingReplace,
 )
 from app.schemas.common import MessageResponse, Page
 from app.schemas.skill_import import GitHubSkillImport, GitHubSkillImportResult
-from app.services.ai_jobs import (
-    get_ai_feature,
-    get_ai_setting,
-)
+from app.services.ai_jobs import get_ai_setting
 from app.skills import packages
-from app.skills.store import resolve_active_skills, resolve_context_skills
 
 router = APIRouter(prefix="/ai", tags=["AI Creation"])
 AI_HEARTBEAT_KEY = "xsentinel:ai-worker:heartbeat"
@@ -91,7 +83,6 @@ async def _settings_out(setting: AISetting, redis: RedisClient) -> AISettingsOut
     return AISettingsOut(
         enabled=setting.enabled,
         auto_generate=setting.auto_generate,
-        auto_trigger_mode=setting.auto_trigger_mode,
         provider=setting.provider,
         model=setting.model_name,
         base_url=setting.base_url,
@@ -103,7 +94,6 @@ async def _settings_out(setting: AISetting, redis: RedisClient) -> AISettingsOut
         max_output_tokens=setting.max_output_tokens,
         request_timeout_seconds=setting.request_timeout_seconds,
         reasoning_effort=setting.reasoning_effort,
-        default_skill_ids=setting.default_skill_ids or [],
         updated_at=setting.updated_at,
         **readiness,
     )
@@ -131,24 +121,6 @@ async def patch_ai_settings(
             "模型、地址和 API Key 请在 AI 数据源菜单统一管理",
         )
     setting = await get_ai_setting(db, for_update=True)
-    if changes.get("auto_trigger_mode") == "legacy_all":
-        enabled_tasks = int(
-            await db.scalar(
-                select(func.count(AIListenTask.id)).where(AIListenTask.desired_state == "enabled")
-            )
-            or 0
-        )
-        if enabled_tasks:
-            raise APIError(409, "enabled_listen_tasks_exist", "请先暂停所有已启用的监听任务")
-    if "default_skill_ids" in changes:
-        requested = changes["default_skill_ids"]
-        skills = await resolve_active_skills(db, requested)
-        if [skill.id for skill in skills] != requested:
-            raise APIError(
-                422,
-                "invalid_skill_ids",
-                "All default skills must exist and be active",
-            )
     mapping = {"model": "model_name"}
     for key, value in changes.items():
         setattr(setting, mapping.get(key, key), value)
@@ -334,7 +306,7 @@ async def get_ai_skill(skill_id: int, db: DbSession, _: CurrentAdmin) -> AISkill
 async def patch_ai_skill(
     skill_id: int, payload: AISkillPatch, db: DbSession, _: CurrentAdmin
 ) -> AISkillOut:
-    setting = await get_ai_setting(db, for_update=True)
+    await get_ai_setting(db, for_update=True)
     skill = await db.get(AISkill, skill_id, with_for_update=True)
     if skill is None:
         raise APIError(404, "skill_not_found", "AI skill was not found")
@@ -348,14 +320,6 @@ async def patch_ai_skill(
         setattr(skill, key, value)
     skill.version += 1
     if payload.is_active is False:
-        setting.default_skill_ids = [
-            selected for selected in (setting.default_skill_ids or []) if selected != skill_id
-        ]
-        await db.execute(
-            update(AIUserSkillBinding)
-            .where(AIUserSkillBinding.skill_id == skill_id)
-            .values(is_active=False)
-        )
         await db.execute(
             update(AIListenTask)
             .where(
@@ -376,20 +340,12 @@ async def patch_ai_skill(
 
 @router.delete("/skills/{skill_id}", response_model=MessageResponse)
 async def delete_ai_skill(skill_id: int, db: DbSession, _: CurrentAdmin) -> MessageResponse:
-    setting = await get_ai_setting(db, for_update=True)
+    await get_ai_setting(db, for_update=True)
     skill = await db.get(AISkill, skill_id, with_for_update=True)
     if skill is None:
         raise APIError(404, "skill_not_found", "AI skill was not found")
     skill.is_active = False
     skill.version += 1
-    setting.default_skill_ids = [
-        selected for selected in (setting.default_skill_ids or []) if selected != skill_id
-    ]
-    await db.execute(
-        update(AIUserSkillBinding)
-        .where(AIUserSkillBinding.skill_id == skill_id)
-        .values(is_active=False)
-    )
     await db.execute(
         update(AIListenTask)
         .where(
@@ -411,86 +367,3 @@ async def list_ai_features(db: DbSession, _: CurrentAdmin) -> list[AIFeatureOut]
         )
     )
     return [AIFeatureOut.model_validate(feature) for feature in features]
-
-
-async def _binding_out(
-    db: DbSession, user: MonitoredUser, feature: AIFeature
-) -> AIUserSkillBindingOut:
-    setting = await get_ai_setting(db)
-    skills, source = await resolve_context_skills(
-        db,
-        monitored_user_id=user.id,
-        feature=feature,
-        fallback_skill_ids=setting.default_skill_ids or [],
-    )
-    return AIUserSkillBindingOut(
-        monitored_user_id=user.id,
-        username=user.username,
-        feature=AIFeatureOut.model_validate(feature),
-        skill_ids=[skill.id for skill in skills],
-        skills=[_skill_out(skill) for skill in skills],
-        resolution_source=source,
-    )
-
-
-@router.get(
-    "/users/{user_id}/skill-bindings/{feature_code}",
-    response_model=AIUserSkillBindingOut,
-)
-async def read_user_skill_binding(
-    user_id: int, feature_code: str, db: DbSession, _: CurrentAdmin
-) -> AIUserSkillBindingOut:
-    await get_ai_setting(db, for_update=True)
-    user = await db.get(MonitoredUser, user_id)
-    if user is None:
-        raise APIError(404, "monitored_user_not_found", "监听用户不存在")
-    try:
-        feature = await get_ai_feature(db, feature_code)
-    except ValueError:
-        raise APIError(404, "ai_feature_not_found", "AI 功能点不存在") from None
-    return await _binding_out(db, user, feature)
-
-
-@router.put(
-    "/users/{user_id}/skill-bindings/{feature_code}",
-    response_model=AIUserSkillBindingOut,
-)
-async def replace_user_skill_binding(
-    user_id: int,
-    feature_code: str,
-    payload: AIUserSkillBindingReplace,
-    db: DbSession,
-    _: CurrentAdmin,
-) -> AIUserSkillBindingOut:
-    await get_ai_setting(db, for_update=True)
-    user = await db.get(MonitoredUser, user_id)
-    if user is None:
-        raise APIError(404, "monitored_user_not_found", "监听用户不存在")
-    try:
-        feature = await get_ai_feature(db, feature_code)
-    except ValueError:
-        raise APIError(404, "ai_feature_not_found", "AI 功能点不存在") from None
-    skills = await resolve_active_skills(db, payload.skill_ids)
-    if [skill.id for skill in skills] != payload.skill_ids:
-        raise APIError(422, "invalid_skill_ids", "所有 Skill 必须存在且已启用")
-    await db.execute(
-        delete(AIUserSkillBinding).where(
-            AIUserSkillBinding.monitored_user_id == user.id,
-            AIUserSkillBinding.ai_feature_id == feature.id,
-        )
-    )
-    now = datetime.now(UTC)
-    for priority, skill in enumerate(skills, start=1):
-        db.add(
-            AIUserSkillBinding(
-                monitored_user_id=user.id,
-                ai_feature_id=feature.id,
-                skill_id=skill.id,
-                priority=priority,
-                is_active=True,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-    await db.commit()
-    return await _binding_out(db, user, feature)

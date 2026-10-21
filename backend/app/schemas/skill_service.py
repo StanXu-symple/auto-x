@@ -1,7 +1,5 @@
 """Versioned HTTP contracts shared by Skill consumers and skill-worker."""
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.ai import AISkillOut
@@ -11,20 +9,6 @@ class SkillResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     skill_ids: list[int] = Field(default_factory=list, max_length=1000)
-
-
-class SkillContextRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    monitored_user_id: int = Field(gt=0)
-    feature_id: int = Field(gt=0)
-    fallback_skill_ids: list[int] = Field(default_factory=list, max_length=1000)
-    override_skill_ids: list[int] | None = Field(default=None, max_length=1000)
-
-
-class SkillResolution(BaseModel):
-    skills: list[AISkillOut]
-    source: Literal["manual_override", "user_feature_binding", "global_default"]
 
 
 class TaskSkillSelection(BaseModel):

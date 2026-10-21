@@ -22,11 +22,8 @@ from app.models.ai import (
 from app.models.monitored_user import MonitoredUser
 from app.models.tweet import Tweet
 from app.schemas.ai import AISkillOut
-from app.services.ai_defaults import DEFAULT_AI_FEATURE_CODE, DEFAULT_AI_MODEL
-from app.services.skill_client import (
-    resolve_context_skills,
-    resolve_task_skills,
-)
+from app.services.ai_defaults import DEFAULT_AI_MODEL
+from app.services.skill_client import resolve_task_skills
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +39,6 @@ async def get_ai_setting(session: AsyncSession, *, for_update: bool = False) -> 
         id=1,
         enabled=False,
         auto_generate=True,
-        auto_trigger_mode="listening_tasks",
         provider="openai_responses",
         model_name=DEFAULT_AI_MODEL,
         base_url="https://api.openai.com/v1",
@@ -51,7 +47,6 @@ async def get_ai_setting(session: AsyncSession, *, for_update: bool = False) -> 
         language="zh-CN",
         tone="专业自然",
         reasoning_effort="medium",
-        default_skill_ids=[],
         max_attempts=3,
         max_output_tokens=2500,
         request_timeout_seconds=60,
@@ -177,81 +172,8 @@ def _request_snapshot(
 
 
 async def enqueue_auto_jobs(session: AsyncSession, tweet_ids: list[int]) -> int:
-    """Route newly persisted tweets to exactly one automatic trigger mode.
-
-    The singleton settings lock serializes this decision with mode changes. Polling
-    calls this inside the same transaction that inserts the source tweets.
-    """
-    if not tweet_ids:
-        return 0
-    setting = await get_ai_setting(session, for_update=True)
-    if not setting.enabled or not setting.auto_generate:
-        return 0
-    if setting.auto_trigger_mode == "listening_tasks":
-        return await enqueue_listening_jobs(session, tweet_ids, setting=setting)
-    if setting.auto_trigger_mode != "legacy_all":
-        logger.error("Unknown AI auto trigger mode", extra={"mode": setting.auto_trigger_mode})
-        return 0
-    feature = await get_ai_feature(session, DEFAULT_AI_FEATURE_CODE)
-    unique_tweet_ids = sorted(set(tweet_ids))
-    tweets = list(await session.scalars(select(Tweet).where(Tweet.id.in_(unique_tweet_ids))))
-    tweets_by_id = {tweet.id: tweet for tweet in tweets}
-    unique_tweet_ids = [tweet_id for tweet_id in unique_tweet_ids if tweet_id in tweets_by_id]
-    if not unique_tweet_ids:
-        return 0
-    now = datetime.now(UTC)
-    values = []
-    for tweet_id in unique_tweet_ids:
-        if tweet_id not in tweets_by_id:
-            continue
-        tweet = tweets_by_id[tweet_id]
-        skills, resolution = await resolve_context_skills(
-            session,
-            monitored_user_id=tweet.monitored_user_id,
-            feature=feature,
-            fallback_skill_ids=setting.default_skill_ids or [],
-        )
-        skill_ids = [skill.id for skill in skills]
-        author_context = await build_author_context(
-            session,
-            monitored_user_id=tweet.monitored_user_id,
-            source_tweet_id=tweet.id,
-        )
-        values.append({
-            "source_tweet_id": tweet_id,
-            "feature_code": feature.code,
-            "skill_id": skill_ids[0] if skill_ids else None,
-            "skill_ids": skill_ids,
-            "skill_snapshot": [_skill_snapshot(skill) for skill in skills],
-            "idempotency_key": f"auto:{tweet_id}",
-            "status": "queued",
-            "provider": setting.provider,
-            "model": setting.model_name,
-            "attempts": 0,
-            "max_attempts": setting.max_attempts,
-            "next_attempt_at": now,
-            "manual": False,
-            "trigger_type": "legacy_auto",
-            "request_snapshot": _request_snapshot(
-                setting,
-                skills,
-                tweet,
-                feature=feature,
-                skill_resolution=resolution,
-                author_context=author_context,
-            ),
-            "source_text_hash": hashlib.sha256(
-                tweet.text.encode("utf-8")
-            ).hexdigest(),
-            "created_at": now,
-            "updated_at": now,
-        })
-    if not values:
-        return 0
-    statement = postgres_insert(AIGenerationJob).values(values)
-    statement = statement.on_conflict_do_nothing(index_elements=[AIGenerationJob.idempotency_key])
-    inserted = await session.scalars(statement.returning(AIGenerationJob.id))
-    return len(list(inserted))
+    """Queue newly persisted tweets only through enabled listening tasks."""
+    return await enqueue_listening_jobs(session, tweet_ids)
 
 
 async def enqueue_listening_jobs(
@@ -272,11 +194,7 @@ async def enqueue_listening_jobs(
         return 0
     if setting is None:
         setting = await get_ai_setting(session, for_update=True)
-    if (
-        not setting.enabled
-        or not setting.auto_generate
-        or setting.auto_trigger_mode != "listening_tasks"
-    ):
+    if not setting.enabled or not setting.auto_generate:
         return 0
     unique_ids = sorted(set(tweet_ids))
     tweets = list(await session.scalars(select(Tweet).where(Tweet.id.in_(unique_ids))))

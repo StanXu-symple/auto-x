@@ -583,7 +583,6 @@ export interface AiDataSourceTestResult {
 export interface AiSettings {
   enabled: boolean
   auto_generate: boolean
-  auto_trigger_mode?: 'legacy_all' | 'listening_tasks' | string
   provider: AiProvider
   model: string
   base_url: string
@@ -597,7 +596,6 @@ export interface AiSettings {
   language: string
   tone: string
   reasoning_effort: AiReasoningEffort
-  default_skill_ids: EntityId[]
   max_attempts: number
   max_output_tokens: number
   request_timeout_seconds: number
@@ -611,7 +609,6 @@ export interface UpdateAiSettingsPayload {
   language: string
   tone: string
   reasoning_effort: AiReasoningEffort
-  default_skill_ids: EntityId[]
   max_attempts: number
   max_output_tokens: number
   request_timeout_seconds: number
@@ -681,15 +678,6 @@ export interface AiFeature {
   description?: string | null
   base_prompt: string
   is_active: boolean
-}
-
-export interface AiUserSkillBinding {
-  monitored_user_id: EntityId
-  username: string
-  feature: AiFeature
-  skill_ids: EntityId[]
-  skills: AiSkill[]
-  resolution_source: 'user_feature_binding' | 'global_default' | 'manual_override' | string
 }
 
 export interface AiUserProfile {
@@ -820,12 +808,11 @@ export interface AiListenTaskPayload {
   language_override?: string | null
   tone_override?: string | null
   max_output_tokens_override?: number | null
-  switch_from_legacy?: boolean
 }
 
 export type AiListenTaskPatch = Omit<
   AiListenTaskPayload,
-  'desired_state' | 'initial_sync_days' | 'switch_from_legacy'
+  'desired_state' | 'initial_sync_days'
 > & { config_version: number }
 
 export interface AiListenTaskStats {
@@ -952,7 +939,7 @@ export interface AiGenerationAttempt {
 }
 
 export interface GenerateTweetPayload {
-  skill_ids?: EntityId[]
+  skill_ids: EntityId[]
   feature_code?: string
   idempotency_key?: string
 }

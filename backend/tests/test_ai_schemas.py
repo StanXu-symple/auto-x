@@ -7,30 +7,30 @@ from app.models.ai import AISetting
 from app.schemas.ai import AIDraftPatch, AISettingsPatch, AISkillPatch, ManualGenerateRequest
 
 
-def test_ai_settings_patch_is_partial_and_supports_multi_skill() -> None:
+def test_ai_settings_patch_is_partial() -> None:
     patch = AISettingsPatch(
         model="gpt-5.6-terra",
         reasoning_effort="max",
-        default_skill_ids=[3, 1],
     )
     assert patch.model_dump(exclude_unset=True) == {
         "model": "gpt-5.6-terra",
         "reasoning_effort": "max",
-        "default_skill_ids": [3, 1],
     }
 
 
-@pytest.mark.parametrize("field", ["enabled", "provider", "base_url", "default_skill_ids"])
+@pytest.mark.parametrize("field", ["enabled", "provider", "base_url"])
 def test_ai_settings_reject_explicit_null(field: str) -> None:
     with pytest.raises(ValidationError):
         AISettingsPatch(**{field: None})
 
 
-def test_ai_settings_reject_url_credentials_and_duplicate_skills() -> None:
+def test_ai_settings_reject_url_credentials_and_removed_settings() -> None:
     with pytest.raises(ValidationError):
         AISettingsPatch(base_url="https://token@example.com/v1")
     with pytest.raises(ValidationError):
-        AISettingsPatch(default_skill_ids=[1, 1])
+        AISettingsPatch(default_skill_ids=[1])
+    with pytest.raises(ValidationError):
+        AISettingsPatch(auto_trigger_mode="legacy_all")
 
 
 def test_skill_patch_requires_a_change_and_tracks_nullable_fields() -> None:
@@ -44,9 +44,9 @@ def test_skill_patch_requires_a_change_and_tracks_nullable_fields() -> None:
 
 
 def test_manual_generation_idempotency_key_is_strict_ascii() -> None:
-    assert ManualGenerateRequest(idempotency_key="request-1234").idempotency_key
+    assert ManualGenerateRequest(skill_ids=[1], idempotency_key="request-1234").idempotency_key
     with pytest.raises(ValidationError):
-        ManualGenerateRequest(idempotency_key="包含中文")
+        ManualGenerateRequest(skill_ids=[1], idempotency_key="包含中文")
 
 
 def test_draft_update_requires_revision_and_content_change() -> None:
@@ -67,7 +67,6 @@ def test_settings_api_rejects_non_allowlisted_provider_host() -> None:
         language="zh-CN",
         tone="专业自然",
         reasoning_effort="medium",
-        default_skill_ids=[],
         max_attempts=3,
         max_output_tokens=1000,
         request_timeout_seconds=30,

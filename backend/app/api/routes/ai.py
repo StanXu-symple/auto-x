@@ -41,7 +41,6 @@ from app.services.ai_jobs import (
     create_manual_job,
     get_ai_feature,
     get_ai_setting,
-    resolve_context_skills,
 )
 from app.services.ai_publish import retry_failed_dispatch
 from app.services.ai_publish_read import dispatches_by_job
@@ -50,6 +49,7 @@ from app.services.article_media import (
     clear_unreferenced_article_images,
     preserve_article_media_metadata,
 )
+from app.services.skill_client import resolve_active_skills
 
 router = APIRouter(prefix="/ai", tags=["AI Creation"])
 
@@ -513,19 +513,13 @@ async def generate_from_tweet(
     tweet = await db.scalar(select(Tweet).where(Tweet.tweet_id == tweet_id))
     if tweet is None:
         raise APIError(404, "tweet_not_found", "Tweet was not found")
-    setting = await get_ai_setting(db, for_update=True)
+    await get_ai_setting(db, for_update=True)
     try:
         feature = await get_ai_feature(db, payload.feature_code)
     except ValueError:
         raise APIError(404, "ai_feature_not_found", "AI 功能点不存在") from None
-    skills, resolution = await resolve_context_skills(
-        db,
-        monitored_user_id=tweet.monitored_user_id,
-        feature=feature,
-        fallback_skill_ids=setting.default_skill_ids or [],
-        override_skill_ids=payload.skill_ids,
-    )
-    if payload.skill_ids is not None and [skill.id for skill in skills] != payload.skill_ids:
+    skills = await resolve_active_skills(db, payload.skill_ids)
+    if [skill.id for skill in skills] != payload.skill_ids:
         raise APIError(422, "invalid_skill_ids", "All selected skills must exist and be active")
     try:
         job, _created = await create_manual_job(
@@ -533,7 +527,7 @@ async def generate_from_tweet(
             tweet=tweet,
             feature=feature,
             skills=skills,
-            skill_resolution=resolution,
+            skill_resolution="manual_override",
             idempotency_key=payload.idempotency_key,
         )
         await db.commit()

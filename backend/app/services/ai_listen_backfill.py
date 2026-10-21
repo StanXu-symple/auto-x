@@ -37,11 +37,7 @@ async def process_pending_backfills(db: AsyncSession, batch_size: int = 100) -> 
         raise ValueError("batch_size must be in [1, 1000]")
     # Keep the claim lock order consistent with the AI worker and task APIs.
     setting = await get_ai_setting(db, for_update=True)
-    if (
-        not setting.enabled
-        or not setting.auto_generate
-        or setting.auto_trigger_mode != "listening_tasks"
-    ):
+    if not setting.enabled or not setting.auto_generate:
         return 0
     candidates = (
         await db.execute(

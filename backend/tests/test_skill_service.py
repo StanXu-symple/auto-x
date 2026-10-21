@@ -18,7 +18,7 @@ from app.control_plane.security import ServiceVerifier
 from app.core.config import Settings
 from app.db.base import Base
 from app.main import app as backend
-from app.models.ai import AIFeature, AIGenerationJob, AIListenTask, AISetting
+from app.models.ai import AIFeature, AIGenerationJob, AIListenTask
 from app.models.ai_data_source import AIDataSource
 from app.models.service_auth import ServiceAuthSession
 from app.models.tweet import Tweet
@@ -55,6 +55,8 @@ async def cluster(database, monkeypatch):  # noqa: F811
                             "service_auth_revocations",
                             "ai_user_profiles",
                             "ai_generation_attempts",
+                            "ai_drafts",
+                            "ai_publish_dispatches",
                         )
                     ],
                 )
@@ -121,45 +123,35 @@ async def cluster(database, monkeypatch):  # noqa: F811
     await auth_http.aclose()
 
 
-async def test_http_crud_binding_priority_order_and_explicit_empty(cluster):
+async def test_http_crud_and_explicit_skill_order(cluster):
     api = cluster.api
     created = await api.post("/api/v1/ai/skills", json={"name": "第二个", "instructions": "v1"})
     assert created.status_code == 201, created.text
     second = created.json()["id"]
-    patched = await api.patch(
-        "/api/v1/ai/settings", json={"enabled": False, "default_skill_ids": [1]}
-    )
-    assert patched.status_code == 200, patched.text
-    context = dict(
-        monitored_user_id=1, feature_id=1, fallback_skill_ids=[1], override_skill_ids=None
-    )
-    resolved = await cluster.client.context(**context)
-    assert resolved.source == "global_default"
-    assert [s.id for s in resolved.skills] == [1]
-    binding = await api.put(
-        "/api/v1/ai/users/1/skill-bindings/article_generation", json={"skill_ids": [second, 1]}
-    )
-    assert binding.status_code == 200, binding.text
-    assert binding.json()["skill_ids"] == [second, 1]
-    resolved = await cluster.client.context(**context)
-    assert resolved.source == "user_feature_binding"
-    assert [s.id for s in resolved.skills] == [second, 1]
-    resolved = await cluster.client.context(**{**context, "override_skill_ids": []})
-    assert resolved.source == "manual_override" and resolved.skills == []
-    resolved = await cluster.client.context(**{**context, "override_skill_ids": [1, second]})
-    assert [s.id for s in resolved.skills] == [1, second]
+    assert [s.id for s in await cluster.client.resolve([second, 1])] == [second, 1]
+    assert [s.id for s in await cluster.client.resolve([1, second])] == [1, second]
     changed = await api.patch(f"/api/v1/ai/skills/{second}", json={"instructions": "v2"})
     assert changed.json()["version"] == 2
     assert (await api.delete(f"/api/v1/ai/skills/{second}")).status_code == 200
     result = await api.get("/api/v1/ai/skills", params={"active": "false", "page_size": 1})
     assert result.status_code == 200 and result.json()["total"] == 1
     assert result.json()["items"][0]["id"] == second
-    assert [s.id for s in (await cluster.client.context(**context)).skills] == [1]
-    invalid = await api.put(
-        "/api/v1/ai/users/1/skill-bindings/article_generation", json={"skill_ids": [second]}
-    )
-    assert invalid.status_code == 422 and invalid.json()["error"]["code"] == "invalid_skill_ids"
+    assert [s.id for s in await cluster.client.resolve([second, 1])] == [1]
     cluster.client.nacos.discover.assert_awaited_with("xsentinel-skill-worker")
+
+
+async def test_account_binding_and_implicit_selection_endpoints_are_removed(cluster):
+    path = "/api/v1/ai/users/1/skill-bindings/article_generation"
+    assert (await cluster.api.get(path)).status_code == 404
+    assert (await cluster.api.put(path, json={"skill_ids": [1]})).status_code == 404
+    response = await cluster.remote.post(
+        "/v1/skills/context",
+        headers={"Authorization": f"Bearer {cluster.reader_token}"},
+        json={"monitored_user_id": 1, "feature_id": 1, "fallback_skill_ids": [1]},
+    )
+    assert response.status_code == 404
+    for payload in ({"default_skill_ids": [1]}, {"auto_trigger_mode": "legacy_all"}):
+        assert (await cluster.api.patch("/api/v1/ai/settings", json=payload)).status_code == 422
 
 
 async def test_http_task_switch_snapshot_and_deactivation_are_atomic(cluster):
@@ -231,16 +223,10 @@ async def test_http_task_switch_snapshot_and_deactivation_are_atomic(cluster):
     assert (
         await api.patch(f"/api/v1/ai/skills/{second}", json={"instructions": "修改后的指令"})
     ).status_code == 200
-    assert (
-        await api.patch(
-            "/api/v1/ai/settings", json={"enabled": False, "default_skill_ids": [second, 1]}
-        )
-    ).status_code == 200
     assert (await api.delete(f"/api/v1/ai/skills/{second}")).status_code == 200
     async with cluster.factory() as db:
         assert (await db.get(AIGenerationJob, job_id)).skill_snapshot == frozen
         assert frozen[0]["instructions"] == "新指令"
-        assert (await db.get(AISetting, 1)).default_skill_ids == [1]
         assert (await db.get(AIListenTask, task["id"])).queue_hold_reason == "skill_invalidated"
     assert not (await cluster.client.task(task["id"])).valid
 
@@ -386,7 +372,6 @@ async def test_outage_rolls_back_enqueue_and_leaves_claim_attempts_untouched(clu
             "desired_state": "enabled",
             "monitored_user_ids": [1],
             "skill_ids": [1],
-            "switch_from_legacy": True,
         },
     )
     assert response.status_code == 201, response.text
@@ -454,3 +439,181 @@ async def test_outage_rolls_back_enqueue_and_leaves_claim_attempts_untouched(clu
         assert job.status == "queued" and job.attempts == 0
         assert job.lifetime_attempts == 0 and job.claim_token is None
         assert (await db.get(AIListenTask, task_id)).queue_hold_reason is None
+
+
+async def _add_generation_source(cluster, tweet_id: int):
+    async with cluster.factory() as db:
+        if await db.get(AIDataSource, 1) is None:
+            db.add(
+                AIDataSource(
+                    id=1,
+                    base_url="https://example.test",
+                    model_name="test",
+                    encrypted_api_key="test",
+                    key_hint="test",
+                    key_fingerprint="test",
+                )
+            )
+        db.add(
+            Tweet(
+                id=tweet_id,
+                tweet_id=f"source-{tweet_id}",
+                monitored_user_id=1,
+                author_id="a",
+                text=f"source {tweet_id}",
+                tweet_type="original",
+                posted_at=datetime.now(UTC),
+                raw_payload={},
+            )
+        )
+        await db.commit()
+
+
+async def test_same_account_tasks_keep_independent_skills_and_frozen_jobs(cluster, monkeypatch):
+    from app.ai_worker import AIGenerationWorker
+    from app.services.ai_jobs import enqueue_auto_jobs
+
+    api = cluster.api
+    second = (
+        await api.post(
+            "/api/v1/ai/skills", json={"name": "第二任务写作", "instructions": "第二任务指令"}
+        )
+    ).json()["id"]
+    third = (
+        await api.post(
+            "/api/v1/ai/skills", json={"name": "第一任务新版", "instructions": "新版指令"}
+        )
+    ).json()["id"]
+    tasks = []
+    for name, ids in [("任务 A", [1]), ("任务 B", [second])]:
+        response = await api.post(
+            "/api/v1/ai/listen-tasks",
+            json={
+                "name": name,
+                "monitored_user_ids": [1],
+                "skill_ids": ids,
+            },
+        )
+        assert response.status_code == 201, response.text
+        tasks.append(response.json())
+    await _add_generation_source(cluster, 201)
+    async with cluster.factory() as db:
+        assert await enqueue_auto_jobs(db, [201, 201]) == 2
+        await db.commit()
+        assert await enqueue_auto_jobs(db, [201]) == 0
+        jobs = list(await db.scalars(select(AIGenerationJob).order_by(AIGenerationJob.id)))
+        assert [j.listen_task_id for j in jobs] == [t["id"] for t in tasks]
+        assert [j.skill_ids for j in jobs] == [[1], [second]]
+        assert [j.skill_snapshot[0]["instructions"] for j in jobs] == [
+            "原始指令",
+            "第二任务指令",
+        ]
+        assert all(j.request_snapshot["skill_resolution"] == "listening_task" for j in jobs)
+        assert len({j.idempotency_key for j in jobs}) == 2
+        first_job_id, first_snapshot = jobs[0].id, jobs[0].skill_snapshot
+
+    changed = await api.patch(
+        f"/api/v1/ai/listen-tasks/{tasks[0]['id']}",
+        json={
+            "config_version": tasks[0]["config_version"],
+            "skill_ids": [third, 1],
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert (await cluster.client.task(tasks[0]["id"])).selected_ids == [third, 1]
+    assert (await cluster.client.task(tasks[1]["id"])).selected_ids == [second]
+    await _add_generation_source(cluster, 202)
+    async with cluster.factory() as db:
+        assert await enqueue_auto_jobs(db, [202]) == 2
+        await db.commit()
+        new_jobs = list(
+            await db.scalars(
+                select(AIGenerationJob)
+                .where(
+                    AIGenerationJob.source_tweet_id == 202,
+                )
+                .order_by(AIGenerationJob.id)
+            )
+        )
+        assert [j.skill_ids for j in new_jobs] == [[third, 1], [second]]
+        assert [s["instructions"] for s in new_jobs[0].skill_snapshot] == [
+            "新版指令",
+            "原始指令",
+        ]
+        assert (await db.get(AIGenerationJob, first_job_id)).skill_snapshot == first_snapshot
+
+    # ai-worker validates the current task but consumes the job's frozen material.
+    monkeypatch.setattr("app.ai_worker.AsyncSessionFactory", cluster.factory)
+    worker = object.__new__(AIGenerationWorker)
+    worker.settings = cluster.client.settings
+    worker.worker_id = "task-isolation-test"
+    claimed = await worker._claim(first_job_id, "claim-original")
+    assert claimed is not None
+    assert claimed.skill_snapshot == first_snapshot
+    assert claimed.skill_ids == [1]
+
+
+async def test_manual_generation_requires_explicit_valid_skills_and_freezes_selection(cluster):
+    api = cluster.api
+    await _add_generation_source(cluster, 301)
+    second = (
+        await api.post(
+            "/api/v1/ai/skills",
+            json={
+                "name": "手动选择",
+                "instructions": "仅本次使用",
+            },
+        )
+    ).json()["id"]
+    path = "/api/v1/tweets/source-301/generate"
+    for payload in (
+        {},
+        {"skill_ids": None},
+        {"skill_ids": []},
+        {"skill_ids": [1, 1]},
+        {"skill_ids": [999999]},
+    ):
+        response = await api.post(path, json=payload)
+        assert response.status_code == 422, response.text
+    async with cluster.factory() as db:
+        assert list(await db.scalars(select(AIGenerationJob))) == []
+    payload = {"skill_ids": [second, 1], "idempotency_key": "explicit-manual-301"}
+    generated = await api.post(path, json=payload)
+    assert generated.status_code == 202, generated.text
+    job_id = generated.json()["id"]
+    assert (await api.post(path, json=payload)).json()["id"] == job_id
+    async with cluster.factory() as db:
+        job = await db.get(AIGenerationJob, job_id)
+        assert job.listen_task_id is None and job.manual
+        assert job.skill_ids == [second, 1]
+        assert [s["instructions"] for s in job.skill_snapshot] == ["仅本次使用", "原始指令"]
+        assert job.request_snapshot["skill_resolution"] == "manual_override"
+    assert (await api.delete(f"/api/v1/ai/skills/{second}")).status_code == 200
+    assert (await api.post(path, json={"skill_ids": [second]})).status_code == 422
+
+
+async def test_historical_account_binding_snapshot_is_still_claimable(cluster, monkeypatch):
+    from app.ai_worker import AIGenerationWorker
+
+    await _add_generation_source(cluster, 401)
+    response = await cluster.api.post(
+        "/api/v1/tweets/source-401/generate",
+        json={"skill_ids": [1]},
+    )
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+    async with cluster.factory() as db:
+        job = await db.get(AIGenerationJob, job_id)
+        job.manual = False
+        job.trigger_type = "legacy_auto"
+        job.request_snapshot = {**job.request_snapshot, "skill_resolution": "user_feature_binding"}
+        snapshot = job.skill_snapshot
+        await db.commit()
+    monkeypatch.setattr("app.ai_worker.AsyncSessionFactory", cluster.factory)
+    worker = object.__new__(AIGenerationWorker)
+    worker.settings = cluster.client.settings
+    worker.worker_id = "historical-job-test"
+    claimed = await worker._claim(job_id, "claim-historical")
+    assert claimed is not None
+    assert claimed.skill_snapshot == snapshot
+    assert claimed.request_snapshot["skill_resolution"] == "user_feature_binding"

@@ -27,7 +27,6 @@ import type {
   GithubSkillImportPayload,
   GithubSkillImportResult,
   AiUserProfile,
-  AiUserSkillBinding,
   Article,
   ArticlePublishHistory,
   ArticlePublishPayload,
@@ -414,21 +413,6 @@ export const aiApi = {
   async features() {
     return dataOf(await http.get<Wrapped<AiFeature[]>>('/ai/features'))
   },
-  async userSkillBinding(userId: EntityId, featureCode: string) {
-    return dataOf(
-      await http.get<Wrapped<AiUserSkillBinding>>(
-        `/ai/users/${userId}/skill-bindings/${featureCode}`,
-      ),
-    )
-  },
-  async saveUserSkillBinding(userId: EntityId, featureCode: string, skillIds: EntityId[]) {
-    return dataOf(
-      await http.put<Wrapped<AiUserSkillBinding>>(
-        `/ai/users/${userId}/skill-bindings/${featureCode}`,
-        { skill_ids: skillIds },
-      ),
-    )
-  },
   async userProfile(userId: EntityId) {
     return dataOf(await http.get<Wrapped<AiUserProfile>>(`/ai/users/${userId}/profile`))
   },
@@ -459,7 +443,7 @@ export const aiApi = {
   async removeJob(id: EntityId) {
     await http.delete(`/ai/jobs/${id}`)
   },
-  async generateFromTweet(tweetId: EntityId, payload: GenerateTweetPayload = {}) {
+  async generateFromTweet(tweetId: EntityId, payload: GenerateTweetPayload) {
     return dataOf(await http.post<Wrapped<AiJobActionResponse>>(`/tweets/${tweetId}/generate`, payload))
   },
 }
@@ -480,12 +464,8 @@ export const aiListenTasksApi = {
   async pause(id: EntityId) {
     return dataOf(await http.post<Wrapped<AiListenTask>>(`/ai/listen-tasks/${id}/pause`))
   },
-  async resume(id: EntityId, switchFromLegacy = false) {
-    return dataOf(
-      await http.post<Wrapped<AiListenTask>>(`/ai/listen-tasks/${id}/resume`, undefined, {
-        params: { switch_from_legacy: switchFromLegacy },
-      }),
-    )
+  async resume(id: EntityId) {
+    return dataOf(await http.post<Wrapped<AiListenTask>>(`/ai/listen-tasks/${id}/resume`))
   },
   async archive(id: EntityId) {
     return dataOf(await http.post<Wrapped<AiListenTask>>(`/ai/listen-tasks/${id}/archive`))

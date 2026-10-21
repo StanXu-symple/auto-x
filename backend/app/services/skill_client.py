@@ -12,7 +12,7 @@ from app.control_plane.nacos import NacosClient
 from app.control_plane.security import TokenClient
 from app.core.config import Settings
 from app.schemas.ai import AISkillOut
-from app.schemas.skill_service import SkillResolution, TaskSkillSelection
+from app.schemas.skill_service import TaskSkillSelection
 
 
 class SkillServiceUnavailable(APIError):
@@ -118,27 +118,6 @@ class SkillClient:
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             raise SkillServiceUnavailable() from exc
 
-    async def context(self, **payload) -> SkillResolution:
-        response = await self.request("POST", "/v1/skills/context", json=payload)
-        try:
-            response.raise_for_status()
-            result = SkillResolution.model_validate(response.json())
-            override = payload.get("override_skill_ids")
-            if override is not None and result.source != "manual_override":
-                raise ValueError("Unexpected override source")
-            if override is None and result.source == "manual_override":
-                raise ValueError("Unexpected override source")
-            expected_ids = override if override is not None else payload["fallback_skill_ids"]
-            ids = [s.id for s in result.skills]
-            if any(not s.is_active for s in result.skills) or (
-                result.source != "user_feature_binding"
-                and ids != [i for i in expected_ids if i in set(ids)]
-            ):
-                raise ValueError("Unexpected context selection")
-            return result
-        except (httpx.HTTPError, ValueError, TypeError) as exc:
-            raise SkillServiceUnavailable() from exc
-
     async def task(self, task_id: int) -> TaskSkillSelection:
         response = await self.request("GET", f"/v1/tasks/{task_id}/skills")
         try:
@@ -187,23 +166,6 @@ async def skill_client_lifespan(settings: Settings):
 
 async def resolve_active_skills(_session, skill_ids: list[int]) -> list[AISkillOut]:
     return await get_skill_client().resolve(skill_ids)
-
-
-async def resolve_context_skills(
-    _session,
-    *,
-    monitored_user_id,
-    feature,
-    fallback_skill_ids,
-    override_skill_ids=None,
-) -> tuple[list[AISkillOut], str]:
-    result = await get_skill_client().context(
-        monitored_user_id=monitored_user_id,
-        feature_id=feature.id,
-        fallback_skill_ids=fallback_skill_ids,
-        override_skill_ids=override_skill_ids,
-    )
-    return result.skills, result.source
 
 
 async def resolve_task_skills(task_id: int) -> TaskSkillSelection:

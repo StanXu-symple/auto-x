@@ -285,10 +285,8 @@ async def test_http_import_mixed_selection_update_and_frozen_execution(
     assert (
         await cluster.api.patch(f"/api/v1/ai/skills/{skill_id}", json={"instructions": "edit"})
     ).status_code == 409
-    selection = await cluster.client.context(
-        monitored_user_id=1, feature_id=1, fallback_skill_ids=[], override_skill_ids=[skill_id, 1]
-    )
-    assert [s.id for s in selection.skills] == [skill_id, 1]
+    skills = await cluster.client.resolve([skill_id, 1])
+    assert [s.id for s in skills] == [skill_id, 1]
     async with cluster.factory() as db:
         db.add(
             AIDataSource(
@@ -315,8 +313,8 @@ async def test_http_import_mixed_selection_update_and_frozen_execution(
             db,
             tweet=tweet,
             feature=await get_ai_feature(db, "article_generation"),
-            skills=selection.skills,
-            skill_resolution=selection.source,
+            skills=skills,
+            skill_resolution="manual_override",
             idempotency_key="github-job",
         )
         await db.commit()

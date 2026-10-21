@@ -112,7 +112,6 @@ async def seed_runtime_defaults(settings: Settings, *, seed_admin: bool = True) 
             language="zh-CN",
             tone="专业自然",
             reasoning_effort="medium",
-            default_skill_ids=[1],
             max_attempts=3,
             max_output_tokens=2500,
             request_timeout_seconds=60,
