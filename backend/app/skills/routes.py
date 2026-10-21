@@ -20,6 +20,7 @@ from app.models.ai import (
 )
 from app.models.ai_data_source import AIDataSource
 from app.schemas.ai import (
+    AIContentType,
     AIFeatureOut,
     AISettingsOut,
     AISettingsPatch,
@@ -142,8 +143,11 @@ async def list_ai_skills(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
     active: bool | None = None,
+    content_type: AIContentType | None = None,
 ) -> Page[AISkillOut]:
     conditions = [AISkill.is_active == active] if active is not None else []
+    if content_type is not None:
+        conditions.append(AISkill.content_type == content_type)
     total = int(await db.scalar(select(func.count(AISkill.id)).where(*conditions)) or 0)
     skills = list(
         await db.scalars(
@@ -198,7 +202,7 @@ async def update_github_skill(
         skill = await db.get(AISkill, skill_id)
         if skill is None:
             raise APIError(404, "skill_not_found", "AI skill was not found")
-        if skill.source_type != "github":
+        if skill.source_type != "github" or skill.content_type != "skill":
             raise APIError(409, "skill_not_github", "只有 GitHub 来源的 Skill 支持仓库更新")
         metadata = dict(skill.source_metadata or {})
         source_key = skill.source_key
@@ -238,6 +242,8 @@ async def _import_github_skills(
         result = []
         for item in prepared.skills:
             skill = await db.scalar(select(AISkill).where(AISkill.source_key == item.key))
+            if skill is not None:
+                skill.content_type = "skill"
             if (
                 skill is not None
                 and (skill.source_metadata or {}).get("commit") == prepared.commit
@@ -264,6 +270,7 @@ async def _import_github_skills(
             skill.description = item.description or None
             skill.instructions = item.instructions
             skill.source_type = "github"
+            skill.content_type = "skill"
             skill.source_metadata = item.metadata
             await db.flush()
             result.append(skill)
@@ -310,7 +317,7 @@ async def patch_ai_skill(
     skill = await db.get(AISkill, skill_id, with_for_update=True)
     if skill is None:
         raise APIError(404, "skill_not_found", "AI skill was not found")
-    if skill.source_type == "github" and payload.model_fields_set - {"is_active"}:
+    if skill.content_type == "skill" and payload.model_fields_set - {"is_active"}:
         raise APIError(
             409,
             "github_skill_read_only",

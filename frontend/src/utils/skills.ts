@@ -1,4 +1,48 @@
-import type { AiSkill } from '@/types'
+import type { AiContentType, AiSkill, EntityId } from '@/types'
+
+export const skillContentType = (
+  skill: Pick<AiSkill, 'content_type' | 'source_type'>,
+): AiContentType => skill.content_type ?? (skill.source_type === 'github' ? 'skill' : 'prompt')
+
+export const skillTypeLabel = (skill: Pick<AiSkill, 'content_type' | 'source_type'>) =>
+  skillContentType(skill) === 'skill' ? 'Skill' : '提示词'
+
+export function selectionOfType(
+  ids: EntityId[],
+  skills: AiSkill[],
+  type: AiContentType,
+): EntityId[] {
+  const byId = new Map(skills.map((skill) => [String(skill.id), skill]))
+  return ids.filter((id) => {
+    const skill = byId.get(String(id))
+    return skill && skillContentType(skill) === type
+  })
+}
+
+// Two selectors share the existing ordered IDs. Keep interleaved historical
+// selections (including unavailable IDs) and append newly selected entries.
+export function replaceSelectionOfType(
+  ids: EntityId[],
+  skills: AiSkill[],
+  type: AiContentType,
+  selected: EntityId[],
+): EntityId[] {
+  const previous = new Set(selectionOfType(ids, skills, type).map(String))
+  const allowed = new Set(
+    skills.filter((skill) => skillContentType(skill) === type).map((skill) => String(skill.id)),
+  )
+  const next = selected.filter((id) => allowed.has(String(id)))
+  const nextSet = new Set(next.map(String))
+  const result = ids.filter((id) => !previous.has(String(id)) || nextSet.has(String(id)))
+  const present = new Set(result.map(String))
+  for (const id of next) {
+    if (!present.has(String(id))) {
+      result.push(id)
+      present.add(String(id))
+    }
+  }
+  return result
+}
 
 export const skillSourceLabel = (skill: Pick<AiSkill, 'source_type'>) =>
   skill.source_type === 'github' ? 'GitHub' : '自定义'

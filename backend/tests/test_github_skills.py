@@ -280,6 +280,7 @@ async def test_http_import_mixed_selection_update_and_frozen_execution(
     github_skill = imported["skills"][0]
     skill_id = github_skill["id"]
     assert github_skill["source_type"] == "github"
+    assert github_skill["content_type"] == "skill"
     assert (await import_skill(cluster.api))["unchanged"] == 1
     assert len(list((package_root / "bundles").iterdir())) == 1
     assert (
@@ -335,6 +336,7 @@ async def test_http_import_mixed_selection_update_and_frozen_execution(
     assert updated["updated"] == 1
     assert updated["skills"][0]["id"] == skill_id
     assert updated["skills"][0]["version"] == 2
+    assert updated["skills"][0]["content_type"] == "skill"
     assert len(list((package_root / "bundles").iterdir())) == 2
     assert "Original writing rule" in (await cluster.client.job(job_id, frozen))[0]["instructions"]
     monkeypatch.setattr("app.ai_worker.AsyncSessionFactory", cluster.factory)
@@ -364,6 +366,53 @@ async def test_http_import_mixed_selection_update_and_frozen_execution(
     async with cluster.factory() as db:
         job = await db.get(AIGenerationJob, job_id)
         assert job.status == "queued" and job.attempts == 0
+
+
+async def test_type_filters_and_mixed_task_selection_share_the_original_ids(
+    cluster, github_source, package_root
+):
+    api = cluster.api
+    imported = (await import_skill(api))["skills"][0]
+    github_id = imported["id"]
+    prompt_response = await api.post(
+        "/api/v1/ai/skills",
+        json={"name": "Extra prompt", "instructions": "Keep it concise", "content_type": "prompt"},
+    )
+    assert prompt_response.status_code == 201, prompt_response.text
+    prompt_id = prompt_response.json()["id"]
+    for page in (1, 2):
+        response = await api.get(
+            "/api/v1/ai/skills",
+            params={"content_type": "prompt", "active": "true", "page_size": 1, "page": page},
+        )
+        assert response.status_code == 200
+        assert response.json()["total"] == 2
+        assert [item["content_type"] for item in response.json()["items"]] == ["prompt"]
+    response = await api.get("/api/v1/ai/skills", params={"content_type": "skill"})
+    assert response.json()["total"] == 1
+    assert [item["id"] for item in response.json()["items"]] == [github_id]
+    invalid = await api.get("/api/v1/ai/skills", params={"content_type": "invalid"})
+    assert invalid.status_code == 422
+    selection = [prompt_id, github_id, 1]
+    assert [item.id for item in await cluster.client.resolve(selection)] == selection
+    response = await api.post(
+        "/api/v1/ai/listen-tasks",
+        json={"name": "Mixed task", "desired_state": "paused",
+              "monitored_user_ids": [1], "skill_ids": selection},
+    )
+    assert response.status_code == 201, response.text
+    task = response.json()
+    assert task["skill_ids"] == selection
+    assert [item["content_type"] for item in task["skills"]] == ["prompt", "skill", "prompt"]
+    assert (await cluster.client.task(task["id"])).selected_ids == selection
+    response = await api.patch(
+        f"/api/v1/ai/listen-tasks/{task['id']}",
+        json={"config_version": task["config_version"], "skill_ids": [prompt_id]},
+    )
+    assert response.status_code == 200, response.text
+    resolved = await cluster.client.task(task["id"])
+    assert resolved.valid and resolved.selected_ids == [prompt_id]
+    assert resolved.skills[0].instructions == "Keep it concise"
 
 
 @pytest.mark.parametrize("ref,path", [("main", ""), ("release", "skills")])

@@ -127,17 +127,38 @@ async def test_http_crud_and_explicit_skill_order(cluster):
     api = cluster.api
     created = await api.post("/api/v1/ai/skills", json={"name": "第二个", "instructions": "v1"})
     assert created.status_code == 201, created.text
+    assert created.json()["content_type"] == "prompt"
+    assert created.json()["source_type"] == "custom"
     second = created.json()["id"]
     assert [s.id for s in await cluster.client.resolve([second, 1])] == [second, 1]
     assert [s.id for s in await cluster.client.resolve([1, second])] == [1, second]
     changed = await api.patch(f"/api/v1/ai/skills/{second}", json={"instructions": "v2"})
     assert changed.json()["version"] == 2
+    assert changed.json()["content_type"] == "prompt"
     assert (await api.delete(f"/api/v1/ai/skills/{second}")).status_code == 200
     result = await api.get("/api/v1/ai/skills", params={"active": "false", "page_size": 1})
     assert result.status_code == 200 and result.json()["total"] == 1
     assert result.json()["items"][0]["id"] == second
     assert [s.id for s in await cluster.client.resolve([second, 1])] == [1]
     cluster.client.nacos.discover.assert_awaited_with("xsentinel-skill-worker")
+
+
+async def test_manual_crud_cannot_create_or_reclassify_repository_skills(cluster):
+    api = cluster.api
+    for fields in ({"content_type": "skill"}, {"source_type": "github"}):
+        response = await api.post(
+            "/api/v1/ai/skills", json={"name": "Invalid", "instructions": "Text", **fields}
+        )
+        assert response.status_code == 422, response.text
+    for fields in ({"content_type": "skill"}, {"source_type": "github"}):
+        response = await api.patch("/api/v1/ai/skills/1", json=fields)
+        assert response.status_code == 422, response.text
+    created = await api.post(
+        "/api/v1/ai/skills",
+        json={"name": "Explicit prompt", "instructions": "Text", "content_type": "prompt"},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["content_type"] == "prompt"
 
 
 async def test_account_binding_and_implicit_selection_endpoints_are_removed(cluster):
@@ -167,6 +188,7 @@ async def test_http_task_switch_snapshot_and_deactivation_are_atomic(cluster):
     )
     assert created.status_code == 201, created.text
     task = created.json()
+    assert [skill["content_type"] for skill in task["skills"]] == ["prompt"]
     second = (
         await api.post(
             "/api/v1/ai/skills",

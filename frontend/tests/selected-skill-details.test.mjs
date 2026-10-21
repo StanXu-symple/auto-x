@@ -9,6 +9,12 @@ import ts from 'typescript'
 const tmpRoot = new URL('../node_modules/.tmp/', import.meta.url)
 mkdirSync(tmpRoot, { recursive: true })
 const directory = mkdtempSync(fileURLToPath(new URL('selected-skill-details-', tmpRoot)))
+writeFileSync(
+  `${directory}/skills.mjs`,
+  ts.transpileModule(readFileSync(new URL('../src/utils/skills.ts', import.meta.url), 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+  }).outputText,
+)
 
 async function loadComponent(relativePath, name) {
   const { descriptor } = parse(readFileSync(new URL(relativePath, import.meta.url), 'utf8'))
@@ -35,8 +41,7 @@ async function loadComponent(relativePath, name) {
           .join('\n')
       if (module === '@/services/http')
         return 'const getErrorMessage = (error, fallback) => error?.message || fallback;'
-      if (module === '@/utils/skills')
-        return 'const skillOptionLabel = (skill) => skill.name; const skillSourceLabel = (skill) => skill.source_type;'
+      if (module === '@/utils/skills') return line.replace('@/utils/skills', './skills.mjs')
       if (module === '@/utils/format')
         return 'const formatDateTime = () => ""; const formatDuration = () => ""; const formatNumber = () => ""; const formatRelative = () => ""; const tweetTime = () => "";'
       if (module === '@/composables/usePagedTable')
@@ -181,4 +186,84 @@ test('deleted listening task Skills remain visible as unavailable and cannot ope
   assert.equal(state.detailSkill, null)
   assert.equal(state.skillDetailsOpen, false)
   assert.deepEqual(state.payload().skill_ids, [99])
+})
+
+for (const [name, component] of [
+  ['tweets', TweetsView],
+  ['listening', AiListenTasks],
+]) {
+  test(`${name} split selectors preserve interleaved order and unknown IDs`, async (t) => {
+    const { state } = await setup(t, component)
+    const resources = [custom, github, { ...custom, id: 33, content_type: 'prompt' }]
+    if (name === 'tweets') {
+      state.generationSkills = resources
+      state.selectedSkillIds = ['11', 22, 99]
+    } else {
+      state.skills = resources
+      state.setForm({ id: 7, name: 'Old task', skill_ids: ['11', 22, 99] })
+    }
+    const ids = () => (name === 'tweets' ? state.selectedSkillIds : state.payload().skill_ids)
+    assert.deepEqual(state.selectedPromptIds, ['11'])
+    assert.deepEqual(state.selectedGenerationSkillIds, [22])
+    state.selectedPromptIds = [33, 11, '33', 22]
+    assert.deepEqual(ids(), ['11', 22, 99, 33], 'deduplicate IDs and reject the other category')
+    state.selectedGenerationSkillIds = []
+    assert.deepEqual(ids(), ['11', 99, 33])
+    state.selectedPromptIds = [33]
+    assert.deepEqual(ids(), [99, 33], 'unavailable historical IDs are not silently removed')
+  })
+
+  test(`${name} combined selection limit spans Skills and prompts`, async (t) => {
+    const { state } = await setup(t, component)
+    const resources = Array.from({ length: 22 }, (_, index) => ({
+      ...custom,
+      id: index + 1,
+      content_type: index % 2 ? 'skill' : 'prompt',
+    }))
+    if (name === 'tweets') {
+      state.generationSkills = resources
+      state.selectedSkillIds = resources.slice(0, 20).map(({ id }) => id)
+    } else {
+      state.skills = resources
+      state.form.skill_ids = resources.slice(0, 20).map(({ id }) => id)
+    }
+    const allOptions = () => [
+      ...state.generationSkillOptions,
+      ...(name === 'tweets' ? state.generationPromptOptions : state.promptOptions),
+    ]
+    const options = allOptions()
+    assert.equal(options.filter(({ disabled }) => disabled).length, 2)
+    assert.ok(options.filter(({ value }) => value <= 20).every(({ disabled }) => !disabled))
+    state.selectedPromptIds = state.selectedPromptIds.slice(1)
+    assert.ok(allOptions().every(({ disabled }) => !disabled))
+  })
+}
+
+test('tweet generation accepts prompt-only selection with the existing request contract', async (t) => {
+  const { state, calls } = await setup(t, TweetsView)
+  state.generateTweet = { id: 1, tweet_id: 'prompt-only' }
+  state.generationSkills = [custom, github]
+  state.selectedPromptIds = [11]
+  assert.deepEqual(state.selectedGenerationSkillIds, [])
+  await state.generate()
+  const generation = calls.find(
+    ([api, method]) => api === 'aiApi' && method === 'generateFromTweet',
+  )
+  assert.equal(generation[2], 'prompt-only')
+  assert.deepEqual(generation[3].skill_ids, [11])
+  assert.ok(generation[3].idempotency_key)
+})
+
+test('listening task validates prompt-only selection and rejects inactive or excessive selections', async (t) => {
+  const { state } = await setup(t, AiListenTasks)
+  state.skills = [custom, github]
+  state.form.name = 'Prompt-only task'
+  state.form.monitored_user_ids = [1]
+  state.selectedPromptIds = [11]
+  assert.equal(state.validate(), '')
+  assert.deepEqual(state.payload().skill_ids, [11])
+  state.skills = [{ ...custom, is_active: false }, github]
+  assert.match(state.validate(), /停用/)
+  state.form.skill_ids = Array.from({ length: 21 }, (_, index) => index + 1)
+  assert.match(state.validate(), /1–20/)
 })

@@ -105,7 +105,7 @@ async def validate_selection(
         skill_query = skill_query.with_for_update(read=True)
     selected_skills = list(await db.scalars(skill_query))
     if len(selected_skills) != len(skill_ids):
-        raise APIError(422, "invalid_skill_ids", "所有选中 Skill 必须存在且已启用")
+        raise APIError(422, "invalid_skill_ids", "所有选中的 Skill 和提示词必须存在且已启用")
     by_id = {skill.id: skill for skill in selected_skills}
     # Validate package availability before accepting a configuration, as well
     # as at enqueue/claim time. Imported Skills share the same ID namespace.
@@ -259,7 +259,7 @@ async def task_out(
     ordered_skills = sorted(task.skills, key=lambda link: link.priority)
     missing_skills = [link.skill_id for link in ordered_skills if not link.skill.is_active]
     if missing_skills:
-        health_reasons.append("所选 Skill 已停用")
+        health_reasons.append("所选 Skill 或提示词已停用")
     if task.queue_hold_reason:
         health_reasons.append("旧队列等待处理决定")
     health_status = (
@@ -296,6 +296,7 @@ async def task_out(
             AIListenTaskSkillOut(
                 id=link.skill_id,
                 name=link.skill.name,
+                content_type=link.skill.content_type,
                 is_active=link.skill.is_active,
                 version=link.skill.version,
                 priority=link.priority,

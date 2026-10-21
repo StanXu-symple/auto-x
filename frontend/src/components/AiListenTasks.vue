@@ -5,12 +5,19 @@ import { message, Modal } from 'ant-design-vue'
 import { aiApi, aiDataSourceApi, aiListenTasksApi, monitoredUsersApi, qqApi } from '@/services/api'
 import { usePagedTable } from '@/composables/usePagedTable'
 import { getErrorMessage } from '@/services/http'
-import { skillOptionLabel } from '@/utils/skills'
+import {
+  replaceSelectionOfType,
+  selectionOfType,
+  skillContentType,
+  skillOptionLabel,
+  skillTypeLabel,
+} from '@/utils/skills'
 import { formatDateTime, formatDuration } from '@/utils/format'
 import StatusPill from '@/components/StatusPill.vue'
 import AutoPublishStatus from '@/components/AutoPublishStatus.vue'
 import SkillDetailsModal from '@/components/SkillDetailsModal.vue'
 import type {
+  AiContentType,
   AiDataSourceStatus,
   AiJob,
   AiListenPublishChannel,
@@ -122,6 +129,29 @@ const selectedFormSkills = computed(() =>
     skill: skills.value.find((skill) => String(skill.id) === String(id)),
   })),
 )
+function selectionModel(type: AiContentType) {
+  return computed({
+    get: () => selectionOfType(form.skill_ids, skills.value, type),
+    set: (ids: EntityId[]) => {
+      form.skill_ids = replaceSelectionOfType(form.skill_ids, skills.value, type, ids)
+    },
+  })
+}
+const selectedGenerationSkillIds = selectionModel('skill')
+const selectedPromptIds = selectionModel('prompt')
+const selectionOptions = (type: AiContentType) =>
+  skills.value
+    .filter((skill) => skillContentType(skill) === type)
+    .map((skill) => ({
+      label: skillOptionLabel(skill),
+      value: skill.id,
+      disabled:
+        !skill.is_active ||
+        (form.skill_ids.length >= 20 &&
+          !form.skill_ids.some((id) => String(id) === String(skill.id))),
+    }))
+const generationSkillOptions = computed(() => selectionOptions('skill'))
+const promptOptions = computed(() => selectionOptions('prompt'))
 const detailSkill = ref<AiSkill | null>(null)
 const skillDetailsOpen = ref(false)
 function openSkillDetails(skill?: AiSkill) {
@@ -158,7 +188,7 @@ const scopeSummary = computed(() =>
 )
 const configSummary = computed(
   () =>
-    `监听${scopeSummary.value}的${modeLabel(form.listen_mode)}内容，按顺序使用 ${form.skill_ids.length} 个 Skills，每条内容生成一篇文章草稿；${form.auto_publish_channels.length ? `生成成功后自动推送至${deliveryLabel(form.auto_publish_channels)}${form.auto_publish_channels.includes('qq') ? `（${form.qq_group_openids.length} 个 QQ 群）` : ''}` : '不自动推送'}${form.initial_sync_days > 0 && !editing.value ? `；首次处理最近 ${form.initial_sync_days} 天已采集内容` : ''}。`,
+    `监听${scopeSummary.value}的${modeLabel(form.listen_mode)}内容，按顺序使用 ${selectedGenerationSkillIds.value.length} 个 Skills 和 ${selectedPromptIds.value.length} 个提示词，每条内容生成一篇文章草稿；${form.auto_publish_channels.length ? `生成成功后自动推送至${deliveryLabel(form.auto_publish_channels)}${form.auto_publish_channels.includes('qq') ? `（${form.qq_group_openids.length} 个 QQ 群）` : ''}` : '不自动推送'}${form.initial_sync_days > 0 && !editing.value ? `；首次处理最近 ${form.initial_sync_days} 天已采集内容` : ''}。`,
 )
 const selectedAccounts = computed(() =>
   form.all_monitored_users
@@ -259,7 +289,7 @@ async function loadOptions() {
     users.value = accountRows
     skills.value = skillRows
   } catch (error) {
-    message.error(getErrorMessage(error, '无法加载账号、Skills 或 AI 配置'))
+    message.error(getErrorMessage(error, '无法加载账号、Skills、提示词或 AI 配置'))
   }
 }
 async function refreshTasks() {
@@ -401,7 +431,8 @@ function payload(): AiListenTaskPayload {
 function validate() {
   if (!form.name.trim()) return '请填写任务名称'
   if (!form.all_monitored_users && !form.monitored_user_ids.length) return '请选择至少一个监听账号'
-  if (!form.skill_ids.length || form.skill_ids.length > 20) return '请选择 1–20 个 Skills'
+  if (!form.skill_ids.length || form.skill_ids.length > 20)
+    return 'Skills 与提示词合计请选择 1–20 项'
   if (form.auto_publish_channels.includes('qq')) {
     if (qqLoading.value) return '请等待 QQ 推送目标加载完成'
     if (
@@ -419,7 +450,7 @@ function validate() {
   const inactive = form.skill_ids.filter(
     (id) => !skills.value.find((skill) => String(skill.id) === String(id) && skill.is_active),
   )
-  if (inactive.length) return '所选 Skill 已停用或删除，请重新选择'
+  if (inactive.length) return '所选 Skill 或提示词已停用或删除，请重新选择'
   return ''
 }
 
@@ -844,7 +875,7 @@ onMounted(async () => {
             <div class="muted">{{ modeLabel(record.listen_mode) }}</div></template
           ></a-table-column
         >
-        <a-table-column title="Skills" :width="170"
+        <a-table-column title="Skills 与提示词" :width="170"
           ><template #default="{ record }"
             ><a-tooltip :title="taskSkills(record)"
               ><span class="one-line">{{ taskSkills(record) }}</span></a-tooltip
@@ -929,7 +960,7 @@ onMounted(async () => {
         >
         <template #emptyText
           ><a-empty
-            description="暂无监听任务。选择账号、配置 AI 数据源和 Skills 后，创建第一条任务。"
+            description="暂无监听任务。选择账号、配置 AI 数据源及 Skills 或提示词后，创建第一条任务。"
         /></template>
       </a-table>
     </a-card>
@@ -980,28 +1011,37 @@ onMounted(async () => {
             ><router-link to="/accounts">前往账号设置</router-link></template
           ></a-alert
         >
-        <a-form-item label="生成 Skills" required
+        <a-form-item label="生成 Skills"
           ><a-select
-            v-model:value="form.skill_ids"
+            v-model:value="selectedGenerationSkillIds"
             mode="multiple"
-            placeholder="请选择 1–20 个已启用 Skills"
+            placeholder="请选择已启用的 GitHub Skills"
             option-filter-prop="label"
-            :options="
-              skills.map((skill) => ({
-                label: skillOptionLabel(skill),
-                value: skill.id,
-                disabled: !skill.is_active,
-              }))
-            "
+            allow-clear
+            :options="generationSkillOptions"
           />
+        </a-form-item>
+        <a-form-item label="提示词">
+          <a-select
+            v-model:value="selectedPromptIds"
+            mode="multiple"
+            placeholder="请选择已启用的提示词"
+            option-filter-prop="label"
+            allow-clear
+            :options="promptOptions"
+          />
+          <div class="muted">Skills 与提示词合计至少选择 1 项，最多 20 项。</div>
+        </a-form-item>
+        <a-form-item label="应用顺序">
           <div v-if="form.skill_ids.length" class="skill-order">
             <div v-for="(item, index) in selectedFormSkills" :key="item.id">
               <span>{{ index + 1 }}. {{ item.skill?.name || `#${item.id}` }}</span
+              ><a-tag v-if="item.skill">{{ skillTypeLabel(item.skill) }}</a-tag
               ><a-button
                 type="link"
                 size="small"
                 :disabled="!item.skill"
-                :aria-label="`查看 ${item.skill?.name || `#${item.id}`} 的 Skill 详情`"
+                :aria-label="`查看 ${item.skill?.name || `#${item.id}`} 的详情`"
                 @click="openSkillDetails(item.skill)"
                 >详情</a-button
               ><a-button
@@ -1028,11 +1068,21 @@ onMounted(async () => {
                 >下移</a-button
               >
               <small v-if="!item.skill" class="skill-order__unavailable muted"
-                >Skill 已删除或尚未加载，无法查看详情。</small
+                >该项已删除或尚未加载，无法查看详情。</small
+              >
+              <a-button
+                v-if="!item.skill"
+                type="link"
+                danger
+                size="small"
+                @click="form.skill_ids.splice(index, 1)"
+                >移除</a-button
               >
             </div>
           </div>
-          <div class="muted">按上方顺序应用，已有记录保留创建时的 Skill 快照。</div></a-form-item
+          <div class="muted">
+            按上方顺序共同应用，已有记录保留创建时的 Skills 与提示词快照。
+          </div></a-form-item
         >
         <a-form-item label="生成成功后自动推送"
           ><a-checkbox-group
@@ -1196,7 +1246,7 @@ onMounted(async () => {
           v-if="detail.queue_hold_reason"
           type="warning"
           show-icon
-          message="所选 Skill 曾失效，旧队列已挂起。请决定如何处理入队时的旧配置快照。"
+          message="所选 Skill 或提示词曾失效，旧队列已挂起。请决定如何处理入队时的旧配置快照。"
           style="margin-bottom: 14px"
           ><template #description
             ><a-space
@@ -1213,7 +1263,7 @@ onMounted(async () => {
           ><a-descriptions-item label="模式">{{
             modeLabel(detail.listen_mode)
           }}</a-descriptions-item
-          ><a-descriptions-item label="Skills" :span="2">{{
+          ><a-descriptions-item label="Skills 与提示词" :span="2">{{
             taskSkills(detail)
           }}</a-descriptions-item
           ><a-descriptions-item label="自动推送" :span="2">{{

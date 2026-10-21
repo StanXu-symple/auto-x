@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { after, test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { compileScript, parse } from '@vue/compiler-sfc'
-import { createRenderer, h, ref } from 'vue'
+import { createRenderer, h, nextTick, ref } from 'vue'
 import ts from 'typescript'
 
 const tmpRoot = new URL('../node_modules/.tmp/', import.meta.url)
@@ -306,4 +306,76 @@ test('a failed later API page preserves the previous complete list', async (t) =
   )
   assert.equal(view.state.skillsLoading, false)
   assert.deepEqual(view.messages.at(-1), ['error', '第二页加载失败'])
+})
+
+test('management tabs separate migrated prompts from imported Skills and reset pagination', async (t) => {
+  const items = [
+    githubSkill(1),
+    githubSkill(2),
+    { id: 3, name: 'Migrated', source_type: 'custom', content_type: 'prompt' },
+    { id: 4, name: 'Legacy custom', source_type: 'custom' },
+  ]
+  const view = setup(
+    t,
+    async () => result,
+    async () => ({ items, total: items.length }),
+  )
+  await view.state.loadSkills()
+  assert.equal(view.state.activeTab, 'skill')
+  assert.deepEqual(
+    view.state.visibleSkills.map(({ id }) => id),
+    [1, 2],
+  )
+  assert.equal(view.state.skillRows.length, 1)
+  view.state.editSkill()
+  assert.equal(view.state.skillOpen, false, 'Skills tab cannot open manual creation')
+  view.state.skillPage.current = 2
+  view.state.activeTab = 'prompt'
+  await nextTick()
+  assert.equal(view.state.skillPage.current, 1)
+  assert.deepEqual(
+    view.state.visibleSkills.map(({ id }) => id),
+    [3, 4],
+  )
+  assert.equal(view.state.skillRows.length, 2)
+  view.state.editSkill()
+  assert.equal(view.state.skillOpen, true)
+})
+
+test('manual creation sends prompt type while editing preserves existing IDs and source', async (t) => {
+  const view = setup(t, async () => result)
+  await view.state.loadSkills()
+  const writes = []
+  for (const method of ['createSkill', 'updateSkill']) {
+    globalThis.skillsUpdateMocks.api[method] = async (...args) => {
+      writes.push([method, ...JSON.parse(JSON.stringify(args))])
+      return {}
+    }
+  }
+  view.state.activeTab = 'prompt'
+  view.state.editSkill()
+  Object.assign(view.state.skillForm, { name: 'Prompt', instructions: 'My rules' })
+  await view.state.saveSkill()
+  assert.equal(writes[0][0], 'createSkill')
+  assert.equal(writes[0][1].content_type, 'prompt')
+  const prompt = {
+    id: 3,
+    name: 'Prompt',
+    instructions: 'Old',
+    is_active: true,
+    source_type: 'custom',
+    content_type: 'prompt',
+  }
+  view.state.editSkill(prompt)
+  view.state.skillForm.instructions = 'Updated'
+  await view.state.saveSkill()
+  assert.equal(writes[1][0], 'updateSkill')
+  assert.equal(writes[1][1], 3)
+  assert.equal(writes[1][2].instructions, 'Updated')
+  assert.equal('source_type' in writes[1][2], false)
+  assert.equal('content_type' in writes[1][2], false)
+  view.state.editSkill({ ...githubSkill(42), instructions: 'Repository instructions' })
+  view.state.skillForm.is_active = false
+  await view.state.saveSkill()
+  assert.deepEqual(writes[2], ['updateSkill', 42, { is_active: false }])
 })

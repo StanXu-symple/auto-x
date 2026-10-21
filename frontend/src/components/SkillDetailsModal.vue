@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import StatusPill from '@/components/StatusPill.vue'
-import { skillSourceLabel } from '@/utils/skills'
+import { skillSourceLabel, skillTypeLabel } from '@/utils/skills'
 import type { AiSkill } from '@/types'
 
 const props = defineProps<{ open: boolean; skill: AiSkill | null }>()
@@ -18,7 +18,7 @@ const outputSchema = computed(() =>
   <a-modal
     :open="open"
     :z-index="1100"
-    :title="skill ? `Skill 详情 · ${skill.name}` : 'Skill 详情'"
+    :title="skill ? `${skillTypeLabel(skill)}详情 · ${skill.name}` : '详情'"
     :width="880"
     @update:open="$emit('update:open', $event)"
   >
@@ -29,7 +29,7 @@ const outputSchema = computed(() =>
         <a-descriptions-item label="状态">
           <StatusPill :value="skill.is_active" :label="skill.is_active ? '启用' : '停用'" />
         </a-descriptions-item>
-        <a-descriptions-item v-if="skill.version != null" label="Skill 版本" :span="2">{{
+        <a-descriptions-item v-if="skill.version != null" label="版本" :span="2">{{
           skill.version
         }}</a-descriptions-item>
         <a-descriptions-item label="说明" :span="2">{{
@@ -50,8 +50,8 @@ const outputSchema = computed(() =>
           >
         </template>
       </a-descriptions>
-      <h3 class="skill-prompt-heading">Skill 提示词</h3>
-      <pre class="skill-prompt" tabindex="0" aria-label="Skill 提示词">{{
+      <h3 class="skill-prompt-heading">{{ skillTypeLabel(skill) }}内容</h3>
+      <pre class="skill-prompt" tabindex="0" :aria-label="`${skillTypeLabel(skill)}内容`">{{
         skill.instructions || '暂无提示词'
       }}</pre>
       <template v-if="outputSchema">
@@ -59,7 +59,7 @@ const outputSchema = computed(() =>
         <pre class="skill-prompt" tabindex="0" aria-label="输出格式要求">{{ outputSchema }}</pre>
       </template>
     </template>
-    <a-empty v-else description="未找到该 Skill 的详情，请刷新后重试" />
+    <a-empty v-else description="未找到详情，请刷新后重试" />
     <template #footer>
       <a-button @click="$emit('update:open', false)">关闭</a-button>
     </template>

@@ -15,6 +15,7 @@ AIJobStatus = Literal["queued", "running", "retry_wait", "succeeded", "failed", 
 AITriggerType = Literal["manual", "legacy_auto", "listen_task"]
 AIListenAutoPublishChannel = Literal["xhs", "qq"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+AIContentType = Literal["skill", "prompt"]
 
 
 def _normalize_qq_group_openids(values: list[str]) -> list[str]:
@@ -121,6 +122,10 @@ class AISettingsOut(APIModel):
 
 
 class AISkillCreate(APIModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Manual creation is for prompts; Skills are created by repository import.
+    content_type: Literal["prompt"] = "prompt"
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=4000)
     instructions: str = Field(min_length=1, max_length=20000)
@@ -153,6 +158,8 @@ class AISkillCreate(APIModel):
 
 
 class AISkillPatch(APIModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=4000)
     instructions: str | None = Field(default=None, min_length=1, max_length=20000)
@@ -203,6 +210,7 @@ class AISkillOut(APIModel):
     remote_skill_id: str | None
     remote_skill_version: str | None
     source_type: str = "custom"
+    content_type: AIContentType = "prompt"
     source_metadata: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
@@ -432,6 +440,7 @@ class AIListenTaskAccountOut(APIModel):
 class AIListenTaskSkillOut(APIModel):
     id: int
     name: str
+    content_type: AIContentType
     is_active: bool
     version: int
     priority: int

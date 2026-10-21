@@ -11,8 +11,15 @@ import {
 import { message } from 'ant-design-vue'
 import { aiApi, monitoredUsersApi, qqApi, tweetsApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
-import { skillOptionLabel, skillSourceLabel } from '@/utils/skills'
+import {
+  replaceSelectionOfType,
+  selectionOfType,
+  skillContentType,
+  skillOptionLabel,
+  skillTypeLabel,
+} from '@/utils/skills'
 import type {
+  AiContentType,
   AiSkill,
   EntityId,
   MonitoredUser,
@@ -35,18 +42,37 @@ const generateOpen = ref(false)
 const generateTweet = ref<Tweet | null>(null)
 const generationSkills = ref<AiSkill[]>([])
 const selectedSkillIds = ref<EntityId[]>([])
+function selectionModel(type: AiContentType) {
+  return computed({
+    get: () => selectionOfType(selectedSkillIds.value, generationSkills.value, type),
+    set: (ids: EntityId[]) => {
+      selectedSkillIds.value = replaceSelectionOfType(
+        selectedSkillIds.value,
+        generationSkills.value,
+        type,
+        ids,
+      )
+    },
+  })
+}
+const selectedGenerationSkillIds = selectionModel('skill')
+const selectedPromptIds = selectionModel('prompt')
 const generationSkillsLoading = ref(false)
 const generationSkillsError = ref('')
 const maxGenerationSkills = 20
-const generationSkillOptions = computed(() =>
-  generationSkills.value.map((skill) => ({
-    label: skillOptionLabel(skill),
-    value: skill.id,
-    disabled:
-      selectedSkillIds.value.length >= maxGenerationSkills &&
-      !selectedSkillIds.value.includes(skill.id),
-  })),
-)
+const generationOptions = (type: AiContentType) =>
+  generationSkills.value
+    .filter((skill) => skillContentType(skill) === type)
+    .map((skill) => ({
+      label: skillOptionLabel(skill),
+      value: skill.id,
+      disabled:
+        !skill.is_active ||
+        (selectedSkillIds.value.length >= maxGenerationSkills &&
+          !selectedSkillIds.value.some((id) => String(id) === String(skill.id))),
+    }))
+const generationSkillOptions = computed(() => generationOptions('skill'))
+const generationPromptOptions = computed(() => generationOptions('prompt'))
 const selectedGenerationSkills = computed(() =>
   selectedSkillIds.value.map((id) => ({
     id,
@@ -255,11 +281,11 @@ async function loadGenerationSkills() {
     }
     generationSkills.value = all
     selectedSkillIds.value = selectedSkillIds.value.filter((id) =>
-      all.some((skill) => skill.id === id),
+      all.some((skill) => String(skill.id) === String(id)),
     )
   } catch (e) {
     if (request === generationSkillsRequest)
-      generationSkillsError.value = getErrorMessage(e, '无法加载 Skills，请重试')
+      generationSkillsError.value = getErrorMessage(e, '无法加载 Skills 与提示词，请重试')
   } finally {
     if (request === generationSkillsRequest) generationSkillsLoading.value = false
   }
@@ -281,9 +307,9 @@ async function generate() {
   const tweet = generateTweet.value
   if (!tweet || generating.value || generationSkillsLoading.value || generationSkillsError.value)
     return
-  if (!selectedSkillIds.value.length) return message.warning('请至少选择一个 Skill')
+  if (!selectedSkillIds.value.length) return message.warning('请至少选择一个 Skill 或提示词')
   if (selectedSkillIds.value.length > maxGenerationSkills)
-    return message.warning(`最多选择 ${maxGenerationSkills} 个 Skills`)
+    return message.warning(`Skills 与提示词合计最多选择 ${maxGenerationSkills} 项`)
   generating.value = String(tweet.id)
   try {
     await aiApi.generateFromTweet(tweet.tweet_id, {
@@ -482,18 +508,31 @@ watch(
         <p class="tweet-preview">{{ generateTweet.text }}</p>
       </div>
       <a-form layout="vertical">
-        <a-form-item
-          label="生成约束 Skills（可多选）"
-          required
-          :extra="`生成时将应用全部选中 Skills 的指令，最多选择 ${maxGenerationSkills} 个。`"
-        >
+        <a-form-item label="生成 Skills（可多选）">
           <a-select
-            v-model:value="selectedSkillIds"
+            v-model:value="selectedGenerationSkillIds"
             mode="multiple"
             placeholder="请选择本次生成使用的 Skills"
             allow-clear
             option-filter-prop="label"
             :options="generationSkillOptions"
+            :loading="generationSkillsLoading"
+            :disabled="
+              generationSkillsLoading || Boolean(generationSkillsError) || Boolean(generating)
+            "
+          />
+        </a-form-item>
+        <a-form-item
+          label="提示词（可多选）"
+          :extra="`Skills 与提示词合计至少选择 1 项，最多 ${maxGenerationSkills} 项，按下方顺序共同参与生成。`"
+        >
+          <a-select
+            v-model:value="selectedPromptIds"
+            mode="multiple"
+            placeholder="请选择本次生成使用的提示词"
+            allow-clear
+            option-filter-prop="label"
+            :options="generationPromptOptions"
             :loading="generationSkillsLoading"
             :disabled="
               generationSkillsLoading || Boolean(generationSkillsError) || Boolean(generating)
@@ -510,29 +549,29 @@ watch(
         v-else-if="!generationSkillsLoading && !generationSkills.length"
         type="info"
         show-icon
-        message="暂无启用的 Skills，请先新增或启用 Skill。"
+        message="暂无启用的 Skills 或提示词，请先导入 Skills 或新增提示词。"
       />
       <ul v-if="selectedGenerationSkills.length" class="generation-skills">
         <li v-for="item in selectedGenerationSkills" :key="item.id">
           <div class="generation-skills__heading">
             <strong>{{ item.skill?.name || `#${item.id}` }}</strong>
-            <a-tag v-if="item.skill">{{ skillSourceLabel(item.skill) }}</a-tag>
+            <a-tag v-if="item.skill">{{ skillTypeLabel(item.skill) }}</a-tag>
             <a-button
               type="link"
               size="small"
               :disabled="!item.skill"
-              :aria-label="`查看 ${item.skill?.name || `#${item.id}`} 的 Skill 详情`"
+              :aria-label="`查看 ${item.skill?.name || `#${item.id}`} 的详情`"
               @click="openSkillDetails(item.skill)"
               >详情</a-button
             >
           </div>
           <p v-if="item.skill?.description" class="muted">{{ item.skill.description }}</p>
-          <p v-if="!item.skill" class="muted">Skill 已删除或尚未加载，无法查看详情。</p>
+          <p v-if="!item.skill" class="muted">该项已删除或尚未加载，无法查看详情。</p>
         </li>
       </ul>
       <p class="generation-skills-link muted">
-        可选择已启用的自定义或 GitHub Skills，在 Skills管理页面维护。
-        <router-link v-if="!generating" to="/skills"> 管理 Skills </router-link>
+        可组合使用 GitHub Skills 与自定义提示词。
+        <router-link v-if="!generating" to="/skills"> 前往提示词管理 </router-link>
       </p>
     </a-modal>
     <SkillDetailsModal v-model:open="skillDetailsOpen" :skill="detailSkill" />

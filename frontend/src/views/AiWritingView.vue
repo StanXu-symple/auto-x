@@ -340,7 +340,7 @@ onMounted(async () => {
                 :disabled="!settingsForm.enabled"
               />
               <div class="muted">
-                仅已启用的监听任务会自动生成，使用各任务选择的 Skills。
+                仅已启用的监听任务会自动生成，使用各任务选择的 Skills 与提示词。
               </div></a-form-item
             ><a-form-item label="语言与语气"
               ><a-space

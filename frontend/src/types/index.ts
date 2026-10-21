@@ -614,6 +614,8 @@ export interface UpdateAiSettingsPayload {
   request_timeout_seconds: number
 }
 
+export type AiContentType = 'skill' | 'prompt'
+
 export interface AiSkill {
   id: EntityId
   name: string
@@ -625,6 +627,7 @@ export interface AiSkill {
   remote_skill_id?: string | null
   remote_skill_version?: string | null
   source_type?: 'custom' | 'github'
+  content_type?: AiContentType
   source_metadata?: {
     repository: string
     download_method?: 'git'
@@ -658,6 +661,7 @@ export interface GithubSkillImportResult {
 }
 
 export interface AiSkillPayload {
+  content_type?: 'prompt'
   name: string
   description?: string
   instructions: string
@@ -669,6 +673,7 @@ export interface AiSkillPayload {
 
 export interface AiSkillQuery extends PaginationQuery {
   active?: boolean
+  content_type?: AiContentType
 }
 
 export interface AiFeature {
@@ -869,7 +874,7 @@ export interface AiListenTask {
     include_retweets?: boolean
     last_polled_at?: string | null
   }>
-  skills?: Array<{ id: EntityId; name: string; is_active?: boolean }>
+  skills?: Array<{ id: EntityId; name: string; content_type?: AiContentType; is_active?: boolean }>
   health: { status: string; reasons: string[] }
   dependency: { status: string; reasons: string[] }
   stats: AiListenTaskStats

@@ -1,6 +1,6 @@
 # Skill Worker
 
-`skill-worker` 承接Skill 管理、任务级选择、解析和校验，默认 HTTP 端口 `8204`，Nacos 服务名 `xsentinel-skill-worker`。它复用 core 后端镜像，入口为 `uvicorn app.skill_worker:app --host 0.0.0.0 --port 8204`。
+`skill-worker` 承接 Skills 与提示词管理、任务级选择、解析和校验，默认 HTTP 端口 `8204`，Nacos 服务名 `xsentinel-skill-worker`。它复用 core 后端镜像，入口为 `uvicorn app.skill_worker:app --host 0.0.0.0 --port 8204`。
 
 ## 边界与兼容性
 
@@ -23,20 +23,37 @@ flowchart LR
 
 保留的行为：
 
-- 内容流手动生成必须明确选择非空 Skills；监听任务仅使用自身配置的有序 Skills。同一账号可以被不同任务使用不同 Skills 处理，不读取账号绑定或默认选择。
+- 内容流手动生成必须明确选择 Skills 或提示词；监听任务仅使用自身配置的有序选择。同一账号可以被不同任务使用不同 Skills 和提示词处理，不读取账号绑定或默认选择。
 - 任务入队时冻结 Skill 内容、版本和选择来源；后续修改或切换不改写已有任务快照。
 - 历史补生成使用提交时的快照，领取和继续扫描时仍校验当前任务绑定。
 - 删除仍是停用：同一事务内将 Skill 停用，并将关联监听任务队列标为 `skill_invalidated`，保留历史快照。
 - 暂停、配置版本冲突、保留旧队列的决策和重试次数沿用现有规则。
 - HTTP、Nacos 或认证故障返回 `503 skill_service_unavailable`。轮询入队事务回滚，补生成游标不前移，领取失败不消耗模型尝试次数；不会把服务故障当成空绑定或 Skill 已失效。
 
-管理页面现已独立为 `/skills`。GitHub 导入与磁盘持久化见下节；执行范围为写作指令与参考文本。
+管理页面位于 `/skills`，左侧菜单及页面标题为“提示词管理”。GitHub 导入与磁盘持久化见下节；执行范围为写作指令与参考文本。
 
-## 自定义与 GitHub Skills
+## Skills 与提示词分类
 
-两种来源共用 `ai_skills.id`，因此监听任务和内容流的手动生成可以混合选择。自定义 Skill 的指令保存在数据库；GitHub Skill 在数据库中保存索引、来源、固定 Commit、版本、编译指令缓存与文件校验信息，完整原始目录保存在 skill-worker 的磁盘中。
+两类内容共用 `ai_skills` 表，通过新增的 `content_type` 区分。`source_type` 继续表示来源，不因分类调整而改变。
 
-在 **Skills管理 → 从 GitHub 导入** 粘贴公开仓库或 `tree` 目录地址。例如：
+| 页面 Tab | `content_type` | `source_type` | 管理方式 |
+| --- | --- | --- | --- |
+| Skills | `skill` | `github` | 从 GitHub 导入、更新、查看、启停及删除；不允许手动新增或编辑正文 |
+| 提示词 | `prompt` | `custom` | 仅手动增删改查，正文存入数据库 |
+
+迁移 `0039_skill_prompt_types` 将所有 GitHub 来源归为 Skills，其余现有记录（包含内置自定义写作指令和已停用项）归为提示词。迁移只增加类型列与索引，保留原 ID、来源、内容、版本、任务关联、顺序、队列状态和历史快照，不创建新表。降级只删除新增列和索引。部署需先执行 `alembic upgrade head`，再启动读取新列的服务；本节说明代码行为，不表示已经部署。
+
+管理接口保留 `/api/v1/ai/skills` 路径，列表可传 `content_type=skill|prompt`，总数和分页同时按类型过滤。手动 `POST` 的类型只能为 `prompt`，省略时也默认为提示词；GitHub 导入设置为 `skill`。`PATCH` 不接受类型或来源变更，Skill 正文通过仓库更新。删除两类内容均沿用停用和关联队列挂起规则。
+
+监听任务和内容流 AI 生成各提供“生成 Skills”和“提示词”两个多选框，二者合计选择 1–20 项，允许只选提示词。底层继续提交同一个有序 `skill_ids`，关联表、HTTP 解析和快照格式保持；编辑任一分类的选择时保留另一分类和原有交错顺序，新选内容追加到末尾。监听任务可在“应用顺序”中调整排列，失效项需要显式移除或替换。
+
+两类内容仍一起进入现有 `skill_snapshot`，按顺序组装成模型的 `instructions`。此处“提示词”是可复用的数据库记录，不是另增的单次任务自由文本参数，不改变现有 OpenAI 请求层级。
+
+## GitHub Skills 导入与持久化
+
+GitHub Skill 在数据库中保存索引、来源、固定 Commit、版本、编译指令缓存与文件校验信息，完整原始目录保存在 skill-worker 的磁盘中。
+
+在 **提示词管理 → Skills → 从 GitHub 导入** 粘贴公开仓库或 `tree` 目录地址。例如：
 
 ```text
 https://github.com/SpaceZephyr/creator-buddy/tree/main/xhs-Skills
@@ -63,7 +80,7 @@ data/skills/bundles/<不可变包ID>/
   manifest.json           # 原文件大小与 SHA-256
 ```
 
-GitHub 持久化由迁移 `0037_github_skills` 引入。当前迁移 `0038_explicit_task_skills` 删除旧账号绑定表及其数据，并删除全局默认 Skills 与触发模式两列。升级前备份 PostgreSQL，协调停止使用这些表/列的旧后端进程，执行 `alembic upgrade head`，再启动新版 skill-worker、backend / worker / ai-worker 并更新 frontend；不要让旧进程跨越删除列的迁移继续读写。迁移保留队列、任务选择和快照；降级只重建空旧配置，不能恢复删除的数据。更新与备份必须同时保留数据库和 `data/skills`。部署多实例时必须共享同一持久化目录；独立本机磁盘不能被多个 Nacos 实例交替使用。恢复时按原包 ID 恢复整个目录，不能仅重新导入当前分支替代旧版本。无法确认数据库提交结果时保留目录，可能留下孤立包；暂不自动清理旧包，避免影响历史任务。
+GitHub 持久化由迁移 `0037_github_skills` 引入。迁移 `0038_explicit_task_skills` 删除旧账号绑定表及其数据，并删除全局默认 Skills 与触发模式两列。升级前备份 PostgreSQL，协调停止使用这些表/列的旧后端进程，执行 `alembic upgrade head`，再启动新版 skill-worker、backend / worker / ai-worker 并更新 frontend；不要让旧进程跨越删除列的迁移继续读写。迁移保留队列、任务选择和快照；降级只重建空旧配置，不能恢复删除的数据。更新与备份必须同时保留数据库和 `data/skills`。部署多实例时必须共享同一持久化目录；独立本机磁盘不能被多个 Nacos 实例交替使用。恢复时按原包 ID 恢复整个目录，不能仅重新导入当前分支替代旧版本。无法确认数据库提交结果时保留目录，可能留下孤立包；暂不自动清理旧包，避免影响历史任务。
 
 原生 `start.sh` 使用项目根目录 `data/skills`，可用 `SKILL_STORAGE_DIR` 覆盖；该路径属于节点本地配置，不接受 Nacos 共享配置覆盖。容器路径固定，宿主机路径通过 `SKILL_STORAGE_HOST_DIR` 配置。skill-worker 内存上限为 512 MiB。
 
@@ -73,9 +90,9 @@ GitHub 持久化由迁移 `0037_github_skills` 引入。当前迁移 `0038_expli
 
 导入和更新的整体 HTTP 超时默认 180 秒（`SKILL_IMPORT_TIMEOUT_SECONDS`），前端及 nginx 默认为 190 秒。若自行加长服务超时，应同步修改前端及反向代理；已有外层网关也需允许该时长。Git 拉取总计最多 120 秒；监测临时仓库大小，超过 128 MiB 时终止进程组。请求取消或拉取超时也会终止 Git 及下载子进程并清理临时目录。所选目录限制为 2000 文件 / 96 MiB、单文件 16 MiB、每次最多 50 个 Skills；拒绝符号链接、子模块和大小写冲突路径。超时后先刷新列表确认结果；重复导入同一版本不会重复创建记录。
 
-入队仍通过原内部解析接口获取有序 Skill 并冻结内容与来源版本。AI Worker 在领取有 Skill 的作业、消耗尝试次数之前，通过 Nacos 调用 **`GET /v1/jobs/{job_id}/skills`**（`skills:read`）：自定义 Skill 返回该作业冻结的指令；GitHub Skill 读取该作业固定包的磁盘文件并校验 SHA-256，再与冻结快照核对。更新当前 Skill 不改写排队任务。磁盘文件缺失、被改动或 HTTP 故障时保持队列，不消耗模型尝试次数。
+入队仍通过原内部解析接口获取有序 Skill 并冻结内容与来源版本。AI Worker 在领取有 Skill 的作业、消耗尝试次数之前，通过 Nacos 调用 **`GET /v1/jobs/{job_id}/skills`**（`skills:read`）：自定义提示词返回该作业冻结的指令；GitHub Skill 读取该作业固定包的磁盘文件并校验 SHA-256，再与冻结快照核对。更新当前 Skill 不改写排队任务。磁盘文件缺失、被改动或 HTTP 故障时保持队列，不消耗模型尝试次数。
 
-`/ai-writing` 的监听任务与 `/tweets` 的 AI 生成选择框都同时展示两种来源。监听任务保留自己的选择顺序、任务切换、补生成和旧队列规则；内容流手动生成必须显式选择至少一个有效 Skill。
+`/ai-writing` 的监听任务与 `/tweets` 的 AI 生成通过两个选择框分别展示 Skills 和提示词。监听任务保留自己的选择顺序、任务切换、补生成和旧队列规则；内容流手动生成必须显式选择至少一个有效 Skill 或提示词。
 
 ## 文件对应
 

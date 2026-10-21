@@ -39,7 +39,7 @@ const groups = [
     label: '创作与发布',
     items: [
       { path: '/ai-writing', label: 'AI 创作', icon: FormOutlined },
-      { path: '/skills', label: 'Skills管理', icon: AppstoreOutlined },
+      { path: '/skills', label: '提示词管理', icon: AppstoreOutlined },
       { path: '/articles', label: '文章管理', icon: BookOutlined },
       { path: '/qq-notifications', label: 'QQ 推送', icon: BellOutlined },
       { path: '/qq-tasks', label: '定时任务', icon: ScheduleOutlined },

@@ -17,6 +17,8 @@ async def seed_skills() -> None:
         for skill in DEFAULT_AI_SKILLS:
             statement = postgres_insert(AISkill).values(
                 **skill,
+                content_type="prompt",
+                source_type="custom",
                 output_schema=None,
                 is_active=True,
                 version=1,

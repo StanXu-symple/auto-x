@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   DeleteOutlined,
   EditOutlined,
@@ -12,10 +12,19 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import { aiApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
-import { groupSkills, skillSourceSummary } from '@/utils/skills'
-import type { AiSkill, AiSkillPayload, GithubSkillImportResult } from '@/types'
+import { groupSkills, skillContentType, skillSourceSummary, skillTypeLabel } from '@/utils/skills'
+import type { AiContentType, AiSkill, AiSkillPayload, GithubSkillImportResult } from '@/types'
 
 const skills = ref<AiSkill[]>([])
+const activeTab = ref<AiContentType>('skill')
+const resourceTabs = [
+  { key: 'skill', label: 'Skills' },
+  { key: 'prompt', label: '提示词' },
+]
+const visibleSkills = computed(() =>
+  skills.value.filter((skill) => skillContentType(skill) === activeTab.value),
+)
+const resourceLabel = computed(() => (activeTab.value === 'skill' ? 'Skills' : '提示词'))
 const skillOpen = ref(false)
 const skillSaving = ref(false)
 const importOpen = ref(false)
@@ -32,7 +41,7 @@ const skillForm = reactive<AiSkillPayload>({
   is_active: true,
 })
 const skillsLoading = ref(false)
-const skillRows = computed(() => groupSkills(skills.value))
+const skillRows = computed(() => groupSkills(visibleSkills.value))
 const expandedRowKeys = ref<string[]>([])
 const skillPage = reactive({ current: 1, pageSize: 15 })
 const skillsPagination = computed(() => ({
@@ -41,8 +50,12 @@ const skillsPagination = computed(() => ({
   showSizeChanger: true,
   pageSizeOptions: ['15', '30', '50', '100'],
   showQuickJumper: true,
-  showTotal: (count: number) => `共 ${count} 项（GitHub 按来源分组）`,
+  showTotal: (count: number) =>
+    activeTab.value === 'skill' ? `共 ${count} 项（GitHub 按来源分组）` : `共 ${count} 条提示词`,
 }))
+watch(activeTab, () => {
+  skillPage.current = 1
+})
 let skillsRequest = 0
 
 function changeSkillPage(page: { current?: number; pageSize?: number }) {
@@ -63,13 +76,14 @@ async function loadSkills() {
   try {
     await loadAllSkills(request)
   } catch (e) {
-    if (request === skillsRequest) message.error(getErrorMessage(e, '无法加载 Skills'))
+    if (request === skillsRequest) message.error(getErrorMessage(e, '无法加载 Skills 与提示词'))
   } finally {
     if (request === skillsRequest) skillsLoading.value = false
   }
 }
 
 function editSkill(skill?: AiSkill) {
+  if (!skill && activeTab.value !== 'prompt') return
   editingSkill.value = skill || null
   Object.assign(
     skillForm,
@@ -87,22 +101,22 @@ function editSkill(skill?: AiSkill) {
 async function saveSkill() {
   if (skillSaving.value) return
   if (!skillForm.name.trim() || !skillForm.instructions.trim())
-    return message.warning('请填写名称和 Skill 指令')
+    return message.warning('请填写名称和提示词内容')
   skillSaving.value = true
   try {
     editingSkill.value
       ? await aiApi.updateSkill(
           editingSkill.value.id,
-          editingSkill.value.source_type === 'github'
+          skillContentType(editingSkill.value) === 'skill'
             ? { is_active: skillForm.is_active }
             : skillForm,
         )
-      : await aiApi.createSkill(skillForm)
+      : await aiApi.createSkill({ ...skillForm, content_type: 'prompt' })
     skillOpen.value = false
     await loadSkills()
-    message.success('Skill 已保存')
+    message.success('已保存')
   } catch (e) {
-    message.error(getErrorMessage(e, '保存 Skill 失败'))
+    message.error(getErrorMessage(e, '保存失败'))
   } finally {
     skillSaving.value = false
   }
@@ -148,7 +162,8 @@ async function importGithub() {
   }
 }
 async function updateGithub(skill: AiSkill) {
-  if (importing.value || skill.source_type !== 'github') return
+  if (importing.value || skill.source_type !== 'github' || skillContentType(skill) !== 'skill')
+    return
   updatingSkill.value = skill
   importResult.value = null
   importError.value = ''
@@ -157,7 +172,8 @@ async function updateGithub(skill: AiSkill) {
 }
 function removeSkill(skill: AiSkill) {
   Modal.confirm({
-    title: `删除 Skill「${skill.name}」？`,
+    title: `删除${skillTypeLabel(skill)}「${skill.name}」？`,
+    content: '删除后将停用该项，使用它的监听任务会暂停队列，历史生成记录保留。',
     okType: 'danger',
     okText: '删除',
     cancelText: '取消',
@@ -165,9 +181,9 @@ function removeSkill(skill: AiSkill) {
       try {
         await aiApi.removeSkill(skill.id)
         await loadSkills()
-        message.success('Skill 已删除')
+        message.success('已删除')
       } catch (e) {
-        message.error(getErrorMessage(e, '删除 Skill 失败'))
+        message.error(getErrorMessage(e, '删除失败'))
         throw e
       }
     },
@@ -200,134 +216,164 @@ onMounted(loadSkills)
   <div class="page-stack">
     <PageHeader
       eyebrow="CONTENT / 02"
-      title="Skills管理"
-      description="管理自定义写作指令与从 GitHub 导入的 Skills"
+      title="提示词管理"
+      description="分别管理从 GitHub 导入的 Skills 与手动维护的提示词"
     >
       <template #actions>
         <a-button :loading="skillsLoading" @click="loadSkills"><ReloadOutlined /> 刷新</a-button>
       </template>
     </PageHeader>
     <a-card :bordered="false">
-      <div class="toolbar">
-        <div class="toolbar__controls">
-          <a-button type="primary" @click="editSkill()"><PlusOutlined /> 新建 Skill</a-button>
-          <a-button :disabled="importing" @click="openImport()"
-            ><GithubOutlined /> 从 GitHub 导入</a-button
-          >
-          <a-button :loading="skillsLoading" @click="loadSkills"><ReloadOutlined /> 刷新</a-button>
-          <span class="toolbar__hint">GitHub Skills 按导入来源分组，点击名称或箭头展开</span>
-        </div>
-        <span class="toolbar__hint"
-          >共 {{ skills.length }} 条 Skills · {{ skillRows.length }} 项</span
-        >
-      </div>
-      <a-table
-        :data-source="skillRows"
-        :loading="skillsLoading"
-        v-model:expanded-row-keys="expandedRowKeys"
-        row-key="key"
-        size="middle"
-        table-layout="fixed"
-        :pagination="skillsPagination"
-        :scroll="{ x: 1150 }"
-        @change="changeSkillPage"
-      >
-        <a-table-column title="名称" data-index="name" :width="280" :ellipsis="true">
-          <template #default="{ record }">
-            <button
-              v-if="record.kind === 'group'"
-              type="button"
-              class="skill-group-toggle"
-              :aria-expanded="expandedRowKeys.includes(record.key)"
-              @click="toggleGroup(record.key)"
-            >
-              <GithubOutlined />
-              <strong class="skill-name" :title="record.name">{{ record.name }}</strong>
-              <span class="skill-group-count">{{ record.children.length }}</span>
-            </button>
-            <strong v-else class="skill-name skill-leaf-name" :title="record.name">{{
-              record.name
-            }}</strong>
-          </template>
-        </a-table-column>
-        <a-table-column title="说明" data-index="description" :ellipsis="true">
-          <template #default="{ record }"
-            ><span class="muted">{{ record.description || '暂无说明' }}</span></template
-          >
-        </a-table-column>
-        <a-table-column title="来源" :width="240" :ellipsis="{ showTitle: false }">
-          <template #default="{ record }">
-            <a-tooltip
-              placement="topRight"
-              :trigger="['hover', 'focus']"
-              :overlay-style="{ maxWidth: '480px' }"
-            >
-              <template #title>
-                <div v-if="record.source_metadata" class="skill-source-detail">
-                  <div>仓库：{{ record.source_metadata.repository }}</div>
-                  <div>分支 / 版本：{{ record.source_metadata.ref }}</div>
-                  <div>
-                    导入目录：{{
-                      (record.source_metadata.import_path ?? record.source_metadata.path) || '/'
-                    }}
-                  </div>
-                  <div v-if="record.kind === 'skill'">
-                    Skill 目录：{{ record.source_metadata.path || '/' }}
-                  </div>
-                  <div v-if="record.kind === 'skill'">
-                    Commit：{{ record.source_metadata.commit }}
-                  </div>
-                  <div>原始地址：{{ record.source_metadata.url }}</div>
-                </div>
-                <span v-else>自定义 · 保存在数据库中的写作指令</span>
-              </template>
-              <span class="skill-source-text muted" tabindex="0">{{
-                skillSourceSummary(record)
+      <a-tabs v-model:active-key="activeTab" :destroy-inactive-tab-pane="true">
+        <a-tab-pane v-for="tab in resourceTabs" :key="tab.key" :tab="tab.label">
+          <div class="toolbar">
+            <div class="toolbar__controls">
+              <a-button v-if="activeTab === 'prompt'" type="primary" @click="editSkill()"
+                ><PlusOutlined /> 新建提示词</a-button
+              >
+              <a-button
+                v-if="activeTab === 'skill'"
+                type="primary"
+                :disabled="importing"
+                @click="openImport()"
+                ><GithubOutlined /> 从 GitHub 导入</a-button
+              >
+              <a-button :loading="skillsLoading" @click="loadSkills"
+                ><ReloadOutlined /> 刷新</a-button
+              >
+              <span class="toolbar__hint">{{
+                activeTab === 'skill'
+                  ? 'GitHub Skills 按导入来源分组，点击名称或箭头展开'
+                  : '手动维护可复用的写作要求，在生成时按需选择'
               }}</span>
-            </a-tooltip>
-          </template>
-        </a-table-column>
-        <a-table-column title="状态" :width="120">
-          <template #default="{ record }">
-            <span v-if="record.kind === 'group'" class="muted"
-              >{{ record.activeCount }}/{{ record.children.length }} 启用</span
+            </div>
+            <span class="toolbar__hint">共 {{ visibleSkills.length }} 条 {{ resourceLabel }}</span>
+          </div>
+          <a-table
+            :data-source="skillRows"
+            :loading="skillsLoading"
+            v-model:expanded-row-keys="expandedRowKeys"
+            row-key="key"
+            size="middle"
+            table-layout="fixed"
+            :pagination="skillsPagination"
+            :scroll="{ x: activeTab === 'skill' ? 1150 : 760 }"
+            @change="changeSkillPage"
+          >
+            <a-table-column
+              title="名称"
+              data-index="name"
+              :width="activeTab === 'skill' ? 280 : 220"
+              :ellipsis="true"
             >
-            <StatusPill
-              v-else
-              :value="record.is_active"
-              :label="record.is_active ? '启用' : '停用'"
-            />
-          </template>
-        </a-table-column>
-        <a-table-column title="操作" :width="210">
-          <template #default="{ record }">
-            <a-space>
-              <a-tooltip v-if="record.source_type === 'github'" title="从 GitHub 更新">
-                <a-button
-                  type="link"
-                  aria-label="更新 GitHub Skill"
-                  :loading="importing && updatingSkill?.id === record.id"
-                  :disabled="importing"
-                  @click="updateGithub(record)"
-                  ><ReloadOutlined /> 更新</a-button
+              <template #default="{ record }">
+                <button
+                  v-if="record.kind === 'group'"
+                  type="button"
+                  class="skill-group-toggle"
+                  :aria-expanded="expandedRowKeys.includes(record.key)"
+                  @click="toggleGroup(record.key)"
                 >
-              </a-tooltip>
-              <a-tooltip v-if="record.kind === 'skill'" title="编辑"
-                ><a-button type="link" aria-label="编辑 Skill" @click="editSkill(record)"
-                  ><EditOutlined /></a-button
-              ></a-tooltip>
-              <a-tooltip v-if="record.kind === 'skill'" title="删除"
-                ><a-button type="link" danger aria-label="删除 Skill" @click="removeSkill(record)"
-                  ><DeleteOutlined /></a-button
-              ></a-tooltip>
-            </a-space>
-          </template>
-        </a-table-column>
-      </a-table>
+                  <GithubOutlined />
+                  <strong class="skill-name" :title="record.name">{{ record.name }}</strong>
+                  <span class="skill-group-count">{{ record.children.length }}</span>
+                </button>
+                <strong v-else class="skill-name skill-leaf-name" :title="record.name">{{
+                  record.name
+                }}</strong>
+              </template>
+            </a-table-column>
+            <a-table-column title="说明" data-index="description" :ellipsis="true">
+              <template #default="{ record }"
+                ><span class="muted">{{ record.description || '暂无说明' }}</span></template
+              >
+            </a-table-column>
+            <a-table-column
+              title="来源"
+              :width="activeTab === 'skill' ? 240 : 100"
+              :ellipsis="{ showTitle: false }"
+            >
+              <template #default="{ record }">
+                <a-tooltip
+                  placement="topRight"
+                  :trigger="['hover', 'focus']"
+                  :overlay-style="{ maxWidth: '480px' }"
+                >
+                  <template #title>
+                    <div v-if="record.source_metadata" class="skill-source-detail">
+                      <div>仓库：{{ record.source_metadata.repository }}</div>
+                      <div>分支 / 版本：{{ record.source_metadata.ref }}</div>
+                      <div>
+                        导入目录：{{
+                          (record.source_metadata.import_path ?? record.source_metadata.path) || '/'
+                        }}
+                      </div>
+                      <div v-if="record.kind === 'skill'">
+                        Skill 目录：{{ record.source_metadata.path || '/' }}
+                      </div>
+                      <div v-if="record.kind === 'skill'">
+                        Commit：{{ record.source_metadata.commit }}
+                      </div>
+                      <div>原始地址：{{ record.source_metadata.url }}</div>
+                    </div>
+                    <span v-else>自定义 · 保存在数据库中的写作指令</span>
+                  </template>
+                  <span class="skill-source-text muted" tabindex="0">{{
+                    skillSourceSummary(record)
+                  }}</span>
+                </a-tooltip>
+              </template>
+            </a-table-column>
+            <a-table-column title="状态" :width="120">
+              <template #default="{ record }">
+                <span v-if="record.kind === 'group'" class="muted"
+                  >{{ record.activeCount }}/{{ record.children.length }} 启用</span
+                >
+                <StatusPill
+                  v-else
+                  :value="record.is_active"
+                  :label="record.is_active ? '启用' : '停用'"
+                />
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" :width="210">
+              <template #default="{ record }">
+                <a-space>
+                  <a-tooltip v-if="record.source_type === 'github'" title="从 GitHub 更新">
+                    <a-button
+                      type="link"
+                      aria-label="更新 GitHub Skill"
+                      :loading="importing && updatingSkill?.id === record.id"
+                      :disabled="importing"
+                      @click="updateGithub(record)"
+                      ><ReloadOutlined /> 更新</a-button
+                    >
+                  </a-tooltip>
+                  <a-tooltip v-if="record.kind === 'skill'" title="编辑"
+                    ><a-button
+                      type="link"
+                      :aria-label="`编辑${skillTypeLabel(record)}`"
+                      @click="editSkill(record)"
+                      ><EditOutlined /></a-button
+                  ></a-tooltip>
+                  <a-tooltip v-if="record.kind === 'skill'" title="删除"
+                    ><a-button
+                      type="link"
+                      danger
+                      :aria-label="`删除${skillTypeLabel(record)}`"
+                      @click="removeSkill(record)"
+                      ><DeleteOutlined /></a-button
+                  ></a-tooltip>
+                </a-space>
+              </template>
+            </a-table-column>
+          </a-table>
+        </a-tab-pane>
+      </a-tabs>
     </a-card>
     <a-modal
       v-model:open="skillOpen"
-      :title="editingSkill ? '编辑 Skill' : '新建 Skill'"
+      :title="editingSkill ? `编辑${skillTypeLabel(editingSkill)}` : '新建提示词'"
       ok-text="保存"
       cancel-text="取消"
       :confirm-loading="skillSaving"
@@ -338,7 +384,7 @@ onMounted(loadSkills)
       @ok="saveSkill"
     >
       <a-alert
-        v-if="editingSkill?.source_type === 'github'"
+        v-if="editingSkill && skillContentType(editingSkill) === 'skill'"
         type="info"
         show-icon
         message="GitHub Skill 内容可通过列表中的更新按钮同步，可在这里切换启用状态。"
@@ -370,16 +416,19 @@ onMounted(loadSkills)
         ><a-form-item label="名称"
           ><a-input
             v-model:value="skillForm.name"
-            :readonly="editingSkill?.source_type === 'github'" /></a-form-item
+            :readonly="!!editingSkill && skillContentType(editingSkill) === 'skill'" /></a-form-item
         ><a-form-item label="说明"
           ><a-input
             v-model:value="skillForm.description"
-            :readonly="editingSkill?.source_type === 'github'" /></a-form-item
-        ><a-form-item label="指令"
+            :readonly="!!editingSkill && skillContentType(editingSkill) === 'skill'" /></a-form-item
+        ><a-form-item
+          :label="
+            editingSkill && skillContentType(editingSkill) === 'skill' ? 'Skill 指令' : '提示词内容'
+          "
           ><a-textarea
             v-model:value="skillForm.instructions"
             :rows="10"
-            :readonly="editingSkill?.source_type === 'github'" /></a-form-item
+            :readonly="!!editingSkill && skillContentType(editingSkill) === 'skill'" /></a-form-item
         ><a-form-item label="启用"
           ><a-switch v-model:checked="skillForm.is_active" /></a-form-item></a-form
     ></a-modal>
