@@ -265,3 +265,27 @@ HTTP 测试覆盖实际 FastAPI 转发、JWT/会话校验、权限隔离、优�
 - 非目标运行容器 ID、完整服务清单、非镜像环境项和三份 Nacos 文档保持不变，Skills 磁盘挂载正确。
 
 服务器受限权限备份：hn-1 `/home/docker/auto-x/backups/pre-explicit-skills-20261021T055743Z`，tc-2 `/home/docker/auto-x/backups/pre-explicit-skills-20261021T055746Z`。两节点 `backups/explicit-skills-current.txt` 指向对应目录，包含源版本信息、原环境、Compose/控制面、容器检查及完整 Nacos 文档；hn-1 保存 Skills 文件，tc-2 另保存媒体卷、Redis RDB、初始及停消费者后的最终 PostgreSQL dump。`STATE=complete`、`sha256.json` 记录完整性，tc-2 的 `invariants-before.json` 与 `invariants-after.json` 保存迁移数据比对。回滚删除的数据必须使用原备份，单独降级只能重建空绑定表与默认配置。
+
+## 2026-10-22 Skills 与提示词分类升级记录
+
+功能提交 `1a2a8fed45d88d86f342a2cd55f12d99b4149332` 已推送到 `dev/main`，[Actions 39687192946](https://github.com/StanXu-symple/auto-x/actions/runs/39687192946) 构建成功，生产固定使用 `sha-1a2a8fed45d88d86f342a2cd55f12d99b4149332`。本次同时发布 `docs/openai协议说明.md`；后续部署记录文档提交不改变运行镜像。
+
+| 节点 | 升级服务 | 镜像摘要 |
+| --- | --- | --- |
+| hn-1 | skill-worker | `sha256:bccbc455f9ace7be47a08260c95021f5dc08bc4a578f7f27e859c53fb0fe4da3` |
+| tc-2 | backend、worker、ai-worker | 同上 |
+| tc-2 | frontend | `sha256:cdfa72a57b1b403a7851ef78394797c3b3b1700f09689d16baff6d73fcc5d1e0` |
+
+先在独立临时 PostgreSQL 容器用模拟数据验证实际 `0039` 迁移、默认值、索引、关联顺序、快照与降级，测试通过后清理临时容器。随后协调停止两节点旧 backend、worker、ai-worker、skill-worker，完成最终 PostgreSQL 备份和只读指纹，将共享数据库从 `0038_explicit_task_skills` 升级至 `0039_skill_prompt_types`。一次性 migrate 容器使用本次固定镜像并成功退出；数据比对通过后恢复全部目标服务。
+
+现有 `ai_skills` 表新增 `content_type` 分类：33 条 GitHub 来源记录为 Skills，4 条自定义记录为提示词。原 ID、来源、版本、内容及关联保留。`/skills` 菜单改为提示词管理，包含 Skills 和提示词两个 Tab；Skills 通过 GitHub 导入，提示词手动维护。监听任务和内容流 AI 生成分别提供两类选择器，仍共用原有有序关联及冻结快照机制。
+
+验收结果：
+
+- 37 条原有记录、1 个功能点、创作设置、2 个监听任务、6 条任务选择、2 条订阅、2 个作者画像及 38 个历史生成任务的任务、Skill、请求快照逐字段指纹一致，补生成表仍为空。迁移只新增分类，不改动原数据。
+- backend、worker、ai-worker 分别使用实际挂载的三个专用身份，经 Nacos 发现唯一 hn-1:8204 Skill 实例；分类、36 条有效记录的有序解析、全部任务关联及 38 个历史作业的冻结材料校验通过。
+- 真实管理员的全量列表和两类筛选均通过完整分页验证，返回 33 个 Skills、4 个提示词；监听任务摘要的分类和顺序一致，公开管理接口与 skill-worker 直连一致。功能点、创作设置、AI 数据源接口均为 200，临时验证会话已注销。
+- 部署前端的菜单、两个 Tab、提示词维护以及监听任务和内容流的独立选择器检查通过；五个升级服务健康，检查时启动日志无 ERROR/CRITICAL，监控 14 个实例、2 个节点全部健康。
+- 非目标容器 ID 和原运行状态、完整服务清单、非镜像环境项及三份 Nacos 文档保持一致。hn-1 的 Skills 挂载仍为 `/home/docker/auto-x/data/skills` → `/var/lib/xsentinel/skills`，备份中的文件哈希与现有文件一致。
+
+两节点服务器受限权限备份均为 `/home/docker/auto-x/backups/pre-prompt-types-20261021T223312Z`，由 `backups/prompt-types-current.txt` 指向，`STATE=complete`。备份保留原配置、容器版本及 Nacos 文档；hn-1 保存完整 Skills 文件，tc-2 另保存媒体卷、Redis RDB、初始及停消费者后的最终 PostgreSQL dump。`sha256.json`、`deployment-verification.json`、迁移前后指纹、实际 HTTP/管理/前端/拓扑/最终健康验收 JSON 保存完整性及验证证据。回退时先停止新消费者，再按备份恢复原镜像和配置；涉及分类列降级时须与应用版本协调，保留数据库和业务卷。
