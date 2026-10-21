@@ -31,7 +31,6 @@ import type {
 const emit = defineEmits<{
   editDraft: [job: AiJob]
   changed: []
-  navigate: [tab: 'source' | 'settings']
 }>()
 const router = useRouter()
 const users = ref<MonitoredUser[]>([])
@@ -643,7 +642,7 @@ function openArticle(job: AiJob) {
 }
 function navigateToSource() {
   editorOpen.value = false
-  emit('navigate', 'source')
+  void router.push({ path: '/data-sources', query: { tab: 'ai' } })
 }
 
 function openBackfill() {

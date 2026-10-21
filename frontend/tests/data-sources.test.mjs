@@ -75,6 +75,7 @@ test('old data source links redirect to the matching tab while preserving query 
   for (const [path, tab] of [
     ['/x-authorization', 'x'],
     ['/xhs', 'xhs'],
+    ['/ai-data-source', 'ai'],
   ]) {
     const router = await routerAt(`${path}?tab=obsolete&filter=one&filter=two#connection`)
     assert.equal(router.currentRoute.value.path, '/data-sources')
@@ -82,6 +83,16 @@ test('old data source links redirect to the matching tab while preserving query 
     assert.equal(router.currentRoute.value.hash, '#connection')
     assert.equal(router.currentRoute.value.meta.title, '数据源')
   }
+})
+
+test('former AI writing data source tabs open the new AI tab', async () => {
+  for (const tab of ['source', 'data-source']) {
+    const router = await routerAt(`/ai-writing?tab=${tab}&from=task#connection`)
+    assert.equal(router.currentRoute.value.fullPath, '/data-sources?tab=ai&from=task#connection')
+  }
+  const router = await routerAt('/ai-writing?tab=tasks')
+  await router.push('/ai-writing?tab=source')
+  assert.equal(router.currentRoute.value.fullPath, '/data-sources?tab=ai')
 })
 
 test('legacy named routes remain valid for integrations and bookmarks', async () => {
@@ -108,6 +119,16 @@ test('tab selection follows URL navigation and preserves unrelated URL state whe
   assert.equal(state.tab, 'x')
   await router.push('/data-sources?tab=xhs')
   assert.equal(state.tab, 'xhs')
+  state.changeTab('ai')
+  await new Promise((resolve) => setImmediate(resolve))
+  await nextTick()
+  assert.equal(router.currentRoute.value.fullPath, '/data-sources?tab=ai')
+  assert.equal(state.tab, 'ai')
+  await router.push('/data-sources?tab=ai&from=task#connection')
+  state.changeTab('xhs')
+  await new Promise((resolve) => setImmediate(resolve))
+  await nextTick()
+  assert.equal(router.currentRoute.value.fullPath, '/data-sources?tab=xhs&from=task#connection')
   await router.push('/data-sources?tab=unknown')
   assert.equal(state.tab, 'x')
   await router.push('/data-sources')
@@ -122,6 +143,12 @@ test('authentication still protects merged and legacy data source routes', async
     assert.equal(
       router.currentRoute.value.query.redirect,
       '/data-sources?from=article&tab=xhs#publish',
+    )
+    await router.push('/ai-writing?tab=source&from=task#connection')
+    assert.equal(router.currentRoute.value.path, '/login')
+    assert.equal(
+      router.currentRoute.value.query.redirect,
+      '/data-sources?tab=ai&from=task#connection',
     )
   } finally {
     globalThis.dataSourcesAuth.isAuthenticated = true

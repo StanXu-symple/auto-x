@@ -9,11 +9,10 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
-import { aiApi, aiDataSourceApi, aiListenTasksApi } from '@/services/api'
+import { aiApi, aiListenTasksApi } from '@/services/api'
 import { getErrorMessage } from '@/services/http'
 import { skillOptionLabel } from '@/utils/skills'
 import type {
-  AiDataSourceStatus,
   AiJob,
   AiListenTask,
   AiSettings,
@@ -29,8 +28,7 @@ import AiListenTasks from '@/components/AiListenTasks.vue'
 import { formatDateTime, formatDuration } from '@/utils/format'
 const route = useRoute()
 const normalizeTab = (value: unknown) => {
-  if (value === 'data-source') return 'source'
-  return typeof value === 'string' && ['tasks', 'jobs', 'settings', 'source'].includes(value)
+  return typeof value === 'string' && ['tasks', 'jobs', 'settings'].includes(value)
     ? value
     : 'tasks'
 }
@@ -45,11 +43,10 @@ watch(
 const draftOpen = ref(false)
 const draftSaving = ref(false)
 const draftForm = reactive({ id: 0 as EntityId, title: '', content: '', excerpt: '', revision: 0 })
-const loading = reactive({ settings: false, source: false })
+const loading = reactive({ settings: false })
 const settings = ref<AiSettings | null>(null)
 const defaultSkills = ref<AiSkill[]>([])
 const defaultSkillsLoading = ref(false)
-const source = ref<AiDataSourceStatus | null>(null)
 const filters = reactive({
   status: 'all',
   trigger_type: 'all',
@@ -87,7 +84,6 @@ function jobSource(job: AiJob) {
       ? '手动生成'
       : '旧自动生成'
 }
-const sourceModels = ref<string[]>([])
 const settingsForm = reactive<UpdateAiSettingsPayload>({
   enabled: false,
   auto_generate: true,
@@ -99,12 +95,6 @@ const settingsForm = reactive<UpdateAiSettingsPayload>({
   max_attempts: 3,
   max_output_tokens: 2500,
   request_timeout_seconds: 60,
-})
-const sourceForm = reactive({
-  name: 'OpenAI',
-  base_url: 'https://api.openai.com/v1',
-  model: 'gpt-5.6-terra',
-  api_key: '',
 })
 const running = computed(
   () => jobs.value.filter((job) => ['queued', 'running', 'retry_wait'].includes(job.status)).length,
@@ -178,48 +168,6 @@ watch(
   { immediate: true },
 )
 
-async function loadSource() {
-  loading.source = true
-  try {
-    source.value = await aiDataSourceApi.status()
-    if (source.value.configured) {
-      sourceForm.name = source.value.name || 'OpenAI'
-      sourceForm.base_url = source.value.base_url || ''
-      sourceForm.model = source.value.model || ''
-    }
-  } catch (e) {
-    message.error(getErrorMessage(e, '无法加载 AI 数据源'))
-  } finally {
-    loading.source = false
-  }
-}
-async function saveSource() {
-  if (!sourceForm.name || !sourceForm.base_url || !sourceForm.model)
-    return message.warning('请填写名称、Base URL 和模型')
-  const apiKey = sourceForm.api_key.trim()
-  if (!source.value?.configured && !apiKey) return message.warning('首次配置请填写 API Key')
-  try {
-    source.value = await aiDataSourceApi.save({
-      ...sourceForm,
-      api_key: apiKey || undefined,
-      protocol: 'openai_responses',
-    })
-    sourceForm.api_key = ''
-    message.success('AI 数据源已加密保存')
-  } catch (e) {
-    message.error(getErrorMessage(e, '保存失败'))
-  }
-}
-async function testSource() {
-  try {
-    const result = await aiDataSourceApi.test()
-    sourceModels.value = result.models
-    result.valid ? message.success(result.message) : message.warning(result.message)
-    await loadSource()
-  } catch (e) {
-    message.error(getErrorMessage(e, '测试失败'))
-  }
-}
 async function saveSettings() {
   loading.settings = true
   try {
@@ -262,7 +210,6 @@ function refreshCurrentTab() {
   if (tab.value === 'tasks') void listenTasksPanel.value?.refresh()
   else if (tab.value === 'jobs') void loadJobs()
   else if (tab.value === 'settings') void loadSettings()
-  else if (tab.value === 'source') void loadSource()
 }
 async function removeJob(job: AiJob) {
   Modal.confirm({
@@ -307,7 +254,7 @@ async function saveDraft() {
   }
 }
 onMounted(async () => {
-  await Promise.all([loadJobs(), loadSettings(), loadSource()])
+  await Promise.all([loadJobs(), loadSettings()])
   try {
     listenTaskOptions.value = (
       await aiListenTasksApi.list({ page: 1, page_size: 100, include_archived: true })
@@ -330,8 +277,7 @@ onMounted(async () => {
         ><AiListenTasks
           ref="listenTasksPanel"
           @edit-draft="editDraft"
-          @changed="refreshJobContext"
-          @navigate="(value) => (tab = value)" /></a-tab-pane
+          @changed="refreshJobContext" /></a-tab-pane
       ><a-tab-pane key="jobs" tab="生成记录"
         ><div class="metric-grid">
           <MetricCard label="运行中" :value="running" detail="当前页队列 / 执行中" /><MetricCard
@@ -500,40 +446,6 @@ onMounted(async () => {
                   :max="600" /></a-space></a-form-item
             ><a-button type="primary" :loading="loading.settings" @click="saveSettings"
               ><SaveOutlined /> 保存配置</a-button
-            ></a-form
-          ></a-card
-        ></a-tab-pane
-      ><a-tab-pane key="source" tab="AI 数据源"
-        ><a-card :bordered="false"
-          ><a-alert
-            type="info"
-            show-icon
-            message="API Key 仅用于后端调用，保存后以密码占位符表示已配置，不显示真实密钥。"
-          /><a-form layout="vertical" style="max-width: 700px; margin-top: 18px"
-            ><a-form-item label="名称"><a-input v-model:value="sourceForm.name" /></a-form-item
-            ><a-form-item label="Base URL"
-              ><a-input v-model:value="sourceForm.base_url" /></a-form-item
-            ><a-form-item label="模型"
-              ><a-input v-model:value="sourceForm.model" />
-              <div v-if="sourceModels.length" class="muted">
-                可用模型：{{ sourceModels.join('、') }}
-              </div></a-form-item
-            ><a-form-item
-              label="API Key"
-              :extra="
-                source?.configured
-                  ? 'API Key 已保存，留空保留原密钥，填写新值后保存可替换。'
-                  : '首次配置请填写 API Key。'
-              "
-              ><a-input-password
-                v-model:value="sourceForm.api_key"
-                :placeholder="
-                  source?.configured ? '••••••••（已保存，输入新值可替换）' : '首次配置必填'
-                " /></a-form-item
-            ><a-space
-              ><a-button type="primary" :loading="loading.source" @click="saveSource"
-                >保存数据源</a-button
-              ><a-button :loading="loading.source" @click="testSource">测试连接</a-button></a-space
             ></a-form
           ></a-card
         ></a-tab-pane

@@ -56,11 +56,11 @@ const router = createRouter({
           path: 'data-sources',
           name: 'data-sources',
           component: () => import('@/views/DataSourcesView.vue'),
-          meta: { title: '数据源', description: '管理 X 与小红书的数据源、访问凭据和连接状态' },
+          meta: { title: '数据源', description: '管理 X、小红书与 AI 数据源、访问凭据和连接状态' },
         },
         {
           path: 'ai-data-source',
-          redirect: { path: '/ai-writing', query: { tab: 'data-source' } },
+          redirect: (to) => ({ path: '/data-sources', query: { ...to.query, tab: 'ai' }, hash: to.hash }),
         },
         {
           path: 'ai-writing',
@@ -116,6 +116,9 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  if (to.name === 'ai-writing' && ['source', 'data-source'].includes(String(to.query.tab))) {
+    return { path: '/data-sources', query: { ...to.query, tab: 'ai' }, hash: to.hash, replace: true }
+  }
   if (to.name === 'ai-writing' && ['skills', 'context'].includes(String(to.query.tab))) {
     const query = { ...to.query }
     delete query.tab
