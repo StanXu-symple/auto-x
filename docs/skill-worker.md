@@ -75,7 +75,7 @@ GitHub 持久化由迁移 `0037_github_skills` 引入。当前迁移 `0038_expli
 
 入队仍通过原内部解析接口获取有序 Skill 并冻结内容与来源版本。AI Worker 在领取有 Skill 的作业、消耗尝试次数之前，通过 Nacos 调用 **`GET /v1/jobs/{job_id}/skills`**（`skills:read`）：自定义 Skill 返回该作业冻结的指令；GitHub Skill 读取该作业固定包的磁盘文件并校验 SHA-256，再与冻结快照核对。更新当前 Skill 不改写排队任务。磁盘文件缺失、被改动或 HTTP 故障时保持队列，不消耗模型尝试次数。
 
-`/ai-writing` 的监听任务与默认 Skills、`/tweets` 的 AI 生成选择框都同时展示两种来源。默认优先级、显式空选择、绑定顺序、任务切换、补生成和旧队列规则继续沿用。
+`/ai-writing` 的监听任务与 `/tweets` 的 AI 生成选择框都同时展示两种来源。监听任务保留自己的选择顺序、任务切换、补生成和旧队列规则；内容流手动生成必须显式选择至少一个有效 Skill。
 
 ## 文件对应
 
@@ -226,3 +226,25 @@ HTTP 测试覆盖实际 FastAPI 转发、JWT/会话校验、权限隔离、优�
 - 三个调用方的 Nacos HTTP 解析通过，原 AI Worker 使用实际凭据读取历史任务快照一致。4 个 Skill（含来源元数据）、原绑定和设置、34 个历史任务及冻结快照逐项哈希比对一致。
 
 服务器升级前备份分别为 hn-1 的 `/home/docker/auto-x/backups/pre-gitpython-skills-20261020T072646Z` 和 tc-2 的 `/home/docker/auto-x/backups/pre-gitpython-skills-20261020T072649Z`，两节点的 `backups/gitpython-skills-current.txt` 指向对应目录。备份包含环境、Compose/控制面和 Skills 文件、容器版本、Nacos 文档；tc-2 另含 PostgreSQL dump 与 Redis RDB。`gitpython-skills-deployment-verification.json` 保存部署验收，tc-2 的 `gitpython-skills-invariants-after.json` 保存数据比对。
+
+## 2026-10-21 显式任务 Skills 清理升级记录
+
+功能提交 `006e4caedb7cce594be71cb7e436318486af0406` 已推送到 `dev/main`，[Actions 39551879467](https://github.com/StanXu-symple/auto-x/actions/runs/39551879467) 构建成功，生产固定使用 `sha-006e4caedb7cce594be71cb7e436318486af0406`。本次同时发布此前本地提交 `a524d6b` 的 AI 数据源 Tab 调整，部署记录文档提交不改变运行镜像。
+
+| 节点 | 升级服务 | 镜像摘要 |
+| --- | --- | --- |
+| hn-1 | skill-worker | `sha256:a2601e8526fb72cc351667f60d2895abf4f258644aca3f90f76d72c34c6f9782` |
+| tc-2 | backend、worker、ai-worker | 同上 |
+| tc-2 | frontend | `sha256:d2206fd6f334d3f87d70118503ecfbf97bfaae3bb98ac01dc6d173bfcd0775fd` |
+
+先协调停止两节点旧 backend、worker、ai-worker、skill-worker，完成最终 PostgreSQL 备份和只读数据指纹，再将数据库从 `0037_github_skills` 升级到 `0038_explicit_task_skills`。迁移删除旧账号绑定表（升级前为空）、全局默认 Skills 和触发模式两列；一次性 migrate 容器也已换成当前镜像并成功退出。随后启动新服务，Skills 宿主机目录仍为 hn-1 的 `/home/docker/auto-x/data/skills`。
+
+验收结果：
+
+- 37 个 Skills、1 个功能点、保留的创作设置、2 个监听任务、6 条任务 Skill 选择、2 条订阅、2 个作者画像和 37 个历史生成任务的完整快照，迁移前后逐字段指纹一致。补生成表仍为空。
+- backend、worker、ai-worker 分别使用实际挂载的三个专用身份，通过 Nacos 发现唯一 hn-1:8204 实例，验证选择顺序、任务绑定及全部 37 个历史作业的冻结 Skill 材料；旧 context 与账号绑定路由均返回 404。
+- 真实管理员的 Skills、功能点、创作设置、监听任务和 AI 数据源接口均为 200，四类代理结果与 skill-worker 直连一致；临时验证会话已注销，没有创建生成或发布任务。
+- 监控 14 个实例、2 个节点全部健康，五个升级服务健康且启动日志无 ERROR/CRITICAL。前端已移除旧绑定管理与隐式生成控件，AI 数据源 Tab 位于数据源页面的小红书 Tab 后。
+- 非目标运行容器 ID、完整服务清单、非镜像环境项和三份 Nacos 文档保持不变，Skills 磁盘挂载正确。
+
+服务器受限权限备份：hn-1 `/home/docker/auto-x/backups/pre-explicit-skills-20261021T055743Z`，tc-2 `/home/docker/auto-x/backups/pre-explicit-skills-20261021T055746Z`。两节点 `backups/explicit-skills-current.txt` 指向对应目录，包含源版本信息、原环境、Compose/控制面、容器检查及完整 Nacos 文档；hn-1 保存 Skills 文件，tc-2 另保存媒体卷、Redis RDB、初始及停消费者后的最终 PostgreSQL dump。`STATE=complete`、`sha256.json` 记录完整性，tc-2 的 `invariants-before.json` 与 `invariants-after.json` 保存迁移数据比对。回滚删除的数据必须使用原备份，单独降级只能重建空绑定表与默认配置。
