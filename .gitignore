@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !.env.external.example
+/docs/donotsubmit/
 
 # Python
 __pycache__/
