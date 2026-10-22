@@ -13,6 +13,7 @@ import pytest
 from alembic.config import Config
 from fastapi import FastAPI
 from sqlalchemy import delete, func, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from alembic import command
@@ -24,6 +25,8 @@ from app.db import init_db
 from app.db.base import Base
 from app.models import (
     Admin,
+    AgentConversation,
+    AgentTurn,
     AIFeature,
     AIGenerationJob,
     AIListenTask,
@@ -182,6 +185,122 @@ async def test_fresh_database_seed_and_business_writes(database):
         await session.execute(delete(AIListenTaskSubscription))
         await session.execute(delete(MonitoredUser).where(MonitoredUser.id == user_id))
         assert await session.scalar(select(func.count(Tweet.id))) == 0
+
+
+async def test_agent_chat_constraints_and_completed_turn_releases_active_slot(database):
+    # The fixture exercises both Alembic and metadata against PostgreSQL. The
+    # default naming convention otherwise gives both compound uniques the same
+    # first-column name, which SQLite accepts but PostgreSQL cannot create.
+    async with database() as session, session.begin():
+        connection = await session.connection()
+        constraints = await connection.run_sync(
+            lambda sync: inspect(sync).get_unique_constraints("agent_turns")
+        )
+        by_name = {item["name"]: tuple(item["column_names"]) for item in constraints}
+        assert by_name == {
+            "uq_agent_turn_request": ("conversation_id", "request_id"),
+            "uq_agent_turn_sequence": ("conversation_id", "sequence"),
+        }
+        indexes = await connection.run_sync(
+            lambda sync: inspect(sync).get_indexes("agent_turns")
+        )
+        active_index = next(item for item in indexes if item["name"] == "uq_agent_turn_active")
+        assert active_index["unique"] is True
+        assert active_index["column_names"] == ["conversation_id"]
+        assert active_index["dialect_options"]["postgresql_where"]
+
+        admin = Admin(username="agent-chat-constraints", password_hash="unused-test-hash")
+        session.add(admin)
+        await session.flush()
+        conversations = [AgentConversation(admin_id=admin.id) for _ in range(2)]
+        session.add_all(conversations)
+        await session.flush()
+        conversation_id, other_conversation_id = [item.id for item in conversations]
+        request_id = str(uuid.uuid4())
+        completed = AgentTurn(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            sequence=1,
+            content="first completed turn",
+            status="succeeded",
+        )
+        session.add(completed)
+        await session.flush()
+
+        async def reject_turn(constraint, **values):
+            # A savepoint lets each real database rejection leave the remaining
+            # behavior checks in the same transaction usable.
+            with pytest.raises(IntegrityError, match=constraint):
+                async with session.begin_nested():
+                    session.add(AgentTurn(
+                        conversation_id=conversation_id,
+                        content="must be rejected",
+                        **values,
+                    ))
+                    await session.flush()
+
+        await reject_turn(
+            "uq_agent_turn_request", request_id=request_id, sequence=2, status="succeeded"
+        )
+        await reject_turn(
+            "uq_agent_turn_sequence",
+            request_id=str(uuid.uuid4()), sequence=1, status="succeeded",
+        )
+
+        active = AgentTurn(
+            conversation_id=conversation_id,
+            request_id=str(uuid.uuid4()),
+            sequence=2,
+            content="active turn",
+            status="queued",
+        )
+        session.add(active)
+        await session.flush()
+        for occupied_status in ("queued", "running"):
+            active.status = occupied_status
+            await session.flush()
+            for new_status in ("queued", "running"):
+                await reject_turn(
+                    "uq_agent_turn_active",
+                    request_id=str(uuid.uuid4()), sequence=3, status=new_status,
+                )
+
+        # All three restrictions are scoped to a conversation, so another
+        # conversation may reuse the request/sequence and have an active turn.
+        parallel = AgentTurn(
+            conversation_id=other_conversation_id,
+            request_id=request_id,
+            sequence=1,
+            content="independent conversation",
+            status="queued",
+        )
+        session.add(parallel)
+        await session.flush()
+
+        active.status = "succeeded"
+        await session.flush()
+        following = AgentTurn(
+            conversation_id=conversation_id,
+            request_id=str(uuid.uuid4()),
+            sequence=3,
+            content="next turn after completion",
+            status="queued",
+        )
+        session.add(following)
+        await session.flush()
+        assert await session.scalar(select(func.count()).select_from(AgentTurn)) == 4
+
+    # Verify committed state through a new session, not just in-memory objects.
+    async with database() as session:
+        statuses = list(await session.scalars(
+            select(AgentTurn.status)
+            .where(AgentTurn.conversation_id == conversation_id)
+            .order_by(AgentTurn.sequence)
+        ))
+        assert statuses == ["succeeded", "succeeded", "queued"]
+        assert await session.scalar(
+            select(AgentTurn.status).where(AgentTurn.conversation_id == other_conversation_id)
+        ) == "queued"
 
 
 async def test_service_auth_legacy_clients_bootstrap_is_exactly_once(
