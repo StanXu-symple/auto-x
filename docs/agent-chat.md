@@ -130,3 +130,15 @@ alembic upgrade head
 - 非目标业务容器及 hn-1 五项服务保持原版本和健康状态；监控 14 个实例、2 个节点全部健康。完整服务清单、三份 Nacos 文档、控制面文件、部署覆盖和原有 136 个媒体文件保留；环境仅更新两个镜像标签。检查时新服务日志没有 ERROR/CRITICAL。
 
 最终升级前备份为 tc-2 的 `/home/docker/auto-x/backups/pre-agent-chat-20261022T144427Z`，由 `backups/agent-chat-current.txt` 指向。停止空闲 AI Worker 后完成 PostgreSQL custom dump、Redis RDB、配置、控制面、Compose/安装器及媒体备份，目录权限 700、文件 600，转储目录和归档可读，`STATE=complete` 与 SHA256 清单校验通过。备份目录保存部署、指纹、接口、前端、监控和真实对话验收 JSON；原镜像保留，恢复时使用备份的版本与配置并协调新对话数据，不删除业务卷。
+
+## 2026-10-23 HTTP 发送修复
+
+通过普通 HTTP 地址访问 `/agent-chat` 时，浏览器不提供 `crypto.randomUUID()`。原发送逻辑在进入 `try` 前调用它，异常导致请求未发出，且 `sending` 无法恢复，表现为点击发送后没有响应。
+
+修复提交 `e6932980003f8d52d8564f045b80ed6782ee3f70` 优先使用 `randomUUID()`，在 HTTP 环境回退到 `crypto.getRandomValues()` 生成符合 UUID v4 的消息标识，并把发送准备放入 `try/finally`。浏览器缺少随机数能力时显示错误、保留输入并恢复按钮；网络重试继续复用原请求 ID。
+
+前端 63 项测试、类型检查和生产构建通过；新增回归覆盖 HTTP API 缺失及准备阶段失败恢复。实际浏览器在 `isSecureContext=false`、`randomUUID=undefined`、`getRandomValues=function` 的 HTTP 页面中，成功关联提示词和 Skill、创建对话、发送合法 UUID v4 消息、显示模拟回复，并恢复后续发送能力。该浏览器验收使用本地模拟 API，未新增真实模型调用。
+
+[Actions 39808724463](https://github.com/StanXu-symple/auto-x/actions/runs/39808724463) 成功后，通过原安装器菜单 2 的 frontend-only 模式更新 tc-2，退出 0。前端固定使用 `sha-e6932980003f8d52d8564f045b80ed6782ee3f70`，镜像摘要为 `sha256:a70804675ffaf71be9ad8c25ebd6c39e1c4e4f75018433558e6205e277f24fdd`，OCI revision 与目标提交一致，容器 healthy。线上入口与对话资源均返回 200，资源字节与容器一致，并包含 UUID 兼容逻辑；未登录对话 API 返回 401。
+
+升级前受限备份为 `/home/docker/auto-x/backups/pre-agent-http-20261022T155356Z`，独立指针为 `backups/agent-http-current.txt`，23 个备份文件清单校验通过。验收确认其余容器 ID、启动时间、镜像和状态保持，数据库仍为 `0040_agent_chat`，完整服务清单、Compose、安装器及控制面文件保持；环境仅改变 `FRONTEND_IMAGE_TAG`。本次没有数据库迁移。已打开的页面需强制刷新后使用新资源。
