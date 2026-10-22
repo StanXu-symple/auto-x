@@ -20,7 +20,7 @@ import type {
   AgentMessagePayload,
 } from '@/services/agentChat'
 import { getErrorMessage } from '@/services/http'
-import { isActiveTurn, mentionAt, removeMention } from '@/utils/agentChat'
+import { createAgentRequestId, isActiveTurn, mentionAt, removeMention } from '@/utils/agentChat'
 import type { AiSkill } from '@/types'
 
 const route = useRoute()
@@ -287,12 +287,15 @@ async function send() {
   error.value = ''
   stopPolling()
   const sendEpoch = ++epoch
-  const content = text.value.trim()
-  const skillIds = selected.value.map((item) => item.id)
-  const key = JSON.stringify([currentId.value, content, skillIds])
-  if (!pending || pending.key !== key)
-    pending = { key, payload: { request_id: crypto.randomUUID(), content, skill_ids: skillIds } }
   try {
+    const content = text.value.trim()
+    const skillIds = selected.value.map((item) => item.id)
+    const key = JSON.stringify([currentId.value, content, skillIds])
+    if (!pending || pending.key !== key)
+      pending = {
+        key,
+        payload: { request_id: createAgentRequestId(), content, skill_ids: skillIds },
+      }
     if (!detail.value) {
       const created = await agentChatApi.create()
       if (disposed || sendEpoch !== epoch) return

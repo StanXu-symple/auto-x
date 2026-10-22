@@ -103,6 +103,15 @@ async function setup(t, extra = {}) {
   return { state: instance.value.$.setupState, route, calls }
 }
 
+function mockCrypto(t, crypto) {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'crypto')
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: crypto })
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, 'crypto', original)
+    else delete globalThis.crypto
+  })
+}
+
 test('@ only opens at a token boundary and removes the selected token at the caret', () => {
   assert.equal(utils.mentionAt('mail@example.com', 16), null)
   const value = '写一篇 @短文，保留后面的文字'
@@ -152,6 +161,43 @@ test('a lost send response preserves text and reuses the idempotency key on retr
   assert.equal(sends.length, 2)
   assert.equal(sends[0][2].request_id, sends[1][2].request_id)
   assert.equal(calls.filter(([method]) => method === 'create').length, 1)
+})
+
+test('HTTP browsers without randomUUID still create and send with a UUID v4 request ID', async (t) => {
+  const getRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto)
+  mockCrypto(t, { getRandomValues })
+  const { state, calls } = await setup(t)
+  state.text = '在 HTTP 页面发送文章要求'
+  await state.send()
+
+  assert.equal(calls.filter(([method]) => method === 'create').length, 1)
+  const sends = calls.filter(([method]) => method === 'send')
+  assert.equal(sends.length, 1)
+  assert.equal(sends[0][1], 'conversation-one')
+  assert.match(
+    sends[0][2].request_id,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  )
+  assert.equal(sends[0][2].content, '在 HTTP 页面发送文章要求')
+  assert.equal(state.sending, false)
+  assert.equal(state.error, '')
+  assert.equal(state.text, '')
+  assert.equal(state.detail.turns[0].status, 'queued')
+})
+
+test('missing browser crypto reports an error, releases sending and preserves the unsent text', async (t) => {
+  mockCrypto(t, {})
+  const { state, calls } = await setup(t)
+  state.text = '保留这段文章要求'
+  const beforeSendCalls = calls.length
+  await state.send()
+
+  assert.equal(calls.length, beforeSendCalls, 'ID generation failure must not make an API request')
+  assert.equal(state.sending, false)
+  assert.match(state.error, /无法生成消息标识/)
+  assert.equal(state.text, '保留这段文章要求')
+  assert.equal(state.detail, null)
+  assert.equal(!!state.canSend, true, 'a failed send must leave the composer usable')
 })
 
 test('old polling response cannot overwrite a different conversation', async (t) => {
