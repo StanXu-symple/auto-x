@@ -107,3 +107,26 @@ alembic upgrade head
 不要只更新前端：未迁移或未更新的 worker 无法处理新对话任务。
 
 实现入口：`backend/app/api/routes/agent_chat.py`、`backend/app/services/agent_chat_worker.py`、`backend/app/services/agent_provider.py`、`frontend/src/views/AgentChatView.vue`。
+
+## 2026-10-22 部署记录
+
+文章对话功能 `18c7e49`、PostgreSQL 约束修复 `946f45b` 和回归测试 `59f7a6317529982607c297f9191d68faa88219d8` 已发布到 `dev/main`。[Actions 39796059268](https://github.com/StanXu-symple/auto-x/actions/runs/39796059268) 成功，生产固定使用 `sha-59f7a6317529982607c297f9191d68faa88219d8`；后续部署记录提交不改变运行镜像。
+
+| 节点 | 更新服务 | 镜像摘要 |
+| --- | --- | --- |
+| tc-2 | backend、ai-worker、auth-center、monitor-agent、migrate | `sha256:8afa56a9470ff3de839f434a988b0e984a88c725746c67776684111a7accf378` |
+| tc-2 | frontend | `sha256:27ac3303bff6629022562961a7f5f4e07ace5d201c9cb6afaa9fb8f756978040` |
+
+通过原生 `kejilion.sh app auto-x` 菜单 2 更新，显式选择 `backend,ai-worker,frontend`，安装器加入认证和监控依赖。设置 `KJ_AUTO_X_SKILL_REMOTE=1 KJ_AUTO_X_CAMOUFOX_REMOTE=1`，继续使用 hn-1 的远端服务。安装器退出 0，自动迁移到 `0040_agent_chat`，随后恢复 tc-2 原七项完整服务清单。hn-1 无需更新。
+
+生产切换前，隔离 PostgreSQL 检查发现两条匿名复合唯一约束会按首列生成同名约束，导致迁移失败。已在迁移与 ORM 中分别命名为 `uq_agent_turn_request`、`uq_agent_turn_sequence`。最终镜像的升级、降级、再次升级、活跃消息唯一索引与外键级联验证通过；新增的真实 PostgreSQL 回归测试覆盖 Alembic 和 metadata 两条建库路径，实测 2 项通过。该失败发生在隔离测试库，生产未执行失败版本。
+
+验收结果：
+
+- 五个更新应用服务健康，migrate 和日志初始化辅助容器成功退出；前端 `/agent-chat` 与后端就绪接口为 200，浏览器入口及对话 JS 的 HTTP 内容与容器文件哈希一致。未登录的对话和候选接口为 401。
+- 真实管理员登录、会话列表、候选完整分页及注销通过。现有资源共 37 项，包含 33 个 Skills、4 个提示词；有效候选为 33 个 Skills、3 个提示词。backend 与 ai-worker 分别使用实际挂载凭据，经 Nacos 有序解析全部有效指令，材料与数据库一致，AI 数据源解密及 Worker 心跳正常。
+- 经用户明确授权，用各一个现有提示词与 Skill 完成两次真实模型请求：首版文章正文 161 字，改写正文 167 字，两轮均一次成功，改写标题与指定末句生效。未调用保存文章或发布接口；临时对话及消息已按精确归属和验收标记清理，验证会话已注销。
+- 37 项原有指令、1 个功能点、创作设置、2 个监听任务、6 条任务选择、2 条订阅、2 个作者画像及 41 条历史生成任务的配置和冻结快照逐项指纹一致。
+- 非目标业务容器及 hn-1 五项服务保持原版本和健康状态；监控 14 个实例、2 个节点全部健康。完整服务清单、三份 Nacos 文档、控制面文件、部署覆盖和原有 136 个媒体文件保留；环境仅更新两个镜像标签。检查时新服务日志没有 ERROR/CRITICAL。
+
+最终升级前备份为 tc-2 的 `/home/docker/auto-x/backups/pre-agent-chat-20261022T144427Z`，由 `backups/agent-chat-current.txt` 指向。停止空闲 AI Worker 后完成 PostgreSQL custom dump、Redis RDB、配置、控制面、Compose/安装器及媒体备份，目录权限 700、文件 600，转储目录和归档可读，`STATE=complete` 与 SHA256 清单校验通过。备份目录保存部署、指纹、接口、前端、监控和真实对话验收 JSON；原镜像保留，恢复时使用备份的版本与配置并协调新对话数据，不删除业务卷。
