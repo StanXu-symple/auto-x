@@ -93,7 +93,14 @@ onMounted(() => {
         ></a-dropdown>
       </a-layout-header>
       <a-layout-content
-        ><main id="main-content" class="console-content" tabindex="-1"><RouterView /></main>
+        ><main
+          id="main-content"
+          class="console-content"
+          :class="{ 'agent-content': route.name === 'agent-chat' }"
+          tabindex="-1"
+        >
+          <RouterView />
+        </main>
         <footer class="content-footer">
           <span>Auto-X · 内容情报工作台</span><span>Collect. Create. Connect.</span>
         </footer></a-layout-content

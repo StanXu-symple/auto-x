@@ -37,6 +37,7 @@ from app.models.ai import (
 )
 from app.models.ai_data_source import AIDataSource
 from app.models.tweet import Tweet
+from app.services.agent_chat_worker import AgentChatWorker
 from app.services.ai_data_source import (
     AIDataSourceUnavailableError,
     get_ai_data_source,
@@ -106,6 +107,15 @@ class AIGenerationWorker:
         self.active_tasks = 0
         self.process_stats = ProcessStatsSampler()
         self.publisher = AIPublishDispatcher(settings, self.redis, AsyncSessionFactory)
+        self.generation_semaphore = asyncio.Semaphore(settings.ai_worker_max_concurrency)
+        self.chat_worker = AgentChatWorker(
+            settings,
+            self.redis,
+            self.provider,
+            AsyncSessionFactory,
+            self.generation_semaphore,
+            self.stop_event,
+        )
 
     def request_stop(self) -> None:
         self.stop_event.set()
@@ -124,6 +134,7 @@ class AIGenerationWorker:
         logger.info("X Sentinel AI worker started", extra={"worker_id": self.worker_id})
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         publish_task = asyncio.create_task(self.publisher.run())
+        chat_task = asyncio.create_task(self.chat_worker.run())
         try:
             while not self.stop_event.is_set():
                 try:
@@ -140,6 +151,9 @@ class AIGenerationWorker:
                 except TimeoutError:
                     pass
         finally:
+            chat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await chat_task
             self.publisher.request_stop()
             await publish_task
             heartbeat_task.cancel()
@@ -213,7 +227,12 @@ class AIGenerationWorker:
                             AIGenerationJob.next_attempt_at.asc(),
                             AIGenerationJob.id.asc(),
                         )
-                        .limit(self.settings.ai_worker_batch_size)
+                        .limit(
+                            min(
+                                self.settings.ai_worker_batch_size,
+                                self.settings.ai_worker_max_concurrency,
+                            )
+                        )
                     )
                 )
             else:
@@ -222,10 +241,8 @@ class AIGenerationWorker:
         if not job_ids:
             return 0
 
-        semaphore = asyncio.Semaphore(self.settings.ai_worker_max_concurrency)
-
         async def generate_one(job_id: int) -> None:
-            async with semaphore:
+            async with self.generation_semaphore:
                 self.active_tasks += 1
                 try:
                     await self.process_job(job_id)
@@ -1147,7 +1164,7 @@ class AIGenerationWorker:
                 "status": "running",
                 "timestamp": timestamp,
                 "last_heartbeat": timestamp,
-                "active_tasks": self.active_tasks,
+                "active_tasks": self.active_tasks + self.chat_worker.active_tasks,
                 "provider": provider,
                 "provider_ready": provider_ready,
                 "key_required": key_required,

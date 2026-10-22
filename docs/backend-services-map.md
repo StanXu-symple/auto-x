@@ -64,6 +64,7 @@
 | AI 设置、Skill、任务、草稿 `/ai` | `ai.py`；设置与 Skill 由 `api/skill_proxy.py` 转发；另注册 `/tweets/{id}/generate` |
 | AI 监听任务 `/ai/listen-tasks` | `ai_listen.py` 挂载 HTTP 转发路由，实际逻辑在 `skills/listening_routes.py` |
 | AI 数据源 `/ai-data-source` | `ai_data_source.py` |
+| 智能体对话 `/agent-chat` | `agent_chat.py`；会话、提示词关联、异步任务、文章保存，详见 [对话说明](agent-chat.md) |
 | 文章管理、素材、手动发布 `/articles` | `articles.py` |
 | QQ 机器人、群目标、定时任务与投递 `/qq` | `qq.py` |
 | QQ 占位符 `/qq/placeholders` | `qq_placeholders.py` |
@@ -98,6 +99,8 @@
 | 文件 | 作用 |
 | --- | --- |
 | `backend/app/ai_worker.py` | `AIGenerationWorker`：领取生成任务、调用模型、写入草稿、重试；同时运行历史补生成与发布分发 |
+| `backend/app/services/agent_chat_worker.py` | 消费对话任务，执行原子领取、超时处理、取消后的结果拦截；与生成任务共享并发额度 |
+| `backend/app/services/agent_provider.py` | 拼装多轮文章对话上下文，调用模型 Responses 接口，校验对话与文章结构 |
 | `backend/app/services/ai_provider.py` | 模型供应商请求、提示词与结构化响应处理 |
 | `backend/app/services/ai_data_source.py` | 唯一 AI 数据源配置、加密凭据与缓存；API 也使用 |
 | `backend/app/services/ai_defaults.py` | 默认模型、功能点等常量 |

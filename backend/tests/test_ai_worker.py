@@ -179,6 +179,7 @@ async def test_auto_generation_disabled_does_not_starve_manual_jobs(monkeypatch)
     worker.process_job = record_job
     worker.stop_event = asyncio.Event()
     worker.active_tasks = 0
+    worker.generation_semaphore = asyncio.Semaphore(worker.settings.ai_worker_max_concurrency)
     try:
         assert await worker.run_once() == 1
         assert processed == [2]

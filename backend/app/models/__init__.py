@@ -1,4 +1,5 @@
 from app.models.admin import Admin
+from app.models.agent_chat import AgentConversation, AgentTurn
 from app.models.ai import (
     AIDraft,
     AIFeature,
@@ -49,6 +50,8 @@ from app.models.xhs_credential import XiaohongshuCredential
 
 __all__ = [
     "Admin",
+    "AgentConversation",
+    "AgentTurn",
     "AIDraft",
     "AIFeature",
     "AIGenerationJob",

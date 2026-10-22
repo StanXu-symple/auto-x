@@ -10,6 +10,7 @@ import {
   FileSearchOutlined,
   DatabaseOutlined,
   FormOutlined,
+  RobotOutlined,
   AppstoreOutlined,
   BookOutlined,
   BellOutlined,
@@ -38,6 +39,7 @@ const groups = [
   {
     label: '创作与发布',
     items: [
+      { path: '/agent-chat', label: '智能体对话', icon: RobotOutlined },
       { path: '/ai-writing', label: 'AI 创作', icon: FormOutlined },
       { path: '/skills', label: '提示词管理', icon: AppstoreOutlined },
       { path: '/articles', label: '文章管理', icon: BookOutlined },

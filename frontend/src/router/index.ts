@@ -63,6 +63,12 @@ const router = createRouter({
           redirect: (to) => ({ path: '/data-sources', query: { ...to.query, tab: 'ai' }, hash: to.hash }),
         },
         {
+          path: 'agent-chat',
+          name: 'agent-chat',
+          component: () => import('@/views/AgentChatView.vue'),
+          meta: { title: '智能体对话', description: '关联提示词与 Skills，通过对话创作文章' },
+        },
+        {
           path: 'ai-writing',
           name: 'ai-writing',
           component: () => import('@/views/AiWritingView.vue'),
