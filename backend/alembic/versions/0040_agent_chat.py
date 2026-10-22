@@ -51,8 +51,8 @@ def upgrade() -> None:
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.UniqueConstraint("conversation_id", "request_id"),
-        sa.UniqueConstraint("conversation_id", "sequence"),
+        sa.UniqueConstraint("conversation_id", "request_id", name="uq_agent_turn_request"),
+        sa.UniqueConstraint("conversation_id", "sequence", name="uq_agent_turn_sequence"),
     )
     op.create_index("ix_agent_turns_conversation_id", "agent_turns", ["conversation_id"])
     op.create_index("ix_agent_turns_status", "agent_turns", ["status"])

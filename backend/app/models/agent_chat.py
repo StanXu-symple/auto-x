@@ -31,8 +31,8 @@ class AgentConversation(Base):
 class AgentTurn(Base):
     __tablename__ = "agent_turns"
     __table_args__ = (
-        UniqueConstraint("conversation_id", "request_id"),
-        UniqueConstraint("conversation_id", "sequence"),
+        UniqueConstraint("conversation_id", "request_id", name="uq_agent_turn_request"),
+        UniqueConstraint("conversation_id", "sequence", name="uq_agent_turn_sequence"),
         Index(
             "uq_agent_turn_active",
             "conversation_id",
