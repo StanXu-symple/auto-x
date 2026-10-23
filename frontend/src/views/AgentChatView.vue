@@ -21,7 +21,13 @@ import type {
   AgentStreamEvent,
 } from '@/services/agentChat'
 import { getErrorMessage } from '@/services/http'
-import { createAgentRequestId, isActiveTurn, mentionAt, removeMention } from '@/utils/agentChat'
+import {
+  createAgentRequestId,
+  extractAgentOutputPreview,
+  isActiveTurn,
+  mentionAt,
+  removeMention,
+} from '@/utils/agentChat'
 import type { AiSkill } from '@/types'
 
 const route = useRoute()
@@ -69,6 +75,8 @@ interface AgentStreamTrace {
   reasoning: string
   tools: AgentToolTrace[]
   outputChars: number
+  outputRaw: string
+  outputPreview: ReturnType<typeof extractAgentOutputPreview>
 }
 const streamTraces = ref<Record<string, AgentStreamTrace>>({})
 const currentId = computed(() =>
@@ -186,6 +194,8 @@ function updateTrace(turnId: string, event: AgentStreamEvent) {
     reasoning: '',
     tools: [],
     outputChars: 0,
+    outputRaw: '',
+    outputPreview: { reply: '', title: '', excerpt: '', content: '' },
   }
   const trace: AgentStreamTrace = { ...previous, tools: [...previous.tools] }
   if (event.type === 'status') {
@@ -199,6 +209,8 @@ function updateTrace(turnId: string, event: AgentStreamEvent) {
     trace.phase = 'output'
     trace.label = '正在生成回复'
     trace.outputChars += event.delta.length
+    trace.outputRaw = (trace.outputRaw + event.delta).slice(0, 120000)
+    trace.outputPreview = extractAgentOutputPreview(trace.outputRaw)
   } else if (event.type === 'tool') {
     trace.phase = 'tool'
     trace.label = '调用工具'
@@ -616,6 +628,33 @@ onBeforeUnmount(() => {
                     工具调用：{{ tool.name }}（{{
                       tool.phase === 'arguments' ? '参数生成中' : '已开始'
                     }}）
+                  </div>
+                </div>
+                <div
+                  v-if="
+                    traceFor(turn.id)?.outputPreview.reply ||
+                    traceFor(turn.id)?.outputPreview.title ||
+                    traceFor(turn.id)?.outputPreview.content
+                  "
+                  class="stream-preview"
+                >
+                  <p v-if="traceFor(turn.id)?.outputPreview.reply">
+                    {{ traceFor(turn.id)?.outputPreview.reply }}
+                  </p>
+                  <h3 v-if="traceFor(turn.id)?.outputPreview.title">
+                    {{ traceFor(turn.id)?.outputPreview.title }}
+                  </h3>
+                  <p
+                    v-if="traceFor(turn.id)?.outputPreview.excerpt"
+                    class="stream-preview__excerpt"
+                  >
+                    {{ traceFor(turn.id)?.outputPreview.excerpt }}
+                  </p>
+                  <div
+                    v-if="traceFor(turn.id)?.outputPreview.content"
+                    class="stream-preview__content"
+                  >
+                    {{ traceFor(turn.id)?.outputPreview.content }}
                   </div>
                 </div>
               </div>
@@ -1098,6 +1137,29 @@ onBeforeUnmount(() => {
 .stream-trace__tools {
   margin-top: 8px;
   color: #3d705a;
+}
+.stream-preview {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e8e9e1;
+  color: #383b35;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.stream-preview p {
+  margin: 0 0 10px;
+}
+.stream-preview h3 {
+  margin: 12px 0 6px;
+  color: #222820;
+  font-size: 17px;
+}
+.stream-preview__excerpt {
+  color: #72756c;
+}
+.stream-preview__content {
+  line-height: 1.85;
 }
 .turn-error {
   border-left: 2px solid #d2a28b;

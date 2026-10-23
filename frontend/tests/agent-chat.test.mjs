@@ -120,6 +120,16 @@ test('@ only opens at a token boundary and removes the selected token at the car
   assert.equal(utils.removeMention(value, mention), '写一篇 ，保留后面的文字')
 })
 
+test('partial streamed AgentResult JSON exposes reply and article preview text', () => {
+  const preview = utils.extractAgentOutputPreview(
+    '{"reply":"先给你一个\\n开头。","article":{"title":"五分钟整理","excerpt":"下班前","content":"第一步：收好桌面。',
+  )
+  assert.equal(preview.reply, '先给你一个\n开头。')
+  assert.equal(preview.title, '五分钟整理')
+  assert.equal(preview.excerpt, '下班前')
+  assert.equal(preview.content, '第一步：收好桌面。')
+})
+
 test('select both resource types, deduplicate, remove, and send associated IDs', async (t) => {
   const { state, calls } = await setup(t)
   state.text = '写文章 @短'
