@@ -158,3 +158,11 @@ alembic upgrade head
 [Actions 39808724463](https://github.com/StanXu-symple/auto-x/actions/runs/39808724463) 成功后，通过原安装器菜单 2 的 frontend-only 模式更新 tc-2，退出 0。前端固定使用 `sha-e6932980003f8d52d8564f045b80ed6782ee3f70`，镜像摘要为 `sha256:a70804675ffaf71be9ad8c25ebd6c39e1c4e4f75018433558e6205e277f24fdd`，OCI revision 与目标提交一致，容器 healthy。线上入口与对话资源均返回 200，资源字节与容器一致，并包含 UUID 兼容逻辑；未登录对话 API 返回 401。
 
 升级前受限备份为 `/home/docker/auto-x/backups/pre-agent-http-20261022T155356Z`，独立指针为 `backups/agent-http-current.txt`，23 个备份文件清单校验通过。验收确认其余容器 ID、启动时间、镜像和状态保持，数据库仍为 `0040_agent_chat`，完整服务清单、Compose、安装器及控制面文件保持；环境仅改变 `FRONTEND_IMAGE_TAG`。本次没有数据库迁移。已打开的页面需强制刷新后使用新资源。
+
+## 2026-10-23 Flux 流式对话上线
+
+流式改造提交 `03135c8f1f1890dc2bc5710faf5967bf326b9ca1` 已推送 `dev/main`，GitHub Actions [39901771215](https://github.com/StanXu-symple/auto-x/actions/runs/39901771215) 构建成功。tc-2 使用完整 SHA 标签更新 backend、ai-worker、frontend，并由安装器自动更新 auth-center、monitor-agent；hn-1 不需要更新。升级前完整备份为 `/home/docker/auto-x/backups/pre-agent-flux-20261023T045017Z`，目录状态为 `complete`，备份清单、PostgreSQL、Redis、控制面和媒体校验通过。
+
+目标 backend 镜像摘要为 `sha256:509294c9463166369496b4cb886456f99f6d8016965bc8b9755775c6d08aea02a`，frontend 镜像摘要为 `sha256:cb2746602e725ab5392f9091656cede61c07aef5f3cf560637edeaf5870c6f41`；两个镜像的 OCI revision 均为完整提交 SHA。升级后 backend、ai-worker、auth-center、monitor-agent、frontend 均 healthy，migrate 以 0 退出，数据库仍为 `0040_agent_chat`，未选中的 worker、qq-worker、PostgreSQL、Redis 容器保持原 ID、镜像和启动时间，原七项服务清单已恢复。
+
+只读验收确认 backend 与 ai-worker 的 Responses 数据源、Nacos/Skills 解析、心跳和 active-turn 唯一索引正常；未认证的智能体接口仍返回 401，未执行真实模型请求。通过 frontend 代理读取已有完成消息的 SSE 返回 `text/event-stream`，事件为 `status`、`done`；Nginx 运行配置包含 `proxy_buffering off`、`proxy_cache off` 和一小时读取超时。线上 `AgentChatView` 资源与容器文件字节一致，并包含思考摘要和工具状态文案。
