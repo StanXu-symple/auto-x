@@ -1,12 +1,16 @@
+import asyncio
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import CurrentAdmin, DbSession
+from app.api.deps import CurrentAdmin, DbSession, RedisClient, StreamCurrentAdmin
 from app.api.errors import APIError
 from app.db.base import utcnow
+from app.db.session import AsyncSessionFactory
 from app.models.agent_chat import AgentConversation, AgentTurn
 from app.models.ai import AIDraft, AISetting
 from app.schemas.agent_chat import (
@@ -16,6 +20,8 @@ from app.schemas.agent_chat import (
     SendAgentMessage,
 )
 from app.schemas.common import Page
+from app.services.agent_chat_worker import event_stream_key
+from app.services.runtime_logs import sse_event
 from app.services.skill_client import get_skill_client
 
 router = APIRouter(prefix="/agent-chat", tags=["agent-chat"])
@@ -178,6 +184,143 @@ async def send_message(
     conversation.updated_at = utcnow()
     await db.commit()
     return turn
+
+
+@router.get("/conversations/{conversation_id}/messages/{turn_id}/stream")
+async def stream_message(
+    conversation_id: UUID,
+    turn_id: UUID,
+    db: DbSession,
+    admin: StreamCurrentAdmin,
+    redis: RedisClient,
+):
+    """Stream Codex-style status/reasoning/tool/output events for one turn."""
+    conversation, turn = await owned_turn(db, str(conversation_id), str(turn_id), admin.id)
+    initial = {
+        "turn_id": turn.id,
+        "status": turn.status,
+        "phase": "queued" if turn.status == "queued" else turn.status,
+        "label": {
+            "queued": "等待生成",
+            "running": "正在创作",
+            "succeeded": "生成完成",
+            "failed": "生成失败",
+            "cancelled": "已取消",
+        }.get(turn.status, turn.status),
+    }
+
+    async def events():
+        yield sse_event("status", initial)
+        terminal = {"succeeded", "failed", "cancelled"}
+        if initial["status"] in terminal:
+            yield sse_event("done", {"status": initial["status"], "turn_id": str(turn_id)})
+            return
+
+        key = event_stream_key(str(turn_id))
+        last_id = "0-0"
+        minimum_attempts = turn.attempts + 1 if turn.status == "queued" else turn.attempts
+
+        async def terminal_status() -> str | None:
+            # Cancellation and lease expiry can happen after the worker has
+            # started streaming. Check SQL between Redis batches so clients do
+            # not wait forever for a terminal Redis event that the worker is
+            # intentionally prevented from publishing.
+            async with AsyncSessionFactory() as session:
+                latest = await session.get(AgentTurn, str(turn_id))
+            return latest.status if latest and latest.status in terminal else None
+
+        async def terminal_frames(status: str):
+            yield sse_event(
+                "status",
+                {"status": status, "phase": status, "label": status},
+            )
+            yield sse_event("done", {"status": status, "turn_id": str(turn_id)})
+
+        async def forward(rows):
+            nonlocal last_id
+            for stream_name, entries in rows or []:
+                del stream_name
+                for entry_id, fields in entries:
+                    last_id = entry_id
+                    raw = fields.get("payload") if isinstance(fields, dict) else None
+                    if not isinstance(raw, str):
+                        continue
+                    try:
+                        payload = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(payload, dict) or payload.get("turn_id") != str(turn_id):
+                        continue
+                    try:
+                        event_attempts = int(payload.get("attempts", minimum_attempts))
+                    except (TypeError, ValueError):
+                        continue
+                    if event_attempts < minimum_attempts:
+                        continue
+                    event_type = payload.get("type")
+                    if not isinstance(event_type, str):
+                        continue
+                    yield sse_event(event_type, payload)
+
+        if redis is not None:
+            # Read the short replay buffer first, then block on the same Redis
+            # Stream ID. This closes the subscribe/replay race without a pubsub.
+            replay = await redis.xrange(key, min="-", max="+")
+            async for frame in forward([(key, replay)]):
+                yield frame
+                try:
+                    payload = json.loads(frame.split("data:", 1)[1].split("\n", 1)[0])
+                    if payload.get("type") in {"done", "error"}:
+                        return
+                except (IndexError, json.JSONDecodeError):
+                    pass
+            status = await terminal_status()
+            if status:
+                async for frame in terminal_frames(status):
+                    yield frame
+                return
+            while True:
+                rows = await redis.xread({key: last_id}, block=15000, count=100)
+                emitted_terminal = False
+                async for frame in forward(rows):
+                    yield frame
+                    try:
+                        payload = json.loads(frame.split("data:", 1)[1].split("\n", 1)[0])
+                        emitted_terminal = payload.get("type") in {"done", "error"}
+                    except (IndexError, json.JSONDecodeError):
+                        pass
+                if emitted_terminal:
+                    return
+                status = await terminal_status()
+                if status:
+                    async for frame in terminal_frames(status):
+                        yield frame
+                    return
+                yield ": keepalive\n\n"
+        else:
+            # Redis is required in production, but this bounded fallback keeps
+            # local development useful and still delivers terminal state.
+            while True:
+                await asyncio.sleep(1)
+                async with AsyncSessionFactory() as db:
+                    latest = await db.get(AgentTurn, str(turn_id))
+                if latest is None:
+                    return
+                if latest.status in terminal:
+                    async for frame in terminal_frames(latest.status):
+                        yield frame
+                    return
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post(

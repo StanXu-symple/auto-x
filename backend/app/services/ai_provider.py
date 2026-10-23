@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -363,6 +364,46 @@ class AIProviderClient:
                 status_code=response.status_code,
             )
         return response
+
+    @asynccontextmanager
+    async def _stream(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str],
+        timeout_seconds: int,
+    ):
+        try:
+            async with self.client.stream(
+                "POST",
+                url,
+                json=payload,
+                headers=headers,
+                timeout=timeout_seconds,
+                follow_redirects=False,
+            ) as response:
+                if response.is_error:
+                    await response.aread()
+                    detail = sanitize_untrusted_text(response.text, limit=MAX_ERROR_CHARACTERS)
+                    retryable = (
+                        response.status_code in {408, 409, 425, 429} or response.status_code >= 500
+                    )
+                    raise AIProviderError(
+                        f"AI provider HTTP {response.status_code}: {detail}",
+                        retryable=retryable,
+                        status_code=response.status_code,
+                    )
+                content_type = response.headers.get("content-type", "").split(";", 1)[0]
+                if content_type != "text/event-stream":
+                    await response.aread()
+                    raise AIProviderError(
+                        "AI provider did not return a stream",
+                        retryable=True,
+                    )
+                yield response
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            raise AIProviderError(f"AI provider transport error: {exc}", retryable=True) from exc
 
     @staticmethod
     def _json_response(response: httpx.Response) -> dict[str, Any]:

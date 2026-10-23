@@ -18,6 +18,7 @@ import type {
   AgentReference,
   AgentTurn,
   AgentMessagePayload,
+  AgentStreamEvent,
 } from '@/services/agentChat'
 import { getErrorMessage } from '@/services/http'
 import { createAgentRequestId, isActiveTurn, mentionAt, removeMention } from '@/utils/agentChat'
@@ -45,10 +46,31 @@ const transcript = ref<HTMLElement>()
 const mention = ref<ReturnType<typeof mentionAt>>(null)
 const optionIndex = ref(0)
 const composing = ref(false)
-let timer: ReturnType<typeof setTimeout> | undefined
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+let elapsedTimer: ReturnType<typeof setInterval> | undefined
 let epoch = 0
 let disposed = false
 let pending: { key: string; payload: AgentMessagePayload } | null = null
+const clock = ref(Date.now())
+const streamActive = ref<Record<string, boolean>>({})
+const streamControllers = new Map<string, AbortController>()
+const streamStarted = new Set<string>()
+interface AgentToolTrace {
+  name: string
+  callId?: string
+  phase: string
+  argumentsText: string
+}
+interface AgentStreamTrace {
+  phase: string
+  label: string
+  startedAt: number
+  elapsedMs: number
+  reasoning: string
+  tools: AgentToolTrace[]
+  outputChars: number
+}
+const streamTraces = ref<Record<string, AgentStreamTrace>>({})
 const currentId = computed(() =>
   typeof route.query.conversation === 'string' ? route.query.conversation : '',
 )
@@ -124,12 +146,128 @@ async function loadSkills() {
 }
 
 function stopPolling() {
-  if (timer) clearTimeout(timer)
-  timer = undefined
+  if (pollTimer) clearTimeout(pollTimer)
+  pollTimer = undefined
 }
 function schedulePoll() {
   stopPolling()
-  if (!disposed && active.value) timer = setTimeout(() => refresh(), 2000)
+  if (!disposed && active.value && !streamControllers.size)
+    pollTimer = setTimeout(() => refresh(), 2000)
+}
+
+function traceFor(turnId: string): AgentStreamTrace | undefined {
+  return streamTraces.value[turnId]
+}
+function streamLabel(turn: AgentTurn): string {
+  return traceFor(turn.id)?.label || statusLabels[turn.status]
+}
+function formatElapsed(turn: AgentTurn): string {
+  const trace = traceFor(turn.id)
+  const elapsed = trace
+    ? Math.max(trace.elapsedMs, trace.startedAt ? clock.value - trace.startedAt : 0)
+    : 0
+  const seconds = Math.floor(elapsed / 1000)
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+}
+function stopStream(turnId: string) {
+  streamControllers.get(turnId)?.abort()
+  streamControllers.delete(turnId)
+  streamActive.value = { ...streamActive.value, [turnId]: false }
+}
+function stopAllStreams() {
+  for (const turnId of streamControllers.keys()) stopStream(turnId)
+}
+function updateTrace(turnId: string, event: AgentStreamEvent) {
+  const previous = streamTraces.value[turnId] || {
+    phase: 'queued',
+    label: '等待生成',
+    startedAt: Date.now(),
+    elapsedMs: 0,
+    reasoning: '',
+    tools: [],
+    outputChars: 0,
+  }
+  const trace: AgentStreamTrace = { ...previous, tools: [...previous.tools] }
+  if (event.type === 'status') {
+    trace.phase = event.phase
+    trace.label = event.label
+  } else if (event.type === 'reasoning') {
+    trace.phase = 'thinking'
+    trace.label = '模型思考摘要'
+    trace.reasoning = (trace.reasoning + event.delta).slice(-30000)
+  } else if (event.type === 'output') {
+    trace.phase = 'output'
+    trace.label = '正在生成回复'
+    trace.outputChars += event.delta.length
+  } else if (event.type === 'tool') {
+    trace.phase = 'tool'
+    trace.label = '调用工具'
+    const index = event.call_id
+      ? trace.tools.findIndex((item) => item.callId === event.call_id)
+      : trace.tools.length - 1
+    if (index >= 0 && event.delta) trace.tools[index]!.argumentsText += event.delta
+    else
+      trace.tools.push({
+        name: event.name || '工具调用',
+        callId: event.call_id,
+        phase: event.phase,
+        argumentsText: event.delta || '',
+      })
+  } else if (event.type === 'error') {
+    trace.phase = 'failed'
+    trace.label = '生成失败'
+  } else if (event.type === 'done') {
+    trace.phase = event.status
+    trace.label = event.status === 'succeeded' ? '生成完成' : statusLabels[event.status]
+    trace.elapsedMs = Math.max(trace.elapsedMs, clock.value - trace.startedAt)
+  }
+  streamTraces.value = { ...streamTraces.value, [turnId]: trace }
+}
+function handleStreamEvent(turn: AgentTurn, event: AgentStreamEvent) {
+  updateTrace(turn.id, event)
+  if (
+    event.type === 'status' &&
+    event.status &&
+    ['queued', 'running', 'succeeded', 'failed', 'cancelled'].includes(event.status)
+  )
+    turn.status = event.status as AgentTurn['status']
+  if (event.type === 'error') {
+    turn.status = 'failed'
+    turn.error = event.message
+  }
+  if (event.type === 'done') {
+    turn.status = event.status
+    stopStream(turn.id)
+    void refresh()
+  }
+}
+async function startStream(turn: AgentTurn) {
+  if (!currentId.value || streamStarted.has(turn.id) || !isActiveTurn(turn)) return
+  streamStarted.add(turn.id)
+  const controller = new AbortController()
+  streamControllers.set(turn.id, controller)
+  streamActive.value = { ...streamActive.value, [turn.id]: true }
+  updateTrace(turn.id, {
+    type: 'status',
+    phase: 'queued',
+    label: '等待生成',
+    status: turn.status,
+  })
+  try {
+    await agentChatApi.stream(currentId.value, turn.id, controller.signal, (event) =>
+      handleStreamEvent(turn, event),
+    )
+  } catch (e) {
+    if (!controller.signal.aborted && !disposed) {
+      streamStarted.delete(turn.id)
+      error.value = getErrorMessage(e, '对话流暂时中断，将继续等待生成结果')
+      schedulePoll()
+    }
+  } finally {
+    streamControllers.delete(turn.id)
+    streamActive.value = { ...streamActive.value, [turn.id]: false }
+    if (!disposed && isActiveTurn(turn)) schedulePoll()
+  }
 }
 async function refresh(initial = false) {
   const id = currentId.value
@@ -142,6 +280,8 @@ async function refresh(initial = false) {
     const changed = JSON.stringify(detail.value?.turns) !== JSON.stringify(result.turns)
     detail.value = result
     error.value = ''
+    const running = result.turns.find(isActiveTurn)
+    if (running) void startStream(running)
     if (initial)
       selected.value =
         result.turns[result.turns.length - 1]?.skill_snapshot.map((item) => ({ ...item })) || []
@@ -179,6 +319,8 @@ async function navigate(id = '') {
 watch(
   currentId,
   () => {
+    stopAllStreams()
+    streamStarted.clear()
     stopPolling()
     ++epoch
     if (currentId.value && detail.value?.id === currentId.value) return
@@ -308,6 +450,7 @@ async function send() {
     const turn = await agentChatApi.send(id, pending.payload)
     if (disposed || currentId.value !== id) return
     if (!detail.value.turns.some((item) => item.id === turn.id)) detail.value.turns.push(turn)
+    void startStream(turn)
     text.value = ''
     pending = null
     void loadList()
@@ -338,6 +481,10 @@ async function turnAction(turn: AgentTurn, kind: 'cancel' | 'retry' | 'save') {
           item.id === result.id ? result : item,
         )
         error.value = ''
+        if (isActiveTurn(result)) {
+          streamStarted.delete(result.id)
+          void startStream(result)
+        } else stopStream(result.id)
       }
     }
   } catch (e) {
@@ -351,11 +498,16 @@ async function turnAction(turn: AgentTurn, kind: 'cancel' | 'retry' | 'save') {
 onMounted(() => {
   void loadList()
   void loadSkills()
+  elapsedTimer = setInterval(() => {
+    clock.value = Date.now()
+  }, 250)
 })
 onBeforeUnmount(() => {
   disposed = true
   ++epoch
   stopPolling()
+  stopAllStreams()
+  if (elapsedTimer) clearInterval(elapsedTimer)
 })
 </script>
 
@@ -434,7 +586,7 @@ onBeforeUnmount(() => {
             <div class="assistant-message">
               <span class="speaker"><RobotOutlined /> 创作助手</span>
               <div v-if="isActiveTurn(turn)" class="generation-status" role="status">
-                <a-spin size="small" /> {{ statusLabels[turn.status] }}…
+                <a-spin size="small" /> {{ streamLabel(turn) }} · {{ formatElapsed(turn) }}
                 <a-button
                   size="small"
                   type="text"
@@ -444,8 +596,45 @@ onBeforeUnmount(() => {
                   >取消生成</a-button
                 >
               </div>
+              <div v-if="isActiveTurn(turn) && traceFor(turn.id)" class="stream-trace">
+                <div class="stream-trace__meta">
+                  <span v-if="traceFor(turn.id)?.phase === 'thinking'" class="stream-badge thinking"
+                    >思考</span
+                  ><span v-else-if="traceFor(turn.id)?.phase === 'tool'" class="stream-badge tool"
+                    >工具</span
+                  ><span v-else class="stream-badge status">状态</span>
+                  <span v-if="traceFor(turn.id)?.outputChars"
+                    >已接收 {{ traceFor(turn.id)?.outputChars }} 字符</span
+                  >
+                </div>
+                <details v-if="traceFor(turn.id)?.reasoning" open class="stream-trace__detail">
+                  <summary>模型思考摘要</summary>
+                  <p>{{ traceFor(turn.id)?.reasoning }}</p>
+                </details>
+                <div v-if="traceFor(turn.id)?.tools.length" class="stream-trace__tools">
+                  <div v-for="tool in traceFor(turn.id)?.tools" :key="tool.name + tool.phase">
+                    工具调用：{{ tool.name }}（{{
+                      tool.phase === 'arguments' ? '参数生成中' : '已开始'
+                    }}）
+                  </div>
+                </div>
+              </div>
               <template v-else-if="turn.status === 'succeeded'">
                 <p class="message-text">{{ turn.reply }}</p>
+                <div
+                  v-if="traceFor(turn.id)?.reasoning || traceFor(turn.id)?.tools.length"
+                  class="stream-trace stream-trace--done"
+                >
+                  <details open class="stream-trace__detail">
+                    <summary>生成过程</summary>
+                    <p v-if="traceFor(turn.id)?.reasoning">
+                      模型思考摘要：{{ traceFor(turn.id)?.reasoning }}
+                    </p>
+                    <p v-for="tool in traceFor(turn.id)?.tools" :key="tool.name + tool.phase">
+                      工具调用：{{ tool.name }}
+                    </p>
+                  </details>
+                </div>
                 <article v-if="turn.article" class="article-result">
                   <div class="article-heading">
                     <span>文章草稿</span><span v-if="turn.article_id">已保存</span>
@@ -858,6 +1047,57 @@ onBeforeUnmount(() => {
   gap: 10px;
   font-size: 13px;
   color: #72756c;
+}
+.stream-trace {
+  margin: 12px 0 0 24px;
+  padding: 12px 14px;
+  border: 1px solid #e8e9e1;
+  border-radius: 9px;
+  background: #fbfbf8;
+  color: #72756c;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.stream-trace--done {
+  margin-left: 0;
+}
+.stream-trace__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stream-badge {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+.stream-badge.thinking {
+  background: #eee9f8;
+  color: #6c4ca0;
+}
+.stream-badge.tool {
+  background: #edf3ed;
+  color: #3d705a;
+}
+.stream-badge.status {
+  background: #f3e9e2;
+  color: #92442e;
+}
+.stream-trace__detail {
+  margin-top: 8px;
+}
+.stream-trace__detail summary {
+  cursor: pointer;
+  color: #54574e;
+}
+.stream-trace__detail p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.stream-trace__tools {
+  margin-top: 8px;
+  color: #3d705a;
 }
 .turn-error {
   border-left: 2px solid #d2a28b;

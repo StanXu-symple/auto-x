@@ -30,8 +30,10 @@ sequenceDiagram
     AI->>Model: Responses 请求，包含历史对话和写作指令
     Model-->>AI: 结构化回复与完整文章
     AI->>DB: 凭领取令牌写回结果
-    UI->>API: 轮询会话详情
-    API-->>UI: 回复 / 文章 / 错误状态
+    UI->>API: 连接消息 SSE 流
+    API-->>UI: 状态 / 思考摘要 / 工具调用 / 回复增量
+    UI->>API: 读取会话详情
+    API-->>UI: 最终回复 / 文章 / 错误状态
     UI->>API: 保存某一版文章
     API->>DB: 写入现有 ai_drafts 表
 ```
@@ -52,6 +54,7 @@ sequenceDiagram
 | POST | `/conversations` | 创建会话 |
 | GET | `/conversations/{id}` | 读取会话与消息状态 |
 | POST | `/conversations/{id}/messages` | 提交消息，返回 202 |
+| GET | `/conversations/{id}/messages/{turn_id}/stream` | Flux 风格 SSE 流，转发生成状态和增量事件 |
 | POST | `/conversations/{id}/messages/{turn_id}/cancel` | 取消排队或生成中的消息 |
 | POST | `/conversations/{id}/messages/{turn_id}/retry` | 重试最后一条失败或取消的消息 |
 | POST | `/conversations/{id}/messages/{turn_id}/article` | 保存文章，返回字符串类型的 `article_id` |
@@ -67,6 +70,18 @@ sequenceDiagram
 ```
 
 `skill_ids` 同时承载提示词与 Skills 的 ID，按选择顺序应用。后端从 skill-worker 获取指令，前端不能提交自定义 system 指令冒充已有资源。相同会话内重发同一 `request_id` 和相同内容会返回原消息；改变内容或关联项则返回 409。
+
+消息流使用 `text/event-stream`，事件数据保持小而稳定的业务协议：
+
+| `type` | 用途 |
+| --- | --- |
+| `status` | `connecting`、`preparing`、`thinking`、`finalizing` 等阶段和可读状态 |
+| `reasoning` | 模型返回的 reasoning summary 增量 |
+| `tool` | 工具调用的开始和参数增量；当前版本只展示，不执行工具 |
+| `output` | 回复 JSON 的增量计数，最终正文从会话详情读取 |
+| `done` / `error` | 生成完成或失败，随后读取最终会话详情 |
+
+这个协议对应 OpenAI Responses 的 `response.*` 流事件，命名和生命周期参考 Codex 的事件分层；Backend 负责鉴权、事件过滤和 Redis Stream 转发，前端不直接连接模型服务。
 
 模型 Responses 的 `output_text` 内容使用以下业务结构，通过 `AgentResult` 生成的严格 JSON Schema 约束。这两个字段是 Auto-X 的对话业务约定，不是 OpenAI 响应信封的顶层字段：
 
@@ -91,7 +106,8 @@ sequenceDiagram
 - 重试保留原消息的提示词 / Skill 快照，采用当前生成长度、超时等设置，以及执行时的 AI 数据源配置。
 - 每条用户消息最多 20,000 字符，每次最多关联 20 项，关联指令总量最多 160,000 字符；每个会话最多 100 条用户消息。
 - 模型上下文包含最近至多 12 轮成功对话，按 120,000 字符预算保留完整轮次；必要时额外附加最近一版文章，避免长时间讨论后丢失编辑对象。更早的讨论仍保存在界面，但不保证进入模型上下文。
-- 前端每 2 秒查询运行中会话；首版不是逐字流式输出。
+- 前端通过 SSE 接收运行中的状态、模型 reasoning summary、工具调用事件和回复增量，并显示本次生成耗时；连接中断时回退到会话详情刷新。
+- SSE 事件只转发模型明确返回的 reasoning summary，不展示隐藏的内部思维链。当前文章助手没有配置可执行工具；若上游返回工具事件，界面会按工具阶段展示名称和参数生成状态，执行能力仍需后续接入具体微服务。
 - 会话按创建者隔离。保存到文章管理后，沿用现有文章管理的管理员访问规则。
 
 ## 升级

@@ -1,6 +1,7 @@
 """Durable backend -> ai-worker invocation with fenced, bounded claims."""
 
 import asyncio
+import json
 import logging
 from datetime import timedelta
 from uuid import uuid4
@@ -10,11 +11,16 @@ from sqlalchemy import select, update
 from app.db.base import utcnow
 from app.models.agent_chat import AgentTurn
 from app.models.ai import AISetting
-from app.services.agent_provider import generate_agent_reply
+from app.services.agent_provider import stream_agent_reply
 from app.services.ai_data_source import AIDataSourceUnavailableError, get_ai_data_source
 from app.services.ai_provider import AIProviderError
 
 logger = logging.getLogger(__name__)
+EVENT_STREAM_TTL_SECONDS = 24 * 60 * 60
+
+
+def event_stream_key(turn_id: str) -> str:
+    return f"xsentinel:agent-chat:events:{turn_id}"
 
 
 class AgentChatWorker:
@@ -26,6 +32,33 @@ class AgentChatWorker:
         self.semaphore = semaphore
         self.stop_event = stop_event
         self.active_tasks = 0
+
+    async def publish_event(
+        self, turn_id: str, event: dict[str, object], *, attempts: int | None = None
+    ) -> None:
+        if self.redis is None:
+            return
+        payload = {
+            **event,
+            "turn_id": turn_id,
+            "timestamp": utcnow().isoformat(),
+        }
+        if attempts is not None:
+            payload["attempts"] = attempts
+        # Keep live events short-lived and bounded. The final turn remains durable in SQL.
+        try:
+            await self.redis.xadd(
+                event_stream_key(turn_id),
+                {"payload": json.dumps(payload, ensure_ascii=False)},
+                maxlen=2000,
+                approximate=True,
+            )
+            await self.redis.expire(event_stream_key(turn_id), EVENT_STREAM_TTL_SECONDS)
+        except Exception:
+            logger.warning(
+                "Agent chat event publish failed",
+                extra={"agent_turn_id": turn_id, "error_type": "redis"},
+            )
 
     async def run(self) -> None:
         while not self.stop_event.is_set():
@@ -111,6 +144,12 @@ class AgentChatWorker:
             )
             if claimed.rowcount != 1:
                 return
+            attempt_number = turn.attempts + 1
+
+        async def emit(event: dict[str, object]) -> None:
+            await self.publish_event(turn_id, event, attempts=attempt_number)
+
+        await emit({"type": "status", "phase": "preparing", "label": "正在准备上下文"})
         try:
             # Entire execution is bounded below the lease, including config/history reads.
             async with asyncio.timeout(timeout):
@@ -130,8 +169,14 @@ class AgentChatWorker:
                             .order_by(AgentTurn.sequence)
                         )
                     )
-                result = await generate_agent_reply(self.provider, runtime, history, turn)
-            await self.finish(
+                result = await stream_agent_reply(
+                    self.provider,
+                    runtime,
+                    history,
+                    turn,
+                    emit,
+                )
+            finished = await self.finish(
                 turn_id,
                 token,
                 status="succeeded",
@@ -139,16 +184,26 @@ class AgentChatWorker:
                 article=result.article.model_dump() if result.article else None,
                 error=None,
             )
+            if finished:
+                await emit({"type": "done", "status": "succeeded"})
         except asyncio.CancelledError:
             await self.finish(turn_id, token, status="queued", error=None)
             raise
         except AIDataSourceUnavailableError:
-            await self.finish(
+            finished = await self.finish(
                 turn_id,
                 token,
                 status="failed",
                 error="AI 未启用或数据源不可用，请检查 AI 创作设置与 AI 数据源后重试",
             )
+            if finished:
+                await emit(
+                    {
+                        "type": "error",
+                        "phase": "failed",
+                        "message": "AI 未启用或数据源不可用，请检查 AI 创作设置与 AI 数据源后重试",
+                    },
+                )
         except (AIProviderError, TimeoutError) as exc:
             # Never persist upstream response bodies: they can echo secrets or prompts.
             if isinstance(exc, TimeoutError):
@@ -157,7 +212,9 @@ class AgentChatWorker:
                 error = f"模型服务请求失败（HTTP {exc.status_code}），请检查数据源配置后重试"
             else:
                 error = "模型回复失败、被拒绝或未完整返回，请检查输出长度设置或调整要求后重试"
-            await self.finish(turn_id, token, status="failed", error=error)
+            finished = await self.finish(turn_id, token, status="failed", error=error)
+            if finished:
+                await emit({"type": "error", "phase": "failed", "message": error})
         except Exception as exc:
             logger.error(
                 "Agent chat generation failed",
@@ -166,7 +223,10 @@ class AgentChatWorker:
                     "error_type": type(exc).__name__,
                 },
             )
-            await self.finish(turn_id, token, status="failed", error="生成失败，请稍后重试")
+            error = "生成失败，请稍后重试"
+            finished = await self.finish(turn_id, token, status="failed", error=error)
+            if finished:
+                await emit({"type": "error", "phase": "failed", "message": error})
 
     async def finish(self, turn_id: str, token: str, **values) -> bool:
         async with self.session_factory() as db, db.begin():

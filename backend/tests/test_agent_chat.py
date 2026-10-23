@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import Integer, MetaData, func, inspect, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_current_admin, get_current_admin_for_stream, get_db, get_redis
 from app.api.errors import APIError
 from app.api.routes import agent_chat
 from app.core.config import Settings
@@ -28,7 +28,7 @@ from app.schemas.agent_chat import AgentResult, SendAgentMessage
 from app.schemas.ai import AISkillOut
 from app.services import agent_chat_worker
 from app.services.agent_chat_worker import AgentChatWorker
-from app.services.agent_provider import chat_messages, generate_agent_reply
+from app.services.agent_provider import chat_messages, generate_agent_reply, stream_agent_reply
 from app.services.ai_data_source import AIDataSourceRuntime
 from app.services.ai_provider import AIProviderClient, AIProviderError
 
@@ -95,6 +95,8 @@ async def api(factory):
 
     app.dependency_overrides[get_db] = session
     app.dependency_overrides[get_current_admin] = lambda: SimpleNamespace(id=1)
+    app.dependency_overrides[get_current_admin_for_stream] = lambda: SimpleNamespace(id=1)
+    app.dependency_overrides[get_redis] = lambda: None
 
     @app.exception_handler(APIError)
     async def handle(_request, exc):
@@ -224,6 +226,22 @@ async def test_retry_cancel_save_and_new_version(api, factory):
         assert all(row.article_source == "ai" and row.job_id is None for row in articles)
 
 
+async def test_stream_returns_terminal_state_for_completed_turn(api, factory):
+    client, _ = api
+    path = await create(api)
+    turn = (await client.post(path + "/messages", json=payload())).json()
+    async with factory() as db:
+        row = await db.get(AgentTurn, turn["id"])
+        row.status, row.reply, row.article = "succeeded", "完成", None
+        await db.commit()
+    response = await client.get(path + "/messages/" + turn["id"] + "/stream")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: status" in response.text
+    assert '"status": "succeeded"' in response.text
+    assert "event: done" in response.text
+
+
 async def queued_turn(factory):
     async with factory() as db:
         conversation = AgentConversation(admin_id=1)
@@ -253,7 +271,11 @@ async def test_worker_multiturn_and_fenced_cancellation(factory, monkeypatch):
     runner = worker(factory)
     monkeypatch.setattr(agent_chat_worker, "get_ai_data_source", AsyncMock(return_value=RUNTIME))
     generate = AsyncMock(return_value=AgentResult(reply="完成", article=ARTICLE))
-    monkeypatch.setattr(agent_chat_worker, "generate_agent_reply", generate)
+
+    async def stream(*args):
+        return await generate(*args[:4])
+
+    monkeypatch.setattr(agent_chat_worker, "stream_agent_reply", stream)
     await runner.run_once()
     async with factory() as db:
         row = await db.get(AgentTurn, first.id)
@@ -312,7 +334,7 @@ async def test_worker_does_not_store_provider_secrets(factory, monkeypatch):
     monkeypatch.setattr(agent_chat_worker, "get_ai_data_source", AsyncMock(return_value=RUNTIME))
     monkeypatch.setattr(
         agent_chat_worker,
-        "generate_agent_reply",
+        "stream_agent_reply",
         AsyncMock(
             side_effect=AIProviderError(
                 "HTTP error: secret-key-and-prompt", retryable=True, status_code=401
@@ -335,7 +357,7 @@ async def test_worker_shutdown_requeues_and_shares_generation_capacity(factory, 
         await asyncio.Event().wait()
 
     monkeypatch.setattr(agent_chat_worker, "get_ai_data_source", AsyncMock(return_value=RUNTIME))
-    monkeypatch.setattr(agent_chat_worker, "generate_agent_reply", slow_model)
+    monkeypatch.setattr(agent_chat_worker, "stream_agent_reply", slow_model)
     # Simulate an existing tweet generation holding the shared model slot.
     await runner.semaphore.acquire()
     task = asyncio.create_task(runner.process(turn.id))
@@ -414,6 +436,70 @@ async def test_provider_responses_contract_and_article_history():
     assert schema["required"] == ["reply", "article"]
     assert schema["additionalProperties"] is False
     assert schema["$defs"]["AgentArticle"]["additionalProperties"] is False
+
+
+async def test_provider_stream_emits_reasoning_tool_and_output_events():
+    streamed = []
+
+    async def collect(event):
+        streamed.append(event)
+
+    output = json.dumps({"reply": "流式完成", "article": ARTICLE}, ensure_ascii=False)
+    frames = [
+        {"type": "response.created"},
+        {"type": "response.output_item.added", "item": {"type": "reasoning"}},
+        {"type": "response.reasoning_summary_text.delta", "delta": "先梳理结构。"},
+        {
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call",
+                "id": "item-1",
+                "name": "文章结构检查",
+                "call_id": "call-1",
+            },
+        },
+        {
+            "type": "response.function_call_arguments.delta",
+            "item_id": "item-1",
+            "delta": '{"section":1}',
+        },
+        {"type": "response.output_text.delta", "delta": output[:20]},
+        {"type": "response.output_text.delta", "delta": output[20:]},
+        {"type": "response.completed", "response": {"status": "completed"}},
+    ]
+    body = "".join(
+        f"event: {frame['type']}\ndata: {json.dumps(frame, ensure_ascii=False)}\n\n"
+        for frame in frames
+    )
+
+    async def respond(request):
+        payload = json.loads(request.content)
+        assert payload["stream"] is True
+        assert payload["reasoning"]["summary"] == "auto"
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=body.encode(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        result = await stream_agent_reply(
+            AIProviderClient(Settings(_env_file=None), http),
+            RUNTIME,
+            [],
+            AgentTurn(content="写作", config_snapshot=CONFIG, skill_snapshot=[]),
+            collect,
+        )
+    assert result.reply == "流式完成"
+    types = [event["type"] for event in streamed]
+    assert types.count("reasoning") == 1
+    assert types.count("tool") == 2
+    assert types.count("output") == 2
+    assert streamed[types.index("reasoning")]["delta"] == "先梳理结构。"
+    tool_arguments = next(
+        event for event in streamed if event["type"] == "tool" and event["phase"] == "arguments"
+    )
+    assert tool_arguments["call_id"] == "call-1"
 
 
 @pytest.mark.parametrize(

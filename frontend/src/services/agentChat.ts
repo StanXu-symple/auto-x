@@ -1,4 +1,4 @@
-import { http } from './http'
+import { http, TOKEN_KEY } from './http'
 import type { EntityId, PaginatedResponse } from '@/types'
 
 export interface AgentReference {
@@ -42,7 +42,24 @@ export interface AgentMessagePayload {
   content: string
   skill_ids: EntityId[]
 }
+export type AgentStreamEvent =
+  | { type: 'status'; phase: string; label: string; status?: string; turn_id?: string }
+  | { type: 'reasoning'; delta: string; turn_id?: string }
+  | { type: 'output'; delta: string; turn_id?: string }
+  | {
+      type: 'tool'
+      phase: 'started' | 'arguments'
+      name?: string
+      call_id?: string
+      delta?: string
+      turn_id?: string
+    }
+  | { type: 'done'; status: AgentTurn['status']; turn_id?: string }
+  | { type: 'error'; phase: 'failed'; message: string; turn_id?: string }
+
+type StreamListener = (event: AgentStreamEvent) => void
 const base = '/agent-chat/conversations'
+const apiBase = String(import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
 export const agentChatApi = {
   async list(page = 1) {
     return (
@@ -59,6 +76,50 @@ export const agentChatApi = {
   },
   async send(id: string, payload: AgentMessagePayload) {
     return (await http.post<AgentTurn>(`${base}/${id}/messages`, payload)).data
+  },
+  async stream(id: string, turnId: string, signal: AbortSignal, onEvent: StreamListener) {
+    const token = localStorage.getItem(TOKEN_KEY)
+    const response = await fetch(
+      `${apiBase}${base}/${encodeURIComponent(id)}/messages/${encodeURIComponent(turnId)}/stream`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal },
+    )
+    if (response.status === 401) {
+      localStorage.removeItem(TOKEN_KEY)
+      localStorage.removeItem('x-sentinel-user')
+      window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)
+      throw new Error('登录状态已失效')
+    }
+    if (!response.ok) {
+      const error = await response.json().catch(() => null)
+      throw new Error(error?.detail || `对话流连接失败（HTTP ${response.status}）`)
+    }
+    if (!response.body) throw new Error('当前浏览器不支持对话流')
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+        const frames = buffer.split('\n\n')
+        buffer = frames.pop() || ''
+        for (const frame of frames) {
+          if (!frame || frame.startsWith(':')) continue
+          const data: string[] = []
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('data:')) data.push(line.slice(5).trimStart())
+          }
+          if (!data.length) continue
+          const event = JSON.parse(data.join('\n')) as AgentStreamEvent
+          onEvent(event)
+          if (event.type === 'done' || event.type === 'error') return
+        }
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined)
+      reader.releaseLock()
+    }
   },
   async cancel(id: string, turn: string) {
     return (await http.post<AgentTurn>(`${base}/${id}/messages/${turn}/cancel`)).data
