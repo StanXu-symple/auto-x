@@ -27,6 +27,7 @@ from app.models.ai import AIDraft, AISetting
 from app.schemas.agent_chat import AgentResult, SendAgentMessage
 from app.schemas.ai import AISkillOut
 from app.services import agent_chat_worker
+from app.services.agent_chat_cleanup import AgentChatCleanup
 from app.services.agent_chat_worker import AgentChatWorker
 from app.services.agent_provider import chat_messages, generate_agent_reply, stream_agent_reply
 from app.services.ai_data_source import AIDataSourceRuntime
@@ -140,6 +141,278 @@ async def test_send_idempotent_and_owner_isolation(api, factory):
     turn_path = path + "/messages/" + first.json()["id"]
     for operation in ("cancel", "retry", "article"):
         assert (await client.post(turn_path + "/" + operation)).status_code == 404
+
+
+async def test_delete_conversation_removes_owned_turns_and_rejects_other_owner(api, factory):
+    client, app = api
+    path = await create(api)
+    turn = (await client.post(path + "/messages", json=payload())).json()
+    assert (await client.delete(path)).status_code == 204
+    assert (await client.get(path)).status_code == 404
+    async with factory() as db:
+        assert await db.get(AgentTurn, turn["id"]) is None
+
+    other = await create(api)
+    app.dependency_overrides[get_current_admin] = lambda: SimpleNamespace(id=2)
+    assert (await client.delete(other)).status_code == 404
+    async with factory() as db:
+        assert await db.get(AgentConversation, other.rsplit("/", 1)[-1]) is not None
+
+
+async def test_delete_preserves_saved_article_and_clears_streams(api, factory):
+    client, app = api
+    path = await create(api)
+    turn = (await client.post(path + "/messages", json=payload())).json()
+    async with factory() as db:
+        row = await db.get(AgentTurn, turn["id"])
+        row.status, row.reply, row.article = "succeeded", "完成", ARTICLE
+        await db.commit()
+    saved = (await client.post(path + "/messages/" + turn["id"] + "/article")).json()
+    redis = SimpleNamespace(delete=AsyncMock())
+    app.dependency_overrides[get_redis] = lambda: redis
+    assert (await client.delete(path)).status_code == 204
+    redis.delete.assert_awaited_once_with(agent_chat_worker.event_stream_key(turn["id"]))
+    async with factory() as db:
+        assert await db.get(AgentTurn, turn["id"]) is None
+        article = await db.get(AIDraft, int(saved["article_id"]))
+        assert article.content == ARTICLE["content"]
+
+
+async def test_delete_during_generation_discards_late_result(api, factory, monkeypatch):
+    client, _ = api
+    path = await create(api)
+    turn = (await client.post(path + "/messages", json=payload())).json()
+    runner = worker(factory)
+    monkeypatch.setattr(agent_chat_worker, "get_ai_data_source", AsyncMock(return_value=RUNTIME))
+
+    async def late_reply(*_):
+        assert (await client.delete(path)).status_code == 204
+        return AgentResult(reply="late result", article=ARTICLE)
+
+    monkeypatch.setattr(agent_chat_worker, "stream_agent_reply", late_reply)
+    await runner.run_once()
+    async with factory() as db:
+        assert await db.get(AgentTurn, turn["id"]) is None
+        assert await db.get(AgentConversation, path.rsplit("/", 1)[-1]) is None
+    runner.redis = SimpleNamespace(pipeline=lambda **_: pytest.fail("recreated deleted stream"))
+    with pytest.raises(agent_chat_worker.AgentTurnRemoved):
+        await runner.publish_event(turn["id"], {"type": "output", "delta": "late"}, attempts=1)
+
+
+@pytest.mark.parametrize("remove_during_stream", [False, True])
+async def test_worker_streams_current_attempt_and_stops_after_deletion(
+    api, factory, monkeypatch, remove_during_stream
+):
+    client, _ = api
+    path = await create(api)
+    turn = (await client.post(path + "/messages", json=payload())).json()
+    emitted = []
+
+    class Pipeline:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        def xadd(self, key, fields, **_):
+            emitted.append(json.loads(fields["payload"]))
+
+        def expire(self, *_):
+            pass
+
+        async def execute(self):
+            pass
+
+    runner = worker(factory)
+    runner.redis = SimpleNamespace(pipeline=lambda **_: Pipeline())
+    monkeypatch.setattr(agent_chat_worker, "get_ai_data_source", AsyncMock(return_value=RUNTIME))
+
+    async def streaming(_provider, _runtime, _history, _turn, emit):
+        await emit({"type": "output", "delta": "before deletion"})
+        if remove_during_stream:
+            assert (await client.delete(path)).status_code == 204
+            await emit({"type": "output", "delta": "after deletion"})
+            pytest.fail("generation did not stop after deletion")
+        return AgentResult(reply="completed", article=ARTICLE)
+
+    monkeypatch.setattr(agent_chat_worker, "stream_agent_reply", streaming)
+    await runner.run_once()
+    expected_events = ["status", "output"] + ([] if remove_during_stream else ["done"])
+    assert [item["type"] for item in emitted] == expected_events
+    assert all(item["attempts"] == 1 for item in emitted)
+    assert runner.active_tasks == 0
+    async with factory() as db:
+        row = await db.get(AgentTurn, turn["id"])
+        if remove_during_stream:
+            assert row is None
+        else:
+            assert row.status == "succeeded" and row.reply == "completed"
+
+
+async def test_stream_ends_when_conversation_is_deleted(api, factory, monkeypatch):
+    client, app = api
+    path = await create(api)
+    turn = (await client.post(path + "/messages", json=payload())).json()
+    monkeypatch.setattr(agent_chat, "AsyncSessionFactory", factory)
+
+    async def replay(*_, **__):
+        assert (await client.delete(path)).status_code == 204
+        return []
+
+    redis = SimpleNamespace(xrange=replay, delete=AsyncMock())
+    app.dependency_overrides[get_redis] = lambda: redis
+    response = await client.get(path + "/messages/" + turn["id"] + "/stream")
+    assert '"type": "deleted"' in response.text
+    assert "event: deleted" in response.text
+
+
+async def test_agent_chat_retention_deletes_expired_inactive_rows(factory):
+    now = utcnow()
+    async with factory() as db:
+        expired = AgentConversation(admin_id=1, updated_at=now - timedelta(days=8))
+        active = AgentConversation(admin_id=1, updated_at=now - timedelta(days=8))
+        recent = AgentConversation(admin_id=1, updated_at=now - timedelta(days=2))
+        boundary = AgentConversation(admin_id=2, updated_at=now - timedelta(days=7))
+        renewed = AgentConversation(admin_id=1, updated_at=now - timedelta(days=8))
+        empty_old = AgentConversation(admin_id=2, updated_at=now - timedelta(days=8))
+        db.add_all([expired, active, recent, boundary, renewed, empty_old])
+        await db.flush()
+        db.add_all(
+            [
+                AgentTurn(
+                    conversation_id=expired.id,
+                    request_id=str(uuid4()),
+                    sequence=1,
+                    content="expired",
+                    status="succeeded",
+                    updated_at=now - timedelta(days=8),
+                ),
+                AgentTurn(
+                    conversation_id=active.id,
+                    request_id=str(uuid4()),
+                    sequence=1,
+                    content="running",
+                    status="running",
+                    updated_at=now - timedelta(days=8),
+                ),
+                AgentTurn(
+                    conversation_id=renewed.id,
+                    request_id=str(uuid4()),
+                    sequence=1,
+                    content="recent reply",
+                    status="succeeded",
+                    updated_at=now - timedelta(hours=1),
+                ),
+            ]
+        )
+        await db.commit()
+
+    class FakeRedis:
+        def __init__(self):
+            self.deleted = []
+
+        async def delete(self, *keys):
+            self.deleted.extend(keys)
+
+    redis = FakeRedis()
+    cleanup = AgentChatCleanup(
+        Settings(_env_file=None, nacos_config_enabled=False, agent_chat_retention_days=7),
+        factory,
+        redis,
+        asyncio.Event(),
+    )
+    assert await cleanup.run_once(now=now) == 2
+    async with factory() as db:
+        assert await db.get(AgentConversation, expired.id) is None
+        assert await db.get(AgentConversation, active.id) is not None
+        assert await db.get(AgentConversation, recent.id) is not None
+        assert await db.get(AgentConversation, empty_old.id) is None
+        assert await db.get(AgentConversation, boundary.id) is not None
+        assert await db.get(AgentConversation, renewed.id) is not None
+        assert (
+            await db.scalar(select(AgentTurn.id).where(AgentTurn.conversation_id == expired.id))
+            is None
+        )
+    assert redis.deleted
+
+
+async def test_cleanup_reloads_nacos_policy_and_skips_bad_configuration(factory):
+    now = utcnow()
+    async with factory() as db:
+        conversation = AgentConversation(admin_id=1, updated_at=now - timedelta(days=10))
+        db.add(conversation)
+        await db.commit()
+    settings = Settings(_env_file=None, nacos_config_enabled=False, nacos_server_addr="")
+    settings.nacos_config_enabled = True
+    settings.nacos_server_addr = "http://nacos.test:8848"
+    cleanup = AgentChatCleanup(settings, factory, None, asyncio.Event())
+    remote = AsyncMock(return_value={"AGENT_CHAT_RETENTION_DAYS": 30})
+    cleanup.config = SimpleNamespace(get_json_config=remote)
+    assert await cleanup.run_once(now=now) == 0
+    for invalid in [
+        None,
+        {"AGENT_CHAT_RETENTION_DAYS": 0},
+        {"AGENT_CHAT_RETENTION_DAYS": True},
+        {"AGENT_CHAT_RETENTION_DAYS": 1.5},
+        {"AGENT_CHAT_RETENTION_DAYS": "bad"},
+    ]:
+        remote.return_value = invalid
+        with pytest.raises(ValueError):
+            await cleanup.run_once(now=now)
+    remote.side_effect = TimeoutError
+    with pytest.raises(TimeoutError):
+        await cleanup.run_once(now=now)
+    async with factory() as db:
+        assert await db.get(AgentConversation, conversation.id) is not None
+    remote.side_effect = None
+    remote.return_value = {"agent_chat": {"retention_days": "7"}}
+    assert await cleanup.run_once(now=now) == 1
+    remote.return_value = {}
+    assert await cleanup.retention_days() == 7
+
+
+async def test_cleanup_batches_large_history(factory):
+    async with factory() as db:
+        db.add_all(
+            [
+                AgentConversation(admin_id=1, updated_at=utcnow() - timedelta(days=8))
+                for _ in range(101)
+            ]
+        )
+        await db.commit()
+    cleanup = AgentChatCleanup(
+        Settings(_env_file=None, nacos_config_enabled=False), factory, None, asyncio.Event()
+    )
+    assert await cleanup.run_once() == 100
+    assert await cleanup.run_once() == 1
+    assert await cleanup.run_once() == 0
+
+
+@pytest.mark.parametrize("fail_cycle", [False, True])
+async def test_cleanup_loop_handles_errors_and_closes_nacos_client(factory, fail_cycle):
+    stop = asyncio.Event()
+    cleanup = AgentChatCleanup(
+        Settings(_env_file=None, nacos_config_enabled=False), factory, None, stop
+    )
+    cleanup.config = SimpleNamespace(aclose=AsyncMock())
+    calls = 0
+
+    async def sweep():
+        nonlocal calls
+        calls += 1
+        if fail_cycle:
+            stop.set()
+            raise TimeoutError("Nacos unavailable")
+        if calls == 1:
+            return 100
+        stop.set()
+        return 1
+
+    cleanup.run_once = sweep
+    await asyncio.wait_for(cleanup.run(), timeout=1)
+    assert calls == (1 if fail_cycle else 2)
+    cleanup.config.aclose.assert_awaited_once()
 
 
 async def test_reference_resolution_and_snapshot(api, factory, monkeypatch):
@@ -542,12 +815,22 @@ async def test_migration_upgrade_downgrade():
     spec = importlib.util.spec_from_file_location("agent_chat_migration", MIGRATION_PATH)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
+    retention_path = MIGRATION_PATH.parent / "0041_agent_chat_retention.py"
+    retention_spec = importlib.util.spec_from_file_location("agent_chat_retention", retention_path)
+    retention = importlib.util.module_from_spec(retention_spec)
+    retention_spec.loader.exec_module(retention)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
 
     def roundtrip(connection):
         with Operations.context(MigrationContext.configure(connection)):
             migration.upgrade()
             assert "agent_turns" in inspect(connection).get_table_names()
+            retention.upgrade()
+            assert any(
+                item["name"] == "ix_agent_conversations_updated_at"
+                for item in inspect(connection).get_indexes("agent_conversations")
+            )
+            retention.downgrade()
             indexes = inspect(connection).get_indexes("agent_turns")
             assert next(item for item in indexes if item["name"] == "uq_agent_turn_active")[
                 "unique"

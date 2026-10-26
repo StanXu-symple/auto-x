@@ -55,6 +55,7 @@ export type AgentStreamEvent =
       turn_id?: string
     }
   | { type: 'done'; status: AgentTurn['status']; turn_id?: string }
+  | { type: 'deleted'; turn_id?: string }
   | { type: 'error'; phase: 'failed'; message: string; turn_id?: string }
 
 type StreamListener = (event: AgentStreamEvent) => void
@@ -73,6 +74,9 @@ export const agentChatApi = {
   },
   async detail(id: string) {
     return (await http.get<AgentConversationDetail>(`${base}/${id}`)).data
+  },
+  async remove(id: string) {
+    await http.delete(`${base}/${encodeURIComponent(id)}`)
   },
   async send(id: string, payload: AgentMessagePayload) {
     return (await http.post<AgentTurn>(`${base}/${id}/messages`, payload)).data
@@ -113,7 +117,7 @@ export const agentChatApi = {
           if (!data.length) continue
           const event = JSON.parse(data.join('\n')) as AgentStreamEvent
           onEvent(event)
-          if (event.type === 'done' || event.type === 'error') return
+          if (event.type === 'done' || event.type === 'error' || event.type === 'deleted') return
         }
       }
     } finally {

@@ -168,6 +168,8 @@ RUNTIME_CONFIG_KEYS = {
     "WORKER_BATCH_SIZE",
     "WORKER_LOCK_TTL_SECONDS",
     "WORKER_HEARTBEAT_TTL_SECONDS",
+    "AGENT_CHAT_RETENTION_DAYS",
+    "AGENT_CHAT_CLEANUP_INTERVAL_SECONDS",
     "PAGINATION_RESUME_DELAY_SECONDS",
     "X_AUTH_GATE_SECONDS",
     "LOGIN_RATE_LIMIT_ATTEMPTS",
@@ -488,6 +490,12 @@ def ensure_screenshot_defaults(values: dict) -> None:
     }
     for key, value in defaults.items():
         values.setdefault(key, value)
+
+
+def ensure_agent_chat_defaults(values: dict) -> None:
+    """Seed conversation retention without replacing existing Nacos values."""
+    values.setdefault("AGENT_CHAT_RETENTION_DAYS", 7)
+    values.setdefault("AGENT_CHAT_CLEANUP_INTERVAL_SECONDS", 3600)
 
 
 def ensure_screenshot_caller(values: dict) -> None:
@@ -1151,6 +1159,7 @@ def main() -> int:
     if not args.monitor_services or selected_services.intersection({"ai-worker", "auth-center"}):
         ensure_ai_worker_caller(merged)
     ensure_screenshot_defaults(merged)
+    ensure_agent_chat_defaults(merged)
     ensure_screenshot_caller(merged)
     ensure_runtime_logs_caller(merged)
     ensure_skill_callers(merged)

@@ -56,6 +56,8 @@ make nacos-config
 
 该命令把 `.env` 中可共享的 PostgreSQL、Redis、JWT/X 加密密钥和 Worker 运行参数写入 `x-sentinel-config.json`。已存在的远端值优先，本地文件只补充缺失项；最终 PostgreSQL/Redis 引导值会原子回写到 `.env`，并收紧为所有者可读（可写时为 `0600`），供 Compose 自带的数据容器使用。应用在启动时读取一次配置，因此修改 Nacos 后应重启受影响的 API、迁移任务和 Worker。生产环境设置 `NACOS_CONFIG_REQUIRED=true` 后，`prod-up`、`external-up`、`prod-migrate` 和 `external-migrate` 会自动先同步并校验远端生产配置。
 
+智能体对话保留天数 `AGENT_CHAT_RETENTION_DAYS` 是动态配置的例外：轮询 `worker` 每轮清理前重新读取，默认 `7` 天，范围 `1–3650`，修改后无需重启。清理周期 `AGENT_CHAT_CLEANUP_INTERVAL_SECONDS` 默认 `3600` 秒，范围 `60–86400`，修改后仍需重启 `worker`。清理跳过排队或生成中的会话，保留已经保存的文章；详见 [智能体对话说明](agent-chat.md)。
+
 不要把 Nacos 连接凭据、服务注册地址/端口、宿主机映射、密钥文件路径、初始管理员密码或 provider API Key 放进共享文档。数据库/Redis 密码和 JWT/X 加密密钥会保存在 Nacos，请限制 namespace 的读写权限并保护 Nacos 链路。
 
 Nacos Config 只决定客户端连接参数，并不会自动修改已初始化 PostgreSQL 数据卷中的角色密码，也不会在线重设正在运行的 Redis 密码。轮换这两类密码时，必须先修改数据服务本身，再更新 Nacos 并重启客户端，避免出现配置已更新但服务端仍使用旧密码的状态。

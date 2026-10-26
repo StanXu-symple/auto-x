@@ -53,6 +53,7 @@ sequenceDiagram
 | GET | `/conversations?page=1&page_size=30` | 分页读取自己的会话 |
 | POST | `/conversations` | 创建会话 |
 | GET | `/conversations/{id}` | 读取会话与消息状态 |
+| DELETE | `/conversations/{id}` | 删除自己的会话及其消息 |
 | POST | `/conversations/{id}/messages` | 提交消息，返回 202 |
 | GET | `/conversations/{id}/messages/{turn_id}/stream` | Flux 风格 SSE 流，转发生成状态和增量事件 |
 | POST | `/conversations/{id}/messages/{turn_id}/cancel` | 取消排队或生成中的消息 |
@@ -110,9 +111,24 @@ sequenceDiagram
 - SSE 事件只转发模型明确返回的 reasoning summary，不展示隐藏的内部思维链。当前文章助手没有配置可执行工具；若上游返回工具事件，界面会按工具阶段展示名称和参数生成状态，执行能力仍需后续接入具体微服务。
 - 会话按创建者隔离。保存到文章管理后，沿用现有文章管理的管理员访问规则。
 
+删除会话会删除会话本身、所有消息和 Redis 中的短期流式事件；已经保存到文章管理的草稿不会被删除。若删除时 Redis 暂时不可用，数据库删除仍然生效，短期流式事件由原有的 24 小时 TTL 兜底到期。删除进行中的对话后，迟到的生成结果不会重新写入会话或流式事件。
+
+轮询 `worker` 启动后清理一次，随后默认每小时检查，按会话和消息的最后活动时间判断，删除超过 7 天的已结束会话（含空会话）。仅打开查看历史对话不会延长保留期；排队或生成中的会话会被保护，避免清理打断模型任务。
+
+在 Nacos 共享运行配置中设置以下字段。默认 Data ID 为 `x-sentinel-config.json`、Group 为 `X_SENTINEL`，实际使用 worker 的 `NACOS_CONFIG_DATA_ID`、`NACOS_CONFIG_GROUP` 和命名空间配置：
+
+```json
+{
+  "AGENT_CHAT_RETENTION_DAYS": 7,
+  "AGENT_CHAT_CLEANUP_INTERVAL_SECONDS": 3600
+}
+```
+
+保留天数范围为 1–3650，未设置字段时默认 7 天。修改 Nacos 后，worker 下一轮清理会读取新值，无需重启；如果配置文档缺失、读取失败或天数非法，该轮跳过清理并记录日志。清理周期范围为 60–86400 秒，修改后需重启 `worker`。未接入 Nacos 的本地环境使用同名环境变量及默认值。
+
 ## 升级
 
-新增 Alembic 迁移 `0040_agent_chat`，创建 `agent_conversations` 与 `agent_turns`。按当前环境的升级流程先运行迁移，再更新 `backend`、`ai-worker` 与 `frontend`。不需要新增服务、端口或环境变量；skill-worker 继续提供现有解析接口。
+新增 Alembic 迁移 `0040_agent_chat`，创建 `agent_conversations` 与 `agent_turns`；迁移 `0041_agent_chat_retention` 为会话活动时间增加清理索引。按当前环境的升级流程先运行迁移，再更新 `backend`、`worker`、`ai-worker` 与 `frontend`。Nacos 配置新增 `AGENT_CHAT_RETENTION_DAYS=7` 和清理周期 `AGENT_CHAT_CLEANUP_INTERVAL_SECONDS=3600`，现有安装会在配置同步时补齐默认值。
 
 本地开发环境的迁移命令（在 `backend/` 中，使用该环境的数据库配置）：
 
@@ -122,7 +138,7 @@ alembic upgrade head
 
 不要只更新前端：未迁移或未更新的 worker 无法处理新对话任务。
 
-实现入口：`backend/app/api/routes/agent_chat.py`、`backend/app/services/agent_chat_worker.py`、`backend/app/services/agent_provider.py`、`frontend/src/views/AgentChatView.vue`。
+实现入口：`backend/app/api/routes/agent_chat.py`、`backend/app/services/agent_chat_cleanup.py`、`backend/app/services/agent_chat_worker.py`、`backend/app/services/agent_provider.py`、`backend/app/worker.py`、`frontend/src/views/AgentChatView.vue`。
 
 ## 2026-10-22 部署记录
 

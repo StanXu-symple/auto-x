@@ -23,6 +23,10 @@ def event_stream_key(turn_id: str) -> str:
     return f"xsentinel:agent-chat:events:{turn_id}"
 
 
+class AgentTurnRemoved(Exception):
+    """Stop streaming a removed turn without recreating SQL or Redis data."""
+
+
 class AgentChatWorker:
     def __init__(self, settings, redis, provider, session_factory, semaphore, stop_event):
         self.settings = settings
@@ -45,20 +49,29 @@ class AgentChatWorker:
         }
         if attempts is not None:
             payload["attempts"] = attempts
-        # Keep live events short-lived and bounded. The final turn remains durable in SQL.
-        try:
-            await self.redis.xadd(
-                event_stream_key(turn_id),
-                {"payload": json.dumps(payload, ensure_ascii=False)},
-                maxlen=2000,
-                approximate=True,
-            )
-            await self.redis.expire(event_stream_key(turn_id), EVENT_STREAM_TTL_SECONDS)
-        except Exception:
-            logger.warning(
-                "Agent chat event publish failed",
-                extra={"agent_turn_id": turn_id, "error_type": "redis"},
-            )
+        # Serialize emission with deletion. Once DELETE commits, a late model
+        # chunk cannot recreate the replay stream. Keep the lock only for Redis I/O.
+        async with self.session_factory() as db, db.begin():
+            query = select(AgentTurn.id).where(AgentTurn.id == turn_id)
+            if attempts is not None:
+                query = query.where(AgentTurn.attempts == attempts)
+            if await db.scalar(query.with_for_update()) is None:
+                raise AgentTurnRemoved()
+            try:
+                async with self.redis.pipeline(transaction=True) as pipeline:
+                    pipeline.xadd(
+                        event_stream_key(turn_id),
+                        {"payload": json.dumps(payload, ensure_ascii=False)},
+                        maxlen=2000,
+                        approximate=True,
+                    )
+                    pipeline.expire(event_stream_key(turn_id), EVENT_STREAM_TTL_SECONDS)
+                    await pipeline.execute()
+            except Exception:
+                logger.warning(
+                    "Agent chat event publish failed",
+                    extra={"agent_turn_id": turn_id, "error_type": "redis"},
+                )
 
     async def run(self) -> None:
         while not self.stop_event.is_set():
@@ -121,6 +134,8 @@ class AgentChatWorker:
             self.active_tasks += 1
             try:
                 await self._process(turn_id)
+            except AgentTurnRemoved:
+                pass
             finally:
                 self.active_tasks -= 1
 
@@ -131,6 +146,7 @@ class AgentChatWorker:
             if turn is None or turn.status != "queued":
                 return
             timeout = int(turn.config_snapshot["timeout_seconds"]) + 15
+            attempt_number = turn.attempts + 1
             claimed = await db.execute(
                 update(AgentTurn)
                 .where(AgentTurn.id == turn_id, AgentTurn.status == "queued")
@@ -144,7 +160,6 @@ class AgentChatWorker:
             )
             if claimed.rowcount != 1:
                 return
-            attempt_number = turn.attempts + 1
 
         async def emit(event: dict[str, object]) -> None:
             await self.publish_event(turn_id, event, attempts=attempt_number)
@@ -186,6 +201,8 @@ class AgentChatWorker:
             )
             if finished:
                 await emit({"type": "done", "status": "succeeded"})
+        except AgentTurnRemoved:
+            return
         except asyncio.CancelledError:
             await self.finish(turn_id, token, status="queued", error=None)
             raise

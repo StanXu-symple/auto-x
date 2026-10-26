@@ -7,8 +7,9 @@ import {
   RobotOutlined,
   FileTextOutlined,
   CloseOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons-vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { aiApi } from '@/services/api'
 import { agentChatApi } from '@/services/agentChat'
@@ -41,6 +42,7 @@ const detail = ref<AgentConversationDetail | null>(null)
 const loading = ref(false)
 const sending = ref(false)
 const action = ref('')
+const deletingId = ref('')
 const error = ref('')
 const text = ref('')
 const selected = ref<AgentReference[]>([])
@@ -55,6 +57,7 @@ const composing = ref(false)
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 let elapsedTimer: ReturnType<typeof setInterval> | undefined
 let epoch = 0
+let listEpoch = 0
 let disposed = false
 let pending: { key: string; payload: AgentMessagePayload } | null = null
 const clock = ref(Date.now())
@@ -89,6 +92,7 @@ const canSend = computed(
     !active.value &&
     !sending.value &&
     !action.value &&
+    !deletingId.value &&
     !loading.value &&
     (!currentId.value || detail.value) &&
     (detail.value?.turns.length || 0) < 100,
@@ -113,13 +117,16 @@ const statusLabels = {
 }
 
 async function loadList(more = false) {
-  if (listLoading.value) return
+  if (more && listLoading.value) return
+  // A failed refresh after deletion invalidates offset-based pagination.
+  if (listError.value) more = false
+  const ticket = ++listEpoch
   listLoading.value = true
   listError.value = ''
   try {
     const page = more ? listPage.value + 1 : 1
     const result = await agentChatApi.list(page)
-    if (disposed) return
+    if (disposed || ticket !== listEpoch) return
     conversations.value = more
       ? [...conversations.value, ...result.items].filter(
           (item, index, items) => items.findIndex((other) => other.id === item.id) === index,
@@ -128,9 +135,9 @@ async function loadList(more = false) {
     total.value = result.total
     listPage.value = page
   } catch (e) {
-    listError.value = getErrorMessage(e, '加载对话列表失败')
+    if (!disposed && ticket === listEpoch) listError.value = getErrorMessage(e, '加载对话列表失败')
   } finally {
-    listLoading.value = false
+    if (ticket === listEpoch) listLoading.value = false
   }
 }
 
@@ -159,7 +166,7 @@ function stopPolling() {
 }
 function schedulePoll() {
   stopPolling()
-  if (!disposed && active.value && !streamControllers.size)
+  if (!disposed && !deletingId.value && active.value && !streamControllers.size)
     pollTimer = setTimeout(() => refresh(), 2000)
 }
 
@@ -236,6 +243,11 @@ function updateTrace(turnId: string, event: AgentStreamEvent) {
   streamTraces.value = { ...streamTraces.value, [turnId]: trace }
 }
 function handleStreamEvent(turn: AgentTurn, event: AgentStreamEvent) {
+  if (event.type === 'deleted') {
+    void forgetConversation(currentId.value)
+    message.info('对话已被删除或已到期清理')
+    return
+  }
   updateTrace(turn.id, event)
   if (
     event.type === 'status' &&
@@ -255,6 +267,7 @@ function handleStreamEvent(turn: AgentTurn, event: AgentStreamEvent) {
 }
 async function startStream(turn: AgentTurn) {
   if (!currentId.value || streamStarted.has(turn.id) || !isActiveTurn(turn)) return
+  const conversationId = currentId.value
   streamStarted.add(turn.id)
   const controller = new AbortController()
   streamControllers.set(turn.id, controller)
@@ -266,9 +279,10 @@ async function startStream(turn: AgentTurn) {
     status: turn.status,
   })
   try {
-    await agentChatApi.stream(currentId.value, turn.id, controller.signal, (event) =>
-      handleStreamEvent(turn, event),
-    )
+    await agentChatApi.stream(conversationId, turn.id, controller.signal, (event) => {
+      if (!disposed && !controller.signal.aborted && conversationId === currentId.value)
+        handleStreamEvent(turn, event)
+    })
   } catch (e) {
     if (!controller.signal.aborted && !disposed) {
       streamStarted.delete(turn.id)
@@ -302,7 +316,12 @@ async function refresh(initial = false) {
       if (!active.value) void loadList()
     }
   } catch (e) {
-    if (ticket === epoch && !disposed) error.value = getErrorMessage(e, '加载消息失败，可稍后刷新')
+    if (ticket === epoch && !disposed) {
+      if (isMissingConversation(e)) {
+        await forgetConversation(id)
+        message.info('对话已被删除或已到期清理')
+      } else error.value = getErrorMessage(e, '加载消息失败，可稍后刷新')
+    }
   } finally {
     if (ticket === epoch && !disposed) {
       loading.value = false
@@ -316,7 +335,7 @@ async function scrollBottom() {
   transcript.value?.scrollTo({ top: transcript.value.scrollHeight, behavior: 'auto' })
 }
 async function navigate(id = '') {
-  if (sending.value || action.value) return
+  if (sending.value || action.value || deletingId.value) return
   if (!id && !currentId.value) {
     text.value = ''
     selected.value = []
@@ -327,6 +346,66 @@ async function navigate(id = '') {
   if (id) query.conversation = id
   else delete query.conversation
   await router.replace({ query })
+}
+
+function isMissingConversation(e: unknown) {
+  return (e as { response?: { status?: number } })?.response?.status === 404
+}
+async function forgetConversation(id: string) {
+  if (disposed) return
+  ++listEpoch
+  listLoading.value = false
+  if (conversations.value.some((item) => item.id === id)) total.value = Math.max(0, total.value - 1)
+  conversations.value = conversations.value.filter((item) => item.id !== id)
+  if (currentId.value === id) {
+    ++epoch
+    stopPolling()
+    stopAllStreams()
+    streamStarted.clear()
+    streamTraces.value = {}
+    detail.value = null
+    text.value = ''
+    selected.value = []
+    mention.value = null
+    pending = null
+    error.value = ''
+    loading.value = false
+    const query = { ...route.query }
+    delete query.conversation
+    await router.replace({ query })
+  }
+  void loadList()
+}
+async function deleteConversation(item: AgentConversation) {
+  if (deletingId.value || sending.value || action.value) return
+  deletingId.value = item.id
+  try {
+    try {
+      await agentChatApi.remove(item.id)
+    } catch (e) {
+      if (!isMissingConversation(e)) throw e
+    }
+    await forgetConversation(item.id)
+    message.success('对话已删除')
+  } catch (e) {
+    message.error(getErrorMessage(e, '删除对话失败，请稍后重试'))
+    throw e
+  } finally {
+    deletingId.value = ''
+    schedulePoll()
+  }
+}
+
+function removeConversation(item: AgentConversation) {
+  if (deletingId.value || sending.value || action.value) return
+  Modal.confirm({
+    title: '删除这条对话？',
+    content: '将永久删除这条对话及全部消息，进行中的回复也会丢弃。已保存到文章管理的文章仍会保留。',
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: () => deleteConversation(item),
+  })
 }
 watch(
   currentId,
@@ -476,7 +555,7 @@ async function send() {
 }
 
 async function turnAction(turn: AgentTurn, kind: 'cancel' | 'retry' | 'save') {
-  if (action.value) return
+  if (action.value || deletingId.value) return
   const id = currentId.value
   action.value = `${kind}:${turn.id}`
   stopPolling()
@@ -530,7 +609,7 @@ onBeforeUnmount(() => {
     </PageHeader>
     <div class="agent-workspace">
       <aside class="conversation-sidebar" aria-label="历史对话">
-        <a-button block :disabled="sending || !!action" @click="navigate()"
+        <a-button block :disabled="sending || !!action || !!deletingId" @click="navigate()"
           ><PlusOutlined /> 新建对话</a-button
         >
         <div class="sidebar-label">最近的对话</div>
@@ -541,16 +620,31 @@ onBeforeUnmount(() => {
           {{ listLoading ? '正在加载…' : '你的创作对话将保存在这里' }}
         </p>
         <nav class="conversation-list" aria-label="选择对话">
-          <button
+          <div
             v-for="item in conversations"
             :key="item.id"
             :class="['conversation-item', { selected: item.id === currentId }]"
-            :aria-current="item.id === currentId ? 'page' : undefined"
-            :disabled="sending || !!action"
-            @click="navigate(item.id)"
           >
-            <FileTextOutlined /><span>{{ item.title }}</span>
-          </button>
+            <button
+              class="conversation-open"
+              :aria-current="item.id === currentId ? 'page' : undefined"
+              :disabled="sending || !!action || !!deletingId"
+              @click="navigate(item.id)"
+            >
+              <FileTextOutlined /><span :title="item.title">{{ item.title }}</span>
+            </button>
+            <a-button
+              class="conversation-delete"
+              type="text"
+              danger
+              :loading="deletingId === item.id"
+              :disabled="sending || !!action || !!deletingId"
+              :aria-label="`删除对话：${item.title}`"
+              title="删除对话"
+              @click="removeConversation(item)"
+              ><DeleteOutlined
+            /></a-button>
+          </div>
         </nav>
         <a-button
           v-if="conversations.length < total"
@@ -871,14 +965,27 @@ onBeforeUnmount(() => {
   text-align: left;
   display: flex;
   gap: 9px;
-  padding: 11px 10px;
+  padding: 5px 6px 5px 10px;
   border-radius: 8px;
   color: #54574e;
   cursor: pointer;
   min-width: 0;
   align-items: center;
 }
-.conversation-item span:last-child {
+.conversation-open {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  display: flex;
+  gap: 9px;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  min-width: 0;
+  align-items: center;
+  flex: 1;
+}
+.conversation-open span:last-child {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -887,6 +994,9 @@ onBeforeUnmount(() => {
 .conversation-item.selected {
   background: #f3e9e2;
   color: #92442e;
+}
+.conversation-delete {
+  flex-shrink: 0;
 }
 .sidebar-note {
   margin-top: auto;

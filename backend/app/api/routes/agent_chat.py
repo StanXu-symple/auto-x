@@ -3,7 +3,7 @@ import json
 from uuid import UUID
 
 from fastapi import APIRouter, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,7 @@ from app.schemas.agent_chat import (
     SendAgentMessage,
 )
 from app.schemas.common import Page
+from app.services.agent_chat_cleanup import delete_conversation_rows, delete_event_streams
 from app.services.agent_chat_worker import event_stream_key
 from app.services.runtime_logs import sse_event
 from app.services.skill_client import get_skill_client
@@ -110,6 +111,17 @@ async def get_conversation(
         **AgentConversationOut.model_validate(conversation).model_dump(),
         turns=[AgentTurnOut.model_validate(turn) for turn in turns],
     )
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: UUID, db: DbSession, admin: CurrentAdmin, redis: RedisClient
+) -> Response:
+    conversation = await owned_conversation(db, str(conversation_id), admin.id, lock=True)
+    turn_ids = await delete_conversation_rows(db, [conversation.id])
+    await db.commit()
+    await delete_event_streams(redis, turn_ids)
+    return Response(status_code=204)
 
 
 @router.post(
@@ -208,6 +220,9 @@ async def stream_message(
             "cancelled": "已取消",
         }.get(turn.status, turn.status),
     }
+    initial_attempts = turn.attempts
+    # A streaming response must not retain the conversation/turn locks for its lifetime.
+    await db.commit()
 
     async def events():
         yield sse_event("status", initial)
@@ -218,7 +233,9 @@ async def stream_message(
 
         key = event_stream_key(str(turn_id))
         last_id = "0-0"
-        minimum_attempts = turn.attempts + 1 if turn.status == "queued" else turn.attempts
+        minimum_attempts = (
+            initial_attempts + 1 if initial["status"] == "queued" else initial_attempts
+        )
 
         async def terminal_status() -> str | None:
             # Cancellation and lease expiry can happen after the worker has
@@ -227,9 +244,14 @@ async def stream_message(
             # intentionally prevented from publishing.
             async with AsyncSessionFactory() as session:
                 latest = await session.get(AgentTurn, str(turn_id))
-            return latest.status if latest and latest.status in terminal else None
+            if latest is None:
+                return "deleted"
+            return latest.status if latest.status in terminal else None
 
         async def terminal_frames(status: str):
+            if status == "deleted":
+                yield sse_event("deleted", {"type": "deleted", "turn_id": str(turn_id)})
+                return
             yield sse_event(
                 "status",
                 {"status": status, "phase": status, "label": status},
@@ -305,6 +327,8 @@ async def stream_message(
                 async with AsyncSessionFactory() as db:
                     latest = await db.get(AgentTurn, str(turn_id))
                 if latest is None:
+                    async for frame in terminal_frames("deleted"):
+                        yield frame
                     return
                 if latest.status in terminal:
                     async for frame in terminal_frames(latest.status):

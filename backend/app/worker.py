@@ -21,6 +21,7 @@ from app.core.logging import configure_logging
 from app.core.process_stats import ProcessStatsSampler
 from app.db.session import AsyncSessionFactory, engine
 from app.models.monitored_user import MonitoredUser
+from app.services.agent_chat_cleanup import AgentChatCleanup
 from app.services.metrics import POLL_QUEUE_DUE, WORKER_HEARTBEAT
 from app.services.poller import GLOBAL_X_GATE_KEY, PollingService
 from app.services.settings_service import get_polling_settings
@@ -58,6 +59,9 @@ class PollingWorker:
         self.process_stats = ProcessStatsSampler()
         self.screenshot_client: TweetScreenshotClient | None = None
         self.screenshot_processor: TweetScreenshotProcessor | None = None
+        self.chat_cleanup = AgentChatCleanup(
+            settings, AsyncSessionFactory, self.redis, self.stop_event
+        )
 
     def request_stop(self) -> None:
         self.stop_event.set()
@@ -75,6 +79,7 @@ class PollingWorker:
         logger.info("X Sentinel polling worker started", extra={"worker_id": self.worker_id})
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         screenshot_task = asyncio.create_task(self._screenshot_loop())
+        cleanup_task = asyncio.create_task(self.chat_cleanup.run())
         try:
             while not self.stop_event.is_set():
                 try:
@@ -90,6 +95,9 @@ class PollingWorker:
                 except TimeoutError:
                     pass
         finally:
+            cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup_task
             screenshot_task.cancel()
             with suppress(asyncio.CancelledError):
                 await screenshot_task

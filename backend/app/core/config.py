@@ -420,6 +420,8 @@ class Settings(BaseSettings):
     worker_lock_ttl_seconds: int = Field(default=120, ge=15, le=3600)
     worker_heartbeat_ttl_seconds: int = Field(default=30, ge=10, le=300)
     worker_metrics_port: int = Field(default=8201, ge=0, le=65535)
+    agent_chat_retention_days: int = Field(default=7, ge=1, le=3650)
+    agent_chat_cleanup_interval_seconds: int = Field(default=3600, ge=60, le=86400)
     pagination_resume_delay_seconds: float = Field(default=1.0, ge=0.1, le=60)
     x_auth_gate_seconds: int = Field(default=300, ge=30, le=3600)
 

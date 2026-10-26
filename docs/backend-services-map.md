@@ -80,7 +80,8 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `backend/app/worker.py` | `PollingWorker`：扫描到期账号、并发调度、心跳、优雅退出；同时启动推文截图任务处理 |
+| `backend/app/worker.py` | `PollingWorker`：扫描到期账号、并发调度、心跳、优雅退出；同时启动推文截图任务和智能体对话保留清理 |
+| `backend/app/services/agent_chat_cleanup.py` | 删除智能体对话及其短期流事件；从 Nacos 读取保留天数，按批次清理过期且非活动会话 |
 | `backend/app/services/poller.py` | 抢占账号、续租、分页拉取、幂等入库、记录轮询结果；创建后续 AI / QQ / 截图任务 |
 | `backend/app/services/x_source_client.py` | 在官方 X API 与 twscrape 之间选择数据源 |
 | `backend/app/services/x_client.py` | 官方 X API 请求、分页、限流和响应类型 |

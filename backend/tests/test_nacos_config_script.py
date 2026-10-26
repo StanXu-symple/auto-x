@@ -802,6 +802,21 @@ def test_runtime_logs_identity_rejects_missing_and_mismatched_secret():
             module.ensure_runtime_logs_caller(values)
 
 
+def test_agent_chat_retention_defaults_preserve_existing_nacos_values():
+    module = load_script()
+    values = {}
+    module.ensure_agent_chat_defaults(values)
+    assert values == {
+        "AGENT_CHAT_RETENTION_DAYS": 7,
+        "AGENT_CHAT_CLEANUP_INTERVAL_SECONDS": 3600,
+    }
+    assert set(values) <= module.RUNTIME_CONFIG_KEYS
+    values.update(AGENT_CHAT_RETENTION_DAYS=30, AGENT_CHAT_CLEANUP_INTERVAL_SECONDS=600)
+    module.ensure_agent_chat_defaults(values)
+    assert values["AGENT_CHAT_RETENTION_DAYS"] == 30
+    assert values["AGENT_CHAT_CLEANUP_INTERVAL_SECONDS"] == 600
+
+
 def test_screenshot_config_separates_runtime_from_local_mounts():
     module = load_script()
     values = {"TWEET_SCREENSHOT_ENABLED": False, "TWEET_SCREENSHOT_RETRY_SECONDS": 60}

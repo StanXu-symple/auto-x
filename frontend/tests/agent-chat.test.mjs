@@ -36,7 +36,7 @@ writeFileSync(
       return 'const getErrorMessage = (e, fallback) => e?.message || fallback;'
     if (module === '@/utils/agentChat') return line.replace('@/utils/agentChat', './utils.mjs')
     if (module === 'ant-design-vue')
-      return 'const message = { info() {}, error() {}, warning() {}, success() {} };'
+      return 'const message = { info() {}, error() {}, warning() {}, success() {} }; const Modal = { confirm(options) { globalThis.chatMocks.confirmations.push(options) } };'
     if (module === '@ant-design/icons-vue')
       return line
         .match(/^import\s+\{([^}]+)\}/)[1]
@@ -73,6 +73,7 @@ const skill = { id: 2, name: '写作 Skill', content_type: 'skill', version: 3, 
 
 async function setup(t, extra = {}) {
   const calls = []
+  const confirmations = []
   const route = reactive({ query: {} })
   const router = {
     async replace({ query }) {
@@ -81,6 +82,7 @@ async function setup(t, extra = {}) {
     },
   }
   globalThis.chatMocks = {
+    confirmations,
     route,
     router,
     async call(method, args) {
@@ -100,7 +102,7 @@ async function setup(t, extra = {}) {
   app.mount({})
   t.after(() => app.unmount())
   await tick()
-  return { state: instance.value.$.setupState, route, calls }
+  return { state: instance.value.$.setupState, route, calls, confirmations }
 }
 
 function mockCrypto(t, crypto) {
@@ -171,6 +173,110 @@ test('a lost send response preserves text and reuses the idempotency key on retr
   assert.equal(sends.length, 2)
   assert.equal(sends[0][2].request_id, sends[1][2].request_id)
   assert.equal(calls.filter(([method]) => method === 'create').length, 1)
+})
+
+test('deleting a recent conversation removes it from the sidebar and API', async (t) => {
+  const conversation = { id: 'old', title: '旧对话' }
+  let removed = false
+  const { state, calls, confirmations } = await setup(t, {
+    list: async () => ({ items: removed ? [] : [conversation], total: removed ? 0 : 1 }),
+    remove: async () => { removed = true },
+  })
+  state.removeConversation(conversation)
+  assert.equal(calls.some(([method]) => method === 'remove'), false, 'confirmation required')
+  assert.equal(confirmations.length, 1)
+  await confirmations[0].onOk()
+  await tick()
+  assert.equal(calls.some(([method, id]) => method === 'remove' && id === 'old'), true)
+  assert.equal(state.conversations.length, 0)
+})
+
+test('deleting the current conversation clears its draft, stream and query', async (t) => {
+  let signal
+  let onEvent
+  const { state, route } = await setup(t, {
+    detail: async (id) => ({ id, title: id, turns: [{ id: 'turn', status: 'running', skill_snapshot: [] }] }),
+    stream: async (_id, _turn, abort, event) => {
+      signal = abort
+      onEvent = event
+      await new Promise((resolve) => abort.addEventListener('abort', resolve, { once: true }))
+    },
+  })
+  route.query = { conversation: 'one', filter: 'kept' }
+  await tick()
+  state.text = 'draft'
+  state.selected = [prompt]
+  await state.deleteConversation({ id: 'one', title: 'one' })
+  assert.equal(signal.aborted, true)
+  assert.deepEqual(route.query, { filter: 'kept' })
+  assert.equal(state.detail, null)
+  assert.equal(state.text, '')
+  assert.deepEqual(state.selected, [])
+  onEvent({ type: 'output', delta: 'late chunk' })
+  assert.deepEqual(state.streamTraces, {})
+})
+
+test('failed deletion preserves the current conversation and permits retry', async (t) => {
+  const { state, route } = await setup(t, { remove: async () => { throw new Error('offline') } })
+  route.query = { conversation: 'one' }
+  await tick()
+  state.text = 'keep this'
+  await assert.rejects(state.deleteConversation({ id: 'one' }), /offline/)
+  assert.equal(route.query.conversation, 'one')
+  assert.equal(state.detail.id, 'one')
+  assert.equal(state.text, 'keep this')
+  assert.equal(state.deletingId, '')
+})
+
+test('deletion ignores an older list response and resets pagination', async (t) => {
+  let resolveOld
+  let listing = 0
+  const { state } = await setup(t, {
+    list: async () => {
+      if (++listing === 2) return new Promise((resolve) => { resolveOld = resolve })
+      return { items: [], total: 0 }
+    },
+  })
+  const oldRequest = state.loadList(true)
+  await tick()
+  await state.deleteConversation({ id: 'one' })
+  resolveOld({ items: [{ id: 'one', title: 'stale' }], total: 1 })
+  await oldRequest
+  assert.deepEqual(state.conversations, [])
+  assert.equal(state.listPage, 1)
+})
+
+test('an expired conversation is removed when detail returns 404', async (t) => {
+  const { state, route } = await setup(t, {
+    detail: async () => { throw { response: { status: 404 } } },
+  })
+  route.query = { conversation: 'expired' }
+  await tick()
+  assert.equal(state.currentId, '')
+  assert.equal(state.detail, null)
+  assert.equal(state.loading, false)
+})
+
+test('pagination restarts from the first page after a failed deletion refresh', async (t) => {
+  const pages = []
+  let fail = false
+  const { state } = await setup(t, {
+    list: async (page) => {
+      pages.push(page)
+      if (fail) throw new Error('offline')
+      return { items: [], total: 90 }
+    },
+  })
+  await state.loadList(true)
+  assert.equal(state.listPage, 2)
+  fail = true
+  await state.deleteConversation({ id: 'one' })
+  await tick()
+  assert.ok(state.listError)
+  fail = false
+  await state.loadList(true)
+  assert.equal(pages.at(-1), 1)
+  assert.equal(state.listPage, 1)
 })
 
 test('HTTP browsers without randomUUID still create and send with a UUID v4 request ID', async (t) => {
