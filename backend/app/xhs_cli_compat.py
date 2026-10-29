@@ -37,12 +37,13 @@ TITLE_SELECTORS = (
     'input[class*="title"]',
     'textarea[class*="title"]',
 )
+# Prefer known rich-text editors. Generic contenteditable nodes may be search
+# boxes or inactive editor copies; fallbacks require a body label or textbox role.
 CONTENT_SELECTORS = (
+    "div.tiptap.ProseMirror, div.ProseMirror, div.ql-editor",
+    '[contenteditable][data-placeholder*="正文"]',
+    '[contenteditable][aria-label*="正文"]',
     'div[role="textbox"][contenteditable="true"]',
-    'div.tiptap.ProseMirror[contenteditable="true"]',
-    'div.ProseMirror[contenteditable="true"]',
-    "div.ql-editor",
-    '[contenteditable="true"]',
 )
 PUBLISH_BUTTON_SELECTORS = (
     ".publish-page-publish-btn button.bg-red",
@@ -59,6 +60,11 @@ IMAGE_INPUT_TIMEOUT_SECONDS = 45
 IMAGE_UPLOAD_TIMEOUT_SECONDS = 120
 IMAGE_UPLOAD_SETTLE_SECONDS = 3
 IMAGE_UPLOAD_DIAGNOSTIC_LIMIT = 12
+CONTENT_INPUT_TIMEOUT_SECONDS = 45
+CONTENT_FILL_ATTEMPTS = 3
+CONTENT_ACTION_TIMEOUT_SECONDS = 5
+CONTENT_VERIFY_TIMEOUT_SECONDS = 2
+CONTENT_DIAGNOSTIC_LIMIT = 12
 PUBLISH_RESULT_TIMEOUT_SECONDS = 60
 SECURITY_VERIFICATION_TIMEOUT_SECONDS = 90
 SECURITY_VERIFICATION_SETTLE_SECONDS = 5
@@ -127,6 +133,166 @@ def _wait_for_element(
             return element
         time.sleep(0.3)
     return None
+
+
+def _content_timeout_ms(deadline: float, seconds: float = CONTENT_ACTION_TIMEOUT_SECONDS) -> int:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("正文编辑器等待超时")
+    return max(1, int(min(seconds, remaining) * 1000))
+
+
+def _find_content_editor(page: Any, deadline: float) -> tuple[Any | None, list[dict[str, Any]]]:
+    """Resolve the current editor, including frames, without keeping stale handles."""
+    states: list[dict[str, Any]] = []
+    for selector in CONTENT_SELECTORS:
+        ready = []
+        for frame_index, root in enumerate(_roots(page)):
+            try:
+                candidates = root.locator(selector)
+                count = candidates.count()
+            except Exception:
+                continue
+            for index in range(count):
+                if len(states) >= CONTENT_DIAGNOSTIC_LIMIT or time.monotonic() >= deadline:
+                    return None, states
+                editor = candidates.nth(index)
+                state: dict[str, Any] = {
+                    "selector": selector, "frame": frame_index, "index": index, "count": count,
+                }
+                states.append(state)
+                try:
+                    state.update(editor.evaluate(
+                        """el => ({
+                            tag: el.tagName.toLowerCase(),
+                            className: String(el.className || '').slice(0, 120),
+                            role: el.getAttribute('role'),
+                            contenteditable: el.getAttribute('contenteditable'),
+                            isContentEditable: el.isContentEditable,
+                            readonly: el.hasAttribute('readonly')
+                                || el.getAttribute('aria-readonly') === 'true',
+                            disabled: Boolean(el.closest(
+                                '[disabled], [aria-disabled="true"], [inert]'
+                            ))
+                        })""",
+                        timeout=_content_timeout_ms(deadline, 0.5),
+                    ))
+                    state["visible"] = editor.is_visible()
+                    state["enabled"] = editor.is_enabled(timeout=_content_timeout_ms(deadline, 0.5))
+                    state["editable"] = editor.is_editable(
+                        timeout=_content_timeout_ms(deadline, 0.5)
+                    )
+                    if (
+                        state["visible"] and state["enabled"] and state["editable"]
+                        and state["isContentEditable"] and not state["readonly"]
+                        and not state["disabled"]
+                    ):
+                        ready.append(editor)
+                except Exception as exc:
+                    state["error_type"] = type(exc).__name__
+        if len(ready) == 1:
+            return ready[0], states
+        if len(ready) > 1:
+            # Never type into an arbitrary textbox when the page is ambiguous.
+            return None, states
+    return None, states
+
+
+def _normalized_editor_text(value: str) -> str:
+    # Rich-text paragraphs can add blank lines/NBSPs. Preserve word boundaries
+    # so missing whitespace ("hello world" -> "helloworld") still fails validation.
+    return " ".join(value.split())
+
+
+def _verify_content(page: Any, content: str, deadline: float) -> bool:
+    deadline = min(deadline, time.monotonic() + CONTENT_VERIFY_TIMEOUT_SECONDS)
+    expected = _normalized_editor_text(content)
+    matching_since: float | None = None
+    while time.monotonic() < deadline:
+        editor, _states = _find_content_editor(page, deadline)
+        try:
+            actual = (
+                editor.inner_text(timeout=_content_timeout_ms(deadline, 0.5))
+                if editor
+                else None
+            )
+            if actual is not None and _normalized_editor_text(actual) == expected:
+                if matching_since is None:
+                    matching_since = time.monotonic()
+                elif time.monotonic() - matching_since >= 0.3:
+                    return True
+            else:
+                matching_since = None
+        except Exception:
+            matching_since = None
+        time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+    return False
+
+
+def _fill_content(page: Any, content: str) -> None:
+    """Wait for a writable editor, retry locally and verify before publishing."""
+    deadline = time.monotonic() + CONTENT_INPUT_TIMEOUT_SECONDS
+    attempts = 0
+    error_type = "editor_not_ready"
+    states: list[dict[str, Any]] = []
+    while attempts < CONTENT_FILL_ATTEMPTS and time.monotonic() < deadline:
+        editor, states = _find_content_editor(page, deadline)
+        if editor is None:
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+            continue
+        attempts += 1
+        method = "keyboard" if attempts == CONTENT_FILL_ATTEMPTS else "fill"
+        _log_stage(
+            "element_ready", "正文编辑器已可编辑", element="content_input",
+            attempt=attempts, method=method,
+        )
+        try:
+            editor.click(timeout=_content_timeout_ms(deadline))
+            # Clicking can replace the editor itself. Resolve it again, including
+            # a possible selector/frame change, before writing anything.
+            editor, states = _find_content_editor(page, deadline)
+            if editor is None:
+                error_type = "editor_changed_after_click"
+                continue
+            if method == "fill":
+                editor.fill(content, timeout=_content_timeout_ms(deadline))
+            else:
+                editor.press("ControlOrMeta+A", timeout=_content_timeout_ms(deadline))
+                focused = editor.evaluate(
+                    """el => {
+                        const doc = el.ownerDocument;
+                        const selection = doc.getSelection();
+                        return el.isContentEditable
+                            && (doc.activeElement === el || el.contains(doc.activeElement))
+                            && selection && el.contains(selection.anchorNode)
+                            && el.contains(selection.focusNode);
+                    }""",
+                    timeout=_content_timeout_ms(deadline, 0.5),
+                )
+                if not focused:
+                    error_type = "editor_lost_focus"
+                    continue
+                # Replace selected text; never append to a partially successful fill.
+                page.keyboard.insert_text(content)
+            if _verify_content(page, content, deadline):
+                return
+            error_type = "content_mismatch"
+        except Exception as exc:
+            # Playwright errors can contain fill("the entire article"). Do not
+            # propagate their message or traceback into job results and logs.
+            error_type = type(exc).__name__
+        _log_stage(
+            "content_input_retry", "正文填写未通过校验，重新定位编辑器",
+            level="WARNING", attempt=attempts, method=method, error_type=error_type,
+        )
+        time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+
+    _log_stage(
+        "content_input_diagnostics", "正文填写失败，尚未点击发布",
+        level="WARNING", attempts=attempts, error_type=error_type, candidates=states,
+        page_url=_diagnostic_url(str(getattr(page, "url", ""))),
+    )
+    raise RuntimeError("正文编辑器未就绪或填写校验失败，尚未点击发布，请稍后重试")
 
 
 def _find_image_input(page: Any) -> Any | None:
@@ -1445,20 +1611,7 @@ def _publish_note_compat(
     )
 
     if content:
-        content_input = _wait_for_element(
-            page,
-            CONTENT_SELECTORS,
-            visible=True,
-            timeout_seconds=15,
-        )
-        if content_input is None:
-            raise RuntimeError("找不到正文输入框，页面结构可能已更新")
-        _log_stage(
-            "element_ready",
-            "正文输入元素捕获成功",
-            element="content_input",
-        )
-        content_input.fill(content)
+        _fill_content(page, content)
         _log_stage(
             "content_filled",
             "加入正文成功",
@@ -1466,11 +1619,26 @@ def _publish_note_compat(
         )
 
     time.sleep(1)
+    if content:
+        # Filling can re-render the form, including the title control.
+        title_input = _wait_for_element(
+            page, TITLE_SELECTORS, visible=True, timeout_seconds=5,
+        )
+        if title_input is None:
+            raise RuntimeError("正文填写后标题输入框失效，尚未点击发布")
     _click_element(title_input, "发布前重新聚焦标题输入框")
 
     publish_button = _wait_for_publish_button(page, timeout_seconds=15)
     if publish_button is None:
         raise RuntimeError("发布按钮不可点击，请检查标题、正文和图片是否通过页面校验")
+    if content and not _verify_content(
+        page, content, time.monotonic() + CONTENT_VERIFY_TIMEOUT_SECONDS,
+    ):
+        _log_stage(
+            "content_input_diagnostics", "发布前正文校验失败，尚未点击发布",
+            level="WARNING", error_type="content_changed_before_publish",
+        )
+        raise RuntimeError("正文在填写后发生变化，已停止发布，请稍后重试")
     _log_stage(
         "element_ready",
         "发布按钮元素捕获成功",

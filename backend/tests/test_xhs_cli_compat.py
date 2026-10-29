@@ -1428,6 +1428,7 @@ def test_verification_screenshot_prefers_cropped_panel(
 @pytest.mark.parametrize("stage,expected", [
     ("upload", "failed"), ("click", "uncertain"),
     ("result", "uncertain"), ("validation", "failed"), ("success", "succeeded"),
+    ("content", "failed"), ("content_changed", "failed"), ("content_success", "succeeded"),
 ])
 def test_publish_outcome_tracks_submission_boundary(
     stage, expected, tmp_path, monkeypatch, input_wait_clock,
@@ -1443,7 +1444,7 @@ def test_publish_outcome_tracks_submission_boundary(
         _page=page,
         _extract_note_id_from_url=lambda _url: "",
         _extract_note_id_from_page=lambda: "",
-        _is_publish_success=lambda *_args: stage == "success",
+        _is_publish_success=lambda *_args: stage in ("success", "content_success"),
     )
     clicks = []
     widget = SimpleNamespace(set_input_files=lambda _paths: None, fill=lambda _text: None)
@@ -1457,6 +1458,13 @@ def test_publish_outcome_tracks_submission_boundary(
             raise RuntimeError("image upload failed")
 
     monkeypatch.setattr(module, "_wait_for_image_uploads", uploaded)
+
+    def fill_content(*_args):
+        if stage == "content":
+            raise RuntimeError("正文填写校验失败")
+
+    monkeypatch.setattr(module, "_fill_content", fill_content)
+    monkeypatch.setattr(module, "_verify_content", lambda *_a: stage != "content_changed")
     monkeypatch.setattr(module, "_wait_for_element", lambda *_a, **_k: widget)
     monkeypatch.setattr(module, "_click_element", lambda *_a, **_k: None)
     monkeypatch.setattr(module, "_wait_for_publish_button", lambda *_a, **_k: widget)
@@ -1472,10 +1480,13 @@ def test_publish_outcome_tracks_submission_boundary(
             raise RuntimeError("page closed after dispatching click")
 
     monkeypatch.setattr(module, "_click_publish", clicked)
+    content = "正文" if stage.startswith("content") else ""
     if expected == "succeeded":
-        assert publish_note_compat(client, "title", [str(image)], return_detail=True)["success"]
+        assert publish_note_compat(
+            client, "title", [str(image)], content=content, return_detail=True,
+        )["success"]
     else:
         error = XHSJobFailedError if expected == "failed" else XHSJobReconciliationError
         with pytest.raises(error):
-            publish_note_compat(client, "title", [str(image)])
-    assert len(clicks) == (0 if stage == "upload" else 1)
+            publish_note_compat(client, "title", [str(image)], content=content)
+    assert len(clicks) == (0 if stage in ("upload", "content", "content_changed") else 1)
