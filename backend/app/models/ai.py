@@ -51,6 +51,77 @@ class AISkill(Base):
     )
 
 
+class AIAgentNode(Base):
+    __tablename__ = "ai_agent_nodes"
+
+    id: Mapped[int] = mapped_column(
+        Integer, Identity(start=2000), primary_key=True, autoincrement=True
+    )
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    node_type: Mapped[str] = mapped_column(
+        String(24), default="custom", server_default="custom", index=True
+    )
+    skill_ids: Mapped[list[int]] = mapped_column(JSON, default=list, server_default="[]")
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    workflow_steps: Mapped[list[AIAgentWorkflowStep]] = relationship(
+        back_populates="node", passive_deletes=True
+    )
+
+
+class AIAgentWorkflow(Base):
+    __tablename__ = "ai_agent_workflows"
+
+    id: Mapped[int] = mapped_column(
+        Integer, Identity(start=3000), primary_key=True, autoincrement=True
+    )
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    steps: Mapped[list[AIAgentWorkflowStep]] = relationship(
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="AIAgentWorkflowStep.position",
+        lazy="selectin",
+    )
+
+
+class AIAgentWorkflowStep(Base):
+    __tablename__ = "ai_agent_workflow_steps"
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "position", name="uq_ai_agent_workflow_steps_position"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workflow_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_agent_workflows.id", ondelete="CASCADE"), index=True
+    )
+    node_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_agent_nodes.id", ondelete="RESTRICT"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    workflow: Mapped[AIAgentWorkflow] = relationship(back_populates="steps")
+    node: Mapped[AIAgentNode] = relationship(back_populates="workflow_steps", lazy="joined")
+
+
 class AIFeature(Base):
     __tablename__ = "ai_features"
 

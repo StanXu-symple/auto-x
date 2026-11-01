@@ -9,6 +9,9 @@ from app.core.config import get_settings
 from app.db.base import Base
 from app.models import (  # noqa: F401
     Admin,
+    AIAgentNode,
+    AIAgentWorkflow,
+    AIAgentWorkflowStep,
     AIDataSource,
     AIDraft,
     AIGenerationJob,

@@ -41,6 +41,8 @@ const groups = [
     items: [
       { path: '/agent-chat', label: '智能体对话', icon: RobotOutlined },
       { path: '/ai-writing', label: 'AI 创作', icon: FormOutlined },
+      { path: '/agent-nodes', label: 'Agent 节点管理', icon: AppstoreOutlined },
+      { path: '/agent-workflows', label: 'Agent 流程编排', icon: RobotOutlined },
       { path: '/skills', label: '提示词管理', icon: AppstoreOutlined },
       { path: '/articles', label: '文章管理', icon: BookOutlined },
       { path: '/qq-notifications', label: 'QQ 推送', icon: BellOutlined },

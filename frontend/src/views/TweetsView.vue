@@ -32,12 +32,15 @@ import type {
 import { formatDateTime, formatNumber, formatRelative, tweetTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import SkillDetailsModal from '@/components/SkillDetailsModal.vue'
+import AgentWorkflowRunner from '@/components/AgentWorkflowRunner.vue'
 const tweets = ref<Tweet[]>([])
 const accounts = ref<MonitoredUser[]>([])
 const total = ref(0)
 const loading = ref(false)
 const selected = ref<number[]>([])
 const generating = ref<string | null>(null)
+const workflowOpen = ref(false)
+const workflowTweet = ref<Tweet | null>(null)
 const generateOpen = ref(false)
 const generateTweet = ref<Tweet | null>(null)
 const generationSkills = ref<AiSkill[]>([])
@@ -341,6 +344,7 @@ watch(
 
 <template>
   <div class="page-stack">
+    <AgentWorkflowRunner v-model:open="workflowOpen" :tweet="workflowTweet" />
     <PageHeader
       eyebrow="MONITOR / 02"
       title="内容流"
@@ -503,6 +507,9 @@ watch(
       :keyboard="!generating"
       @ok="generate"
     >
+      <a-alert type="info" message="也可以按已编排的节点链条生成、审核或修订内容" style="margin-bottom: 16px">
+        <template #action><a-button :disabled="Boolean(generating)" @click="workflowTweet = generateTweet; generateOpen = false; workflowOpen = true">选择 Agent 流程</a-button></template>
+      </a-alert>
       <div v-if="generateTweet" class="generation-source">
         <strong>{{ generateTweet.display_name?.trim() || `@${generateTweet.username}` }}</strong>
         <p class="tweet-preview">{{ generateTweet.text }}</p>

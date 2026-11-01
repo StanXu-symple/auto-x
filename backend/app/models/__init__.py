@@ -1,6 +1,10 @@
 from app.models.admin import Admin
 from app.models.agent_chat import AgentConversation, AgentTurn
+from app.models.agent_workflow import AgentWorkflowRun, AgentWorkflowStepRun
 from app.models.ai import (
+    AIAgentNode,
+    AIAgentWorkflow,
+    AIAgentWorkflowStep,
     AIDraft,
     AIFeature,
     AIGenerationAttempt,
@@ -50,8 +54,13 @@ from app.models.xhs_credential import XiaohongshuCredential
 
 __all__ = [
     "Admin",
+    "AIAgentNode",
+    "AIAgentWorkflow",
+    "AIAgentWorkflowStep",
     "AgentConversation",
     "AgentTurn",
+    "AgentWorkflowRun",
+    "AgentWorkflowStepRun",
     "AIDraft",
     "AIFeature",
     "AIGenerationJob",

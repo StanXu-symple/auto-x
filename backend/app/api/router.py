@@ -2,6 +2,8 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     agent_chat,
+    agent_workflow_runs,
+    agent_workflows,
     ai,
     ai_data_source,
     articles,
@@ -24,6 +26,8 @@ from app.api.routes import (
 
 api_router = APIRouter()
 api_router.include_router(agent_chat.router)
+api_router.include_router(agent_workflow_runs.router)
+api_router.include_router(agent_workflows.router)
 api_router.include_router(auth.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(monitored_users.router, prefix="/monitored-users")

@@ -75,6 +75,18 @@ const router = createRouter({
           meta: { title: 'AI 创作', description: '把监听内容转化为可编辑、可发布的创作草稿' },
         },
         {
+          path: 'agent-nodes',
+          name: 'agent-nodes',
+          component: () => import('@/views/AgentNodesView.vue'),
+          meta: { title: 'Agent 节点管理', description: '将提示词与 Skills 组成可复用的 Agent 节点' },
+        },
+        {
+          path: 'agent-workflows',
+          name: 'agent-workflows',
+          component: () => import('@/views/AgentWorkflowsView.vue'),
+          meta: { title: 'Agent 流程编排', description: '将 Agent 节点串成有序执行流程' },
+        },
+        {
           path: 'skills',
           name: 'skills',
           component: () => import('@/views/SkillsView.vue'),

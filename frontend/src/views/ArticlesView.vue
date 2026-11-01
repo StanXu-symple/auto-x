@@ -34,6 +34,7 @@ import AutoPublishStatus from '@/components/AutoPublishStatus.vue'
 import ArticleMediaGallery from '@/components/ArticleMediaGallery.vue'
 import ArticlePreview from '@/components/ArticlePreview.vue'
 import XhsVerificationModal from '@/components/XhsVerificationModal.vue'
+import AgentWorkflowRunner from '@/components/AgentWorkflowRunner.vue'
 const saving = ref(false)
 const uploading = ref(false)
 const open = ref(false)
@@ -53,6 +54,8 @@ const editing = ref<Article | null>(null)
 const publishing = ref<Article | null>(null)
 const previewing = ref<Article | null>(null)
 const publishSubmitting = ref(false)
+const workflowOpen = ref(false)
+const workflowArticle = ref<Article | null>(null)
 const {
   open: verifyOpen,
   image: verifyImage,
@@ -129,6 +132,10 @@ function edit(article?: Article) {
       : { title: '', content: '', excerpt: '', images: [] },
   )
   open.value = true
+}
+function openWorkflow(article: Article) {
+  workflowArticle.value = article
+  workflowOpen.value = true
 }
 function view(article: Article) {
   previewing.value = article
@@ -444,6 +451,9 @@ watch(
                   ><EyeOutlined /></a-button></a-tooltip
               ><a-button type="link" aria-label="编辑文章" @click="edit(record)"
                 ><EditOutlined /></a-button
+              ><a-button type="link" aria-label="运行 Agent 流程" @click="openWorkflow(record)"
+                >Agent 流程</a-button
+              ><router-link :to="{ path: '/agent-workflows', query: { article_id: record.id } }">流程记录</router-link
               ><a-button type="link" aria-label="发布文章" @click="preparePublish(record)"
                 ><SendOutlined /></a-button
               ><a-button type="link" aria-label="查看发布历史" @click="showHistory(record)"
@@ -658,6 +668,11 @@ watch(
       </a-form>
     </a-modal>
     <XhsVerificationModal :open="verifyOpen" :image="verifyImage" />
+    <AgentWorkflowRunner
+      v-model:open="workflowOpen"
+      :article="workflowArticle ? { id: workflowArticle.id, revision: workflowArticle.revision, title: workflowArticle.title } : null"
+      @changed="load"
+    />
     <a-modal v-model:open="historyOpen" title="发布历史" :footer="null"
       ><a-list
         :data-source="history"
