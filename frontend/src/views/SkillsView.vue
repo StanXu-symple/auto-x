@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   DeleteOutlined,
   EditOutlined,
   GithubOutlined,
   PlusOutlined,
   ReloadOutlined,
+  RobotOutlined,
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -27,6 +28,17 @@ const visibleSkills = computed(() =>
 const resourceLabel = computed(() => (activeTab.value === 'skill' ? 'Skills' : '提示词'))
 const skillOpen = ref(false)
 const skillSaving = ref(false)
+const promptGenerating = ref(false)
+const promptGenerateOpen = ref(false)
+const promptRequirement = ref('')
+const promptGeneration = ref<Awaited<ReturnType<typeof aiApi.promptGeneration>> | null>(null)
+const promptGenerationError = ref('')
+const promptCancelling = ref(false)
+let promptGenerationTimer: ReturnType<typeof setTimeout> | null = null
+let promptGenerationEpoch = 0
+let promptWaitStarted = 0
+let promptSubmission: { request_id: string; requirement: string } | null = null
+let disposed = false
 const importOpen = ref(false)
 const importing = ref(false)
 const updatingSkill = ref<AiSkill | null>(null)
@@ -97,6 +109,123 @@ function editSkill(skill?: AiSkill) {
       : { name: '', description: '', instructions: '', is_active: true },
   )
   skillOpen.value = true
+}
+
+function requestId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+  const bytes = globalThis.crypto?.getRandomValues
+    ? globalThis.crypto.getRandomValues(new Uint8Array(16))
+    : Uint8Array.from({ length: 16 }, () => Math.floor(Math.random() * 256))
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+function openPromptGenerator() {
+  if (activeTab.value !== 'prompt' || promptGenerating.value) return
+  promptGenerateOpen.value = true
+}
+
+function stopPromptPolling() {
+  if (promptGenerationTimer !== null) {
+    clearTimeout(promptGenerationTimer)
+    promptGenerationTimer = null
+  }
+}
+
+async function pollPromptGeneration(id: string, epoch = promptGenerationEpoch) {
+  try {
+    const current = await aiApi.promptGeneration(id)
+    if (disposed || epoch !== promptGenerationEpoch) return
+    promptGeneration.value = current
+    if (current.status === 'queued' || current.status === 'running') {
+      if (Date.now() - promptWaitStarted > 20 * 60_000) {
+        throw new Error('等待时间较长，请检查 AI Worker 状态，或点击“继续获取结果”')
+      }
+      promptGenerationTimer = setTimeout(() => void pollPromptGeneration(id, epoch), 1500)
+    } else {
+      promptGenerating.value = false
+      promptSubmission = null
+      if (current.status === 'failed')
+        promptGenerationError.value = current.error || '提示词生成失败'
+    }
+  } catch (e) {
+    if (disposed || epoch !== promptGenerationEpoch) return
+    promptGenerating.value = false
+    promptGenerationError.value = getErrorMessage(e, '无法查询生成状态，请继续获取结果')
+  }
+}
+
+async function generatePrompt() {
+  if (promptGenerating.value || promptCancelling.value) return
+  const requirement = promptRequirement.value.trim()
+  if (!requirement) return message.warning('请描述你需要的提示词')
+  if (requirement.length > 8000) return message.warning('需求最多填写 8000 字')
+  stopPromptPolling()
+  const epoch = ++promptGenerationEpoch
+  promptWaitStarted = Date.now()
+  promptGenerating.value = true
+  promptGenerationError.value = ''
+  if (promptGeneration.value && ['queued', 'running'].includes(promptGeneration.value.status)) {
+    await pollPromptGeneration(promptGeneration.value.id, epoch)
+    return
+  }
+  if (!promptSubmission || promptSubmission.requirement !== requirement)
+    promptSubmission = { request_id: requestId(), requirement }
+  promptGeneration.value = null
+  try {
+    const created = await aiApi.createPromptGeneration(promptSubmission)
+    if (disposed || epoch !== promptGenerationEpoch) return
+    promptGeneration.value = created
+    await pollPromptGeneration(created.id, epoch)
+  } catch (e) {
+    if (disposed || epoch !== promptGenerationEpoch) return
+    promptGenerating.value = false
+    promptGenerationError.value = getErrorMessage(e, '无法提交提示词生成任务，请重试')
+  }
+}
+
+async function cancelPromptGeneration() {
+  if (promptCancelling.value || (promptGenerating.value && !promptGeneration.value)) return
+  const current = promptGeneration.value
+  ++promptGenerationEpoch
+  stopPromptPolling()
+  promptGenerating.value = false
+  if (!current || !['queued', 'running'].includes(current.status)) {
+    promptGenerateOpen.value = false
+    return
+  }
+  promptCancelling.value = true
+  try {
+    const cancelled = await aiApi.cancelPromptGeneration(current.id)
+    if (disposed) return
+    promptGeneration.value = cancelled
+    promptSubmission = null
+    promptGenerateOpen.value = false
+  } catch (e) {
+    if (!disposed) promptGenerationError.value = getErrorMessage(e, '取消失败，请重试')
+  } finally {
+    promptCancelling.value = false
+  }
+}
+
+function useGeneratedPrompt() {
+  const result = promptGeneration.value?.result
+  if (!result) return
+  Object.assign(skillForm, {
+    name: result.name,
+    description: result.description || '',
+    instructions: result.instructions,
+    is_active: true,
+  })
+  editingSkill.value = null
+  promptGenerateOpen.value = false
+  skillOpen.value = true
+  promptGeneration.value = null
+  promptSubmission = null
+  promptRequirement.value = ''
+  promptGenerationError.value = ''
 }
 async function saveSkill() {
   if (skillSaving.value) return
@@ -210,6 +339,12 @@ async function loadAllSkills(request: number) {
   )
 }
 onMounted(loadSkills)
+onBeforeUnmount(() => {
+  disposed = true
+  ++promptGenerationEpoch
+  ++skillsRequest
+  stopPromptPolling()
+})
 </script>
 
 <template>
@@ -217,7 +352,7 @@ onMounted(loadSkills)
     <PageHeader
       eyebrow="CONTENT / 02"
       title="提示词管理"
-      description="分别管理从 GitHub 导入的 Skills 与手动维护的提示词"
+      description="管理从 GitHub 导入的 Skills，以及手动编写或 AI 辅助生成的提示词"
     >
       <template #actions>
         <a-button :loading="skillsLoading" @click="loadSkills"><ReloadOutlined /> 刷新</a-button>
@@ -231,6 +366,9 @@ onMounted(loadSkills)
               <a-button v-if="activeTab === 'prompt'" type="primary" @click="editSkill()"
                 ><PlusOutlined /> 新建提示词</a-button
               >
+              <a-button v-if="activeTab === 'prompt'" @click="openPromptGenerator">
+                <RobotOutlined /> AI 生成
+              </a-button>
               <a-button
                 v-if="activeTab === 'skill'"
                 type="primary"
@@ -244,7 +382,7 @@ onMounted(loadSkills)
               <span class="toolbar__hint">{{
                 activeTab === 'skill'
                   ? 'GitHub Skills 按导入来源分组，点击名称或箭头展开'
-                  : '手动维护可复用的写作要求，在生成时按需选择'
+                  : '手动编写或用 AI 生成提示词，在创作与 Agent 节点中按需使用'
               }}</span>
             </div>
             <span class="toolbar__hint">共 {{ visibleSkills.length }} 条 {{ resourceLabel }}</span>
@@ -523,6 +661,90 @@ onMounted(loadSkills)
         :message="warning"
         style="margin-top: 8px"
       />
+    </a-modal>
+    <a-modal
+      :open="promptGenerateOpen"
+      title="AI 生成提示词"
+      :width="720"
+      :ok-text="
+        promptGeneration?.result
+          ? '编辑并保存'
+          : promptGeneration && ['queued', 'running'].includes(promptGeneration.status)
+            ? '继续获取结果'
+            : '确认生成'
+      "
+      :cancel-text="
+        promptGeneration && ['queued', 'running'].includes(promptGeneration.status)
+          ? '取消生成'
+          : '关闭'
+      "
+      :confirm-loading="promptGenerating"
+      :ok-button-props="{ disabled: promptCancelling }"
+      :cancel-button-props="{
+        disabled: promptGenerating && !promptGeneration,
+        loading: promptCancelling,
+      }"
+      :closable="!promptGenerating && !promptCancelling"
+      :mask-closable="false"
+      :keyboard="!promptGenerating && !promptCancelling"
+      @ok="promptGeneration?.result ? useGeneratedPrompt() : generatePrompt()"
+      @cancel="cancelPromptGeneration"
+    >
+      <a-alert
+        v-if="promptGenerationError"
+        type="error"
+        show-icon
+        :message="promptGenerationError"
+        style="margin-bottom: 16px"
+      />
+      <a-alert
+        v-else-if="promptGenerating"
+        type="info"
+        show-icon
+        :message="
+          promptGeneration?.status === 'queued' ? '等待 AI 开始生成…' : 'AI 正在整理提示词，请稍候…'
+        "
+        description="生成完成后可以先检查和编辑，再保存到提示词管理。"
+        style="margin-bottom: 16px"
+      />
+      <template v-if="!promptGeneration?.result">
+        <a-form layout="vertical">
+          <a-form-item label="你需要什么提示词？" required>
+            <a-textarea
+              v-model:value="promptRequirement"
+              :rows="8"
+              :disabled="
+                promptGenerating ||
+                promptCancelling ||
+                (!!promptGeneration && ['queued', 'running'].includes(promptGeneration.status))
+              "
+              maxlength="8000"
+              show-count
+              placeholder="例如：生成一个小红书爆款标题提示词，要求面向科技从业者，输出 10 个标题并逐个评分。"
+            />
+          </a-form-item>
+        </a-form>
+        <p class="muted">AI 会生成提示词名称、用途说明和可直接使用的完整提示词，不会自动保存。</p>
+      </template>
+      <template v-else>
+        <a-alert
+          type="success"
+          show-icon
+          message="提示词已生成，请确认后使用"
+          style="margin-bottom: 16px"
+        />
+        <a-descriptions :column="1" bordered size="small">
+          <a-descriptions-item label="名称">{{ promptGeneration.result.name }}</a-descriptions-item>
+          <a-descriptions-item label="说明">{{
+            promptGeneration.result.description || '暂无说明'
+          }}</a-descriptions-item>
+        </a-descriptions>
+        <a-form layout="vertical" style="margin-top: 16px">
+          <a-form-item label="生成的提示词">
+            <a-textarea :value="promptGeneration.result.instructions" :rows="14" readonly />
+          </a-form-item>
+        </a-form>
+      </template>
     </a-modal>
   </div>
 </template>

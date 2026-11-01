@@ -22,6 +22,7 @@ from app.models import (  # noqa: F401
     BrowserJobResult,
     MonitoredUser,
     PollingLog,
+    PromptGeneration,
     QQBotAccount,
     QQDelivery,
     QQNotificationTarget,

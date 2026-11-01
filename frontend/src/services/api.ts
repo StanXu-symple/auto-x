@@ -47,6 +47,7 @@ import type {
   MonitoredUser,
   MonitoredUserQuery,
   PaginatedResponse,
+  PromptGeneration,
   PollingRun,
   PollingRunQuery,
   QQBotAccount,
@@ -381,6 +382,15 @@ export const xSourcesApi = {
 }
 
 export const aiApi = {
+  async createPromptGeneration(payload: { request_id: string; requirement: string }) {
+    return dataOf(await http.post<Wrapped<PromptGeneration>>('/ai/prompt-generations', payload))
+  },
+  async promptGeneration(id: string) {
+    return dataOf(await http.get<Wrapped<PromptGeneration>>(`/ai/prompt-generations/${id}`))
+  },
+  async cancelPromptGeneration(id: string) {
+    return dataOf(await http.post<Wrapped<PromptGeneration>>(`/ai/prompt-generations/${id}/cancel`))
+  },
   async importGithubSkills(payload: GithubSkillImportPayload) {
     return dataOf(await http.post<Wrapped<GithubSkillImportResult>>(
       '/ai/skills/import-github', payload, { timeout: 190_000 },

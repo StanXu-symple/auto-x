@@ -12,6 +12,7 @@ from app.api.routes import (
     health,
     monitored_users,
     polling_logs,
+    prompt_generation,
     qq,
     qq_message_templates,
     qq_placeholders,
@@ -26,6 +27,7 @@ from app.api.routes import (
 
 api_router = APIRouter()
 api_router.include_router(agent_chat.router)
+api_router.include_router(prompt_generation.router)
 api_router.include_router(agent_workflow_runs.router)
 api_router.include_router(agent_workflows.router)
 api_router.include_router(auth.router)

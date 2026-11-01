@@ -102,9 +102,15 @@ function setup(t, updateGithubSkill, fetchPage = async () => ({ items: [], total
   const instance = ref()
   const app = renderer.createApp({ render: () => h(SkillsView, { ref: instance }) })
   app.mount({})
-  t.after(() => app.unmount())
+  let mounted = true
+  const unmount = () => {
+    if (mounted) app.unmount()
+    mounted = false
+  }
+  t.after(unmount)
   return {
     state: instance.value.$.setupState,
+    unmount,
     calls,
     messages,
     get loads() {
@@ -378,4 +384,146 @@ test('manual creation sends prompt type while editing preserves existing IDs and
   view.state.skillForm.is_active = false
   await view.state.saveSkill()
   assert.deepEqual(writes[2], ['updateSkill', 42, { is_active: false }])
+})
+
+const generatedPrompt = { name: '审核提示词', description: '文章评分', instructions: '检查事实与价值' }
+
+function setupPromptGeneration(t, overrides = {}) {
+  const view = setup(t, async () => result)
+  const submissions = [], saves = []
+  Object.assign(globalThis.skillsUpdateMocks.api, {
+    createPromptGeneration: async (payload) => {
+      submissions.push({ ...payload })
+      return { id: 'job-1', status: 'queued' }
+    },
+    promptGeneration: async () => ({ id: 'job-1', status: 'succeeded', result: generatedPrompt }),
+    cancelPromptGeneration: async () => ({ id: 'job-1', status: 'cancelled', result: null }),
+    createSkill: async (payload) => { saves.push({ ...payload }); return {} },
+    ...overrides,
+  })
+  return { ...view, submissions, saves }
+}
+
+test('AI authoring is available only on prompts and generated content is editable before saving', async (t) => {
+  const view = setupPromptGeneration(t)
+  view.state.openPromptGenerator()
+  assert.equal(view.state.promptGenerateOpen, false)
+  view.state.activeTab = 'prompt'
+  view.state.openPromptGenerator()
+  assert.equal(view.state.promptGenerateOpen, true)
+  view.state.promptRequirement = '  \n '
+  await view.state.generatePrompt()
+  assert.equal(view.submissions.length, 0)
+  view.state.promptRequirement = ' 请生成审核提示词 '
+  await view.state.generatePrompt()
+  assert.equal(view.submissions[0].requirement, '请生成审核提示词')
+  assert.match(view.submissions[0].request_id, /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i)
+  assert.equal(view.state.promptGenerating, false)
+  assert.equal(view.saves.length, 0)
+  view.state.useGeneratedPrompt()
+  assert.equal(view.state.skillOpen, true)
+  assert.equal(view.state.promptGenerateOpen, false)
+  assert.equal(view.state.editingSkill, null)
+  assert.equal(view.state.skillForm.instructions, generatedPrompt.instructions)
+  view.state.skillForm.instructions = '我的调整'
+  await view.state.saveSkill()
+  assert.equal(view.saves[0].content_type, 'prompt')
+  assert.equal(view.saves[0].instructions, '我的调整')
+})
+
+test('AI authoring blocks double submission and reuses request id after a lost response', async (t) => {
+  let reject, attempts = 0
+  const sent = []
+  const pending = new Promise((_, fail) => { reject = fail })
+  const view = setupPromptGeneration(t, {
+    createPromptGeneration: async (payload) => {
+      sent.push({ ...payload })
+      if (++attempts === 1) return pending
+      return { id: 'job-1', status: 'queued' }
+    },
+  })
+  view.state.promptRequirement = '审核'
+  const running = view.state.generatePrompt()
+  await view.state.generatePrompt()
+  assert.equal(attempts, 1)
+  reject(new Error('连接中断'))
+  await running
+  assert.equal(view.state.promptGenerating, false)
+  assert.equal(view.state.promptGenerationError, '连接中断')
+  await view.state.generatePrompt()
+  assert.equal(sent[0].request_id, sent[1].request_id)
+  assert.equal(view.state.promptGeneration.result.name, generatedPrompt.name)
+})
+
+test('failed polling resumes the same job without issuing a second model request', async (t) => {
+  let reads = 0
+  const view = setupPromptGeneration(t, {
+    promptGeneration: async () => {
+      if (++reads === 1) throw new Error('读取失败')
+      return { id: 'job-1', status: 'succeeded', result: generatedPrompt }
+    },
+  })
+  view.state.promptRequirement = '审核'
+  await view.state.generatePrompt()
+  assert.equal(view.state.promptGenerationError, '读取失败')
+  await view.state.generatePrompt()
+  assert.equal(view.submissions.length, 1)
+  assert.equal(view.state.promptGeneration.status, 'succeeded')
+})
+
+test('cancelling ignores a late poll response and keeps the dialog open on cancellation error', async (t) => {
+  let resolveRead, cancels = 0
+  const pending = new Promise((resolve) => { resolveRead = resolve })
+  const view = setupPromptGeneration(t, {
+    promptGeneration: () => pending,
+    cancelPromptGeneration: async () => {
+      if (++cancels === 1) throw new Error('取消失败')
+      return { id: 'job-1', status: 'cancelled' }
+    },
+  })
+  view.state.activeTab = 'prompt'
+  view.state.openPromptGenerator()
+  view.state.promptRequirement = '审核'
+  const running = view.state.generatePrompt()
+  await new Promise((resolve) => setImmediate(resolve))
+  await view.state.cancelPromptGeneration()
+  assert.equal(view.state.promptGenerateOpen, true)
+  assert.equal(view.state.promptGenerationError, '取消失败')
+  await view.state.cancelPromptGeneration()
+  assert.equal(view.state.promptGenerateOpen, false)
+  resolveRead({ id: 'job-1', status: 'succeeded', result: generatedPrompt })
+  await running
+  assert.equal(view.state.promptGeneration.status, 'cancelled')
+  assert.equal(view.state.skillOpen, false)
+})
+
+test('a failed model job can be regenerated with a fresh request id', async (t) => {
+  let reads = 0
+  const view = setupPromptGeneration(t, {
+    promptGeneration: async () => ++reads === 1
+      ? { id: 'job-1', status: 'failed', error: '模型超时' }
+      : { id: 'job-2', status: 'succeeded', result: generatedPrompt },
+  })
+  view.state.promptRequirement = '审核'
+  await view.state.generatePrompt()
+  assert.equal(view.state.promptGenerationError, '模型超时')
+  await view.state.generatePrompt()
+  assert.notEqual(view.submissions[0].request_id, view.submissions[1].request_id)
+  assert.equal(view.state.promptGenerationError, '')
+})
+
+test('leaving the page ignores a late response and does not schedule more polling', async (t) => {
+  let resolveRead, reads = 0
+  const pending = new Promise((resolve) => { resolveRead = resolve })
+  const view = setupPromptGeneration(t, {
+    promptGeneration: () => { reads++; return pending },
+  })
+  view.state.promptRequirement = '审核'
+  const running = view.state.generatePrompt()
+  await new Promise((resolve) => setImmediate(resolve))
+  view.unmount()
+  resolveRead({ id: 'job-1', status: 'running' })
+  await running
+  assert.equal(view.state.promptGeneration.status, 'queued')
+  assert.equal(reads, 1)
 })

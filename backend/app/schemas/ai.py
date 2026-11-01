@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
@@ -582,6 +583,51 @@ class ManualGenerateRequest(APIModel):
         if len(value) != len(set(value)):
             raise ValueError("skill ids must be unique")
         return value
+
+
+class PromptGenerationRequest(APIModel):
+    """A plain-language brief used to create a reusable editorial prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    requirement: str = Field(min_length=1, max_length=8000)
+
+    @field_validator("requirement")
+    @classmethod
+    def normalize_requirement(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("must not be blank")
+        return normalized
+
+
+class PromptGenerationResult(APIModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=4000)
+    instructions: str = Field(min_length=1, max_length=20000)
+
+    @field_validator("name", "instructions")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("must not be blank")
+        return normalized
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
+class PromptGenerationOut(APIModel):
+    id: str
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
+    result: PromptGenerationResult | None
+    error: str | None
+    created_at: datetime
 
 
 class AIDraftPatch(APIModel):

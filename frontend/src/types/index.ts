@@ -676,6 +676,18 @@ export interface AiSkillQuery extends PaginationQuery {
   content_type?: AiContentType
 }
 
+export interface PromptGeneration {
+  id: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | string
+  result?: {
+    name: string
+    description?: string | null
+    instructions: string
+  } | null
+  error?: string | null
+  created_at: string
+}
+
 export interface AiFeature {
   id: EntityId
   code: string

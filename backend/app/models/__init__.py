@@ -24,6 +24,7 @@ from app.models.ai_publish import AIPublishDispatch
 from app.models.browser_job import BrowserJobResult
 from app.models.monitored_user import MonitoredUser
 from app.models.polling_log import PollingLog
+from app.models.prompt_generation import PromptGeneration
 from app.models.qq import (
     QQBotAccount,
     QQDelivery,
@@ -80,6 +81,7 @@ __all__ = [
     "AppSetting",
     "MonitoredUser",
     "PollingLog",
+    "PromptGeneration",
     "QQPlaceholder",
     "QQMessageTemplate",
     "QQBotAccount",

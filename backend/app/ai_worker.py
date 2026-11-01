@@ -54,6 +54,7 @@ from app.services.metrics import (
     AI_QUEUE_DUE,
     AI_WORKER_HEARTBEAT,
 )
+from app.services.prompt_generation_worker import PromptGenerationWorker
 from app.services.skill_client import (
     SkillServiceUnavailable,
     get_skill_client,
@@ -126,6 +127,14 @@ class AIGenerationWorker:
             self.generation_semaphore,
             self.stop_event,
         )
+        self.prompt_generation_worker = PromptGenerationWorker(
+            settings,
+            self.redis,
+            self.provider,
+            AsyncSessionFactory,
+            self.generation_semaphore,
+            self.stop_event,
+        )
 
     def request_stop(self) -> None:
         self.stop_event.set()
@@ -146,6 +155,7 @@ class AIGenerationWorker:
         publish_task = asyncio.create_task(self.publisher.run())
         chat_task = asyncio.create_task(self.chat_worker.run())
         workflow_task = asyncio.create_task(self.workflow_worker.run())
+        prompt_generation_task = asyncio.create_task(self.prompt_generation_worker.run())
         try:
             while not self.stop_event.is_set():
                 try:
@@ -165,6 +175,9 @@ class AIGenerationWorker:
             workflow_task.cancel()
             with suppress(asyncio.CancelledError):
                 await workflow_task
+            prompt_generation_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await prompt_generation_task
             chat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await chat_task
@@ -1182,6 +1195,7 @@ class AIGenerationWorker:
                     self.active_tasks
                     + self.chat_worker.active_tasks
                     + self.workflow_worker.active_tasks
+                    + self.prompt_generation_worker.active_tasks
                 ),
                 "provider": provider,
                 "provider_ready": provider_ready,
